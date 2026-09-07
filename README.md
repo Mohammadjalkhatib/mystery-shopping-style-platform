@@ -33,6 +33,8 @@ See `docs/DECISIONS.md` D-001 for the full reasoning.
 
 <!-- Keep this current with dev. One line each. -->
 
+- [x] Demo auth: three roles, deny-by-default guards, one test per boundary
+- [x] Demo auth: three roles, deny-by-default guards, one test per boundary
 - [ ] Admin creates a venue with a per-venue geofence radius
 - [ ] Admin creates a task and assigns it to a participant
 - [ ] Participant consent screen, versioned and recorded
@@ -54,8 +56,8 @@ See `docs/DECISIONS.md` D-001 for the full reasoning.
 TODO: embed the diagram. State machine and data flow both belong here.
 
 ```
-apps/api          NestJS 10, Mongoose, SSE
-apps/web          React 18, Vite, MUI v5, React Router
+apps/api          NestJS 12, Mongoose 9, SSE  (ESM package, see D-007)
+apps/web          React 19, Vite 8, MUI v9, React Router 8
 packages/shared   shared DTO types only
 ```
 
@@ -73,7 +75,8 @@ Key structural points:
 
 ## Running locally without Docker
 
-Requires Node 20+, npm 10+, and a MongoDB instance.
+Requires Node 22.12+ (24 recommended), npm 10+, and a MongoDB instance.
+Exact versions and the reason for each are in `docs/REQUIREMENTS.md`.
 
 ```bash
 git clone https://github.com/Mohammadjalkhatib/mystery-shopping-style-platform.git
@@ -117,6 +120,24 @@ Stop and reset everything including data:
 ```bash
 docker compose down -v
 ```
+
+---
+
+## Demo credentials
+
+Authentication is deliberately a demo (see `docs/DECISIONS.md` D-008). Authorization is not:
+routes are deny-by-default and role-guarded, with one test per boundary.
+
+**Password for every account: `demo1234`**
+
+| Username | Role | Sees |
+|---|---|---|
+| `admin` | admin | Everything. Creates venues and tasks, assigns participants |
+| `business` | business | The visit console for its own client org only |
+| `user1` … `user10` | participant | Their own assigned visits |
+
+`GET /auth/demo-credentials` returns this list at runtime, so a reviewer never has to read the
+source to log in.
 
 ---
 

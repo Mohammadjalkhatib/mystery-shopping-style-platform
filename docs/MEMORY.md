@@ -54,3 +54,64 @@ are byproducts of the work rather than something reconstructed at the end.
   no I/O. This is load bearing for the test strategy.
 
 **Open.** No application code yet. First slice is `feat/session-state-machine`.
+
+---
+
+### 2026-09-07 - feat/scaffold
+
+**What.** The monorepo now builds, tests and boots. npm workspaces across `apps/api`,
+`apps/web` and `packages/shared`; a health endpoint that reports real Mongo connectivity; and
+demo authentication with real, tested authorization boundaries. The stack was modernised to
+current majors and every pairing was verified against the registry before installing.
+
+**Why.** D-006 (TypeScript pin), D-007 (ESM), D-008 (demo auth). `docs/REQUIREMENTS.md` holds
+the full dependency list with a reason per package and the compatibility matrix.
+
+**Files.**
+
+- `package.json`, `tsconfig.base.json`, `tsconfig.json`: workspace root and TypeScript project
+  references, so `tsc --build` walks the dependency graph instead of three disconnected configs
+- `packages/shared/src/index.ts`: `Verdict`, `Signal`, `Presence`, `SessionState`, `Role`,
+  `AuthUser`. Rule 1 encoded in the types — no boolean, `Signal.reason` non-optional
+- `apps/api/src/main.ts`: global `ValidationPipe` with `forbidNonWhitelisted` so rule 2 is
+  enforced from the first endpoint rather than retrofitted
+- `apps/api/src/health/health.controller.ts`: liveness plus Mongo readyState, `@Public()`
+- `apps/api/src/auth/*`: demo users, HMAC token service, deny-by-default `AuthGuard`,
+  `RolesGuard`, `@Roles()` / `@Public()` / `@CurrentUser()`, and 12 boundary tests
+- `apps/web/`: Vite + React 19 + MUI v9 shell wired to the existing `theme.ts`
+- `jest.config.js`, `jest.resolver.cjs`: ESM Jest. The custom resolver exists because a blanket
+  `.js` -> `.ts` `moduleNameMapper` also rewrites requests from inside `node_modules` and breaks
+  packages shipping real `.js`/`.mjs`
+- `docker-compose.yml`: `mongo:7` -> `mongo:8`, to match the 8.2.6 binary the test suite pulls
+- `docs/REQUIREMENTS.md`, `docs/DECISIONS.md`, `README.md`, `CLAUDE.md`: stack versions, demo
+  credentials, D-006 through D-008
+
+**Now true.** The things a future session will otherwise rediscover the hard way:
+
+1. **`apps/api` and `packages/shared` are ESM.** NestJS 12 ships no CommonJS entry point, so
+   this was forced, not chosen. Every relative import needs an explicit `.js` extension.
+2. **Named imports from CommonJS dependencies compile and then throw at runtime.**
+   `import { Connection } from 'mongoose'` type-checks and dies with "does not provide an export
+   named 'Connection'". Use `import type` for types, default-import-plus-property-access for
+   runtime values. Mongoose and rxjs are both CJS. This cost a debugging cycle already.
+3. **TypeScript is pinned at 6.0.3 and cannot go to 7** until `ts-jest` widens its peer range.
+4. **Jest runs through `node --experimental-vm-modules node_modules/jest/bin/jest.js`**, invoked
+   directly rather than via `NODE_OPTIONS`, so it works on PowerShell, cmd and sh alike.
+5. **Auth is deny-by-default.** A new controller is protected unless it opts out with
+   `@Public()`. Add `@Roles()` for role restrictions; the boundary tests will catch omissions.
+6. **Demo credentials are `admin`, `business`, `user1`..`user10`, password `demo1234`.**
+7. Verified working: `tsc --build` exit 0, `npm test` 17 passed, `nest build` and `vite build`
+   exit 0, and the API boots against a real MongoDB returning
+   `{"status":"ok","mongo":"up"}`.
+
+**Open.**
+
+- **Compose is unrunnable**: `apps/api/Dockerfile` and `apps/web/Dockerfile` do not exist, and
+  the Docker daemon was not running on this machine, so nothing was verified against it.
+- **Rule 9's transactional submit will fail locally.** The `mongo` container is standalone;
+  Mongo requires a replica set for multi-document transactions. Fine on Atlas, broken in compose.
+- **Node 24.14.1 is just below what two transitive dev packages want** (`@angular-devkit/*` via
+  `@nestjs/schematics` want `^24.15.0`). Warnings only, but bump when convenient.
+- Nest boot showed a ~17s gap before route resolution on Windows. Not diagnosed. Watch it during
+  `feat/participant-flow`; if it affects `nest start --watch` the dev loop will hurt.
+- `theme.ts` still carries placeholder brand values. Time-box the extraction to 20 minutes.

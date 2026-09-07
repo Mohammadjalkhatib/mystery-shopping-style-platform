@@ -106,8 +106,8 @@ say so and we will discuss it, but do not just implement the other thing.
 Monorepo, npm workspaces.
 
 ```
-apps/api      NestJS 10, TypeScript, Mongoose
-apps/web      React 18, Vite, TypeScript, MUI v5, React Router
+apps/api      NestJS 12, TypeScript 6, Mongoose 9  (ESM, see D-007)
+apps/web      React 19, Vite 8, TypeScript 6, MUI v9, React Router 8
 packages/shared   shared DTO types only (Verdict, Signal, SessionState, presence)
 ```
 
