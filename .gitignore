@@ -2,8 +2,10 @@ node_modules/
 dist/
 build/
 coverage/
+# Any .env variant is secret. The example is the one exception.
 .env
-.env.local
+.env.*
+!.env.example
 *.log
 .DS_Store
 .vscode/
