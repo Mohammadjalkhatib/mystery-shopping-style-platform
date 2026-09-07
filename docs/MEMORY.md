@@ -236,3 +236,80 @@ prior rather than a fit).
 - Thresholds and weights are a prior, not a fit. D-009 says what would make them principled.
 - No persistence and no outbox yet; `evaluate()` is called by nothing. That is
   `feat/report-and-outbox`.
+
+---
+
+### 2026-09-07 - feat/data-model
+
+**What.** Every Mongoose schema and index, the boot-time TTL reconciliation, and an
+idempotent seed. Verified against a real MongoDB replica set in tests and against the live
+Atlas M0 cluster.
+
+**Why.** D-011 (no 2dsphere), plus the schema-level half of D-010's seven constraints.
+
+**Files.**
+
+- `apps/api/src/db/schemas/org-venue.schema.ts`: ClientOrg (the tenancy boundary), GeoPoint,
+  Venue with a per-venue geofence
+- `apps/api/src/db/schemas/task-session.schema.ts`: Task, Assignment, Session, SessionEventDoc
+- `apps/api/src/db/schemas/ping.schema.ts`: the hot, sensitive collection. Idempotency index,
+  evaluator read index, TTL index
+- `apps/api/src/db/schemas/report-verification.schema.ts`: Report, OutboxEntry,
+  VerificationResultDoc, ReviewAction
+- `apps/api/src/db/indexes.ts`: `syncPingTtlIndex`, the collMod reconciliation
+- `apps/api/src/db/db.module.ts`: model registration, runs the TTL sync on boot
+- `apps/api/src/db/seed.ts`: idempotent, one org, two Kuwait venues, 10 assignments
+- `apps/api/src/db/schemas.spec.ts`: 21 tests against a real replica set
+
+**Now true.**
+
+1. **`PING_RETENTION_DAYS` is finally honest.** Mongo fixes `expireAfterSeconds` at index
+   CREATION and re-declaring it in Mongoose silently no-ops, so the env var previously worked
+   exactly once, on a database that had never seen a ping. `syncPingTtlIndex` reconciles it
+   with `collMod` on every boot and logs loudly when a retention window moves. It refuses to
+   start on a non-positive value rather than defaulting to keeping traces forever.
+2. **Tests run against `MongoMemoryReplSet`, not a standalone.** Rule 9 needs transactions and
+   Mongo refuses them outside a replica set. Both commit and rollback are asserted.
+3. **Schema-level bounds, not just DTO bounds**: `venue.radiusM` is 25..500 (an unbounded
+   radius auto-verifies the city, D-010), `accuracyM` has `min: 0.1` (a zero accuracy sails
+   through the presence rule), lat/lng are range-checked.
+4. **Uniqueness is enforced by the database**: `(sessionId, clientPingId)`, one session per
+   assignment, one report per session, one assignment per (task, participant).
+5. **Idempotent ping upsert must use `$setOnInsert`, not `$set`** — asserted by a test. With
+   `$set` a client could resend a stored `clientPingId` with different coordinates and move a
+   fix after the fact.
+6. **No 2dsphere index** (D-011). Storage is proper GeoJSON `[lng, lat]`, so adding one later
+   is a single line, but nothing queries it today.
+7. **Two bugs the tests caught before deployment would have**: `collection.indexes()` throws
+   NamespaceNotFound on a database where `pings` does not exist yet, which would have crashed
+   the API on its first boot against a fresh Atlas cluster and after every
+   `docker compose down -v`; and `@Prop({ index: true })` on `receivedAt` created a plain
+   `receivedAt_1` index that collided with the named TTL index on the same key.
+8. **The TTL index has exactly ONE owner** (D-012). It is created only by `syncPingTtlIndex`;
+   `PingSchema` exports its name and nothing else. Declaring it in both places made the
+   effective retention window depend on a race between autoIndex and the boot reconcile.
+   Do not re-add an index declaration to the schema.
+9. **Append-only is enforced, not documented.** `verificationResults` and `sessionEvents`
+   throw on updateOne/deleteOne/etc. via a pre-hook.
+10. **Verified live on Atlas M0**: seed runs twice with identical counts, the app creates every
+   index on boot, and `collMod` successfully narrowed and widened the retention window -- the
+   shared tier does not block it.
+
+**Open.**
+
+- `schema-reviewer` has been run and its findings folded in; see D-012. The redundant
+  prefix indexes are gone.
+- **The outbox has no lease.** A worker that dies mid-row leaves `status: processing`
+  forever, so that visit is never verified and never retried -- silently. Rule 9 promises
+  retry for a FAILED attempt, not a LOST one. Belongs to `feat/report-and-outbox`, and it
+  needs a reclaim index on `{status, lastAttemptAt}` that does not exist yet.
+- **Venue config is read live at evaluation time, not snapshotted onto the session.** An
+  admin editing `radiusM` between a visit and its evaluation mixes two vintages of venue
+  config into one verdict, which can make `proximity` contradict `presence` again in exactly
+  the way D-010 item 5 fixed. The snapshot belongs on `Session`, one copy per visit.
+- The console list still needs a per-row join for the verdict. Denormalising
+  `latestVerdict`/`latestScore`/`latestResultId` onto `Session` when the evaluator writes
+  would collapse it to one indexed query and does not violate rule 8 -- the result stays
+  append-only, the session carries a pointer. That is also what the SSE payload wants.
+- `autoIndex` is on by default, so index builds run on every boot. Fine at this size, wrong
+  for a large collection; revisit before anything resembling production traffic.

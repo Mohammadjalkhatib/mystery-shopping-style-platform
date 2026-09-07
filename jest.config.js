@@ -35,5 +35,8 @@ module.exports = {
       },
     ],
   },
+  // Generous: the data-model suite boots a real MongoDB replica set via
+  // mongodb-memory-server. Pure suites are unaffected -- this is a ceiling, not a delay.
+  testTimeout: 120_000,
   clearMocks: true,
 };

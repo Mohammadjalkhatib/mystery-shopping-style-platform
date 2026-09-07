@@ -8,7 +8,7 @@
     "dev": "nest start --watch",
     "build": "nest build",
     "start": "node dist/main.js",
-    "db:seed": "echo \"[db:seed] not implemented until feat/data-model\" && exit 0"
+    "db:seed": "node dist/db/seed.js"
   },
   "dependencies": {
     "@msp/shared": "0.1.0",

@@ -413,3 +413,115 @@ the session window; idempotent upsert must be **first-write-wins** (`$setOnInser
 so a re-flush cannot rewrite a stored fix; pings accepted only while the session is `active`;
 fixes per session capped; and `venue.radiusM` bounded in the schema, because a 5000 m radius
 auto-verifies the city. `batchFlushedHonestVisit` exists as an executable form of the first one.
+
+---
+
+## D-011: No 2dsphere index on venues, and GeoJSON storage anyway
+
+**Date:** 2026-09-07
+**Status:** accepted
+
+**Decision.** Venue coordinates are stored as a proper GeoJSON `Point` in `[lng, lat]` order,
+but **no 2dsphere index is created**. The backlog listed one; it is deliberately not here.
+
+**Context.** D-002 cited geospatial querying as a reason to choose MongoDB, and the backlog
+scheduled a 2dsphere index on this branch. Neither survives contact with the design that was
+actually built. Rule 7 computes distance with haversine in pure code, inside the verification
+engine, because that code has to stay free of I/O. Rule 6 keeps the business console off the
+ping collection entirely. Between them there is **no query anywhere in this system that a
+2dsphere index would serve** — not the evaluator, not the console, not the participant app.
+
+**Alternatives considered.**
+
+- *Create the index anyway, as the backlog said.* It is one line and venues are a tiny,
+  rarely-written collection, so the write cost is close to zero. Rejected because "close to
+  zero cost" is how a schema accumulates cargo: the next person reads a 2dsphere index,
+  reasonably assumes something does a `$near` query, and goes looking for it. An index is a
+  claim about how the data is read, and this one would be false.
+- *Store plain `lat`/`lng` numbers and skip GeoJSON too.* Simpler for the haversine code,
+  which wants two numbers. Rejected because it makes the index a migration rather than a
+  one-liner, and because `[lng, lat]` ordering is a bug you want to make once, in one place,
+  behind accessors — not rediscover later under time pressure.
+
+**Consequences.** If a proximity query ever appears — a "venues near me" picker in the admin
+form is the likely first one — it needs one `VenueSchema.index({ location: '2dsphere' })` and
+nothing else, because the storage is already correct. Until then the schema does not pretend
+to support a query nobody makes. This also weakens one of D-002's stated reasons for choosing
+MongoDB, which is worth saying out loud: the geospatial argument in that entry did not survive,
+and the TTL argument, corrected in D-002's own consequences and implemented in
+`apps/api/src/db/indexes.ts`, is the one actually doing the work.
+
+---
+
+## D-012: Findings from the first schema-reviewer pass, and what was changed
+
+**Date:** 2026-09-07
+**Status:** accepted
+
+**Decision.** Twelve changes to the data model in response to the review required by
+`CLAUDE.md` §6. Two were blocking. One correction to the reviewer, recorded because a
+half-true validator is worse than a documented gap.
+
+**Context.** The pass ran against the schemas, the TTL reconciliation, the seed and their
+tests, with the D-010 constraints as the checklist.
+
+**The two blocking findings.**
+
+1. **`rollups` was `type: Object`** — unvalidated Mixed, on the one document the console is
+   allowed to read (rule 6) and which is permanent (rule 8). A missing `minDistanceM`, a
+   typo'd `dwellSecs` or a `coverageRatio` of −4 all wrote silently, and the console would
+   render blanks forever with no repair short of a re-run. The shape had **already drifted
+   inside the branch**: a test wrote `rollups: {}` and passed. Now a real sub-schema, every
+   field required and bounded, with the two genuinely-nullable fields explicit.
+2. **The TTL index had two owners.** `PingSchema` declared it with a hardcoded 30-day literal,
+   so Mongoose's `autoIndex` issued its own `createIndex` concurrently with the boot-time
+   reconcile using `PING_RETENTION_DAYS`. Whichever landed second either conflicted — surfaced
+   on the model's `index` event, which nobody listens to, so swallowed — or silently won. The
+   effective retention window depended on a race while the log claimed the configured value
+   either way. This is precisely the failure `indexes.ts` was written to prevent, restated one
+   layer up, and the tests structurally could not see it. The index is now declared in exactly
+   one place and the schema exports only its name.
+
+**Also changed.** `timestamps` removed from `Ping` (its `createdAt` duplicated `receivedAt`
+and put a *third* clock into a design whose premise is exactly two); a `{state, startedAt}`
+index added because the hard-cap timer reads `startedAt` while the abandon scan filters on
+`lastSeenAt`, so a still-pinging session over its cap never appeared in any scan; `NaN`
+rejected on `score` (both `NaN < 0` and `NaN > 100` are false, and the path that produces it
+is reachable); signal `code`/`contribution`/`reason` all required (rule 1 was accepting
+`{code: 'x'}`); **append-only enforced with a pre-hook on `verificationResults` and
+`sessionEvents`** rather than resting on everyone remembering it; `MAX_PINGS_PER_SESSION`
+with the atomic-update requirement documented for ingest; unique indexes behind the seed's
+upsert keys; a ceiling as well as a floor on `PING_RETENTION_DAYS`; `outbox.lastError` capped.
+
+**The seed was destroying its own demo.** Sessions were created `pending` with
+`lastSeenAt = now` under `$setOnInsert`. Fifteen minutes after the first `docker compose up`
+the reaper marked all ten `abandoned` — terminal — and re-running the seed could not revive
+them, because the insert never fired again. The only recovery was `docker compose down -v`.
+The clocks are now `$set` on every run, which also makes re-seeding the documented way to
+reset a stale demo.
+
+**Where the reviewer was wrong, and why it is recorded.** It argued that having declined the
+2dsphere index (D-011) we owed a coordinate validator, since a 2dsphere index rejects
+malformed GeoJSON for free — and gave `[29.3759, 47.9774]` (the Kuwait pair swapped) as the
+motivating example. The validator was added and is worth having, but **it does not catch that
+example**: lng 29.4 / lat 48.0 is a perfectly valid point in Ukraine, and no range check can
+distinguish it from an intentional venue. It does catch swaps for any venue whose longitude
+exceeds 90°, which is most of Asia and the Pacific. Rather than claim more, there is now a
+test named for the gap. Closing it properly means bounding venues to an operating region,
+which is a product decision, not a schema one.
+
+**Consequences.** Deliberately not done, and each is a real exposure: the outbox has no lease,
+so a worker that dies mid-row leaves `status: 'processing'` forever and that visit is never
+verified and never retried — the silent-failure class §5 exists for, and it belongs to
+`feat/report-and-outbox`. The venue config is read live at evaluation time rather than
+snapshotted onto the session, so an admin editing `radiusM` between a visit and its evaluation
+mixes two vintages in one verdict. The console list still needs a per-row join for the verdict;
+denormalising `latestVerdict` onto `Session` would collapse it to one indexed query without
+violating rule 8. And ids are `String` rather than `ObjectId` throughout, which costs roughly
+double on the leading field of every ping index — consistent, deliberate, and not worth
+churning now, but it is a cost on the hot collection rather than an oversight.
+
+**Verified on the real target, not just in tests.** The reviewer flagged that Atlas M0 is a
+shared tier that restricts some admin commands and that `collMod` should be checked before
+merging rather than after. It works: the retention window was narrowed 30→7 days and widened
+back on the live M0 cluster, both through `collMod`, with the privacy warnings firing.
