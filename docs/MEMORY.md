@@ -502,3 +502,67 @@ reads pings), rule 8 (an override is a separate document, never a mutation).
 - SSE fan-out is single-instance (D-013). A second replica would split the consoles.
 - The web bundle is 495 kB, mostly MUI. Fine for a demo, worth a code-split before anything
   resembling production.
+
+---
+
+### 2026-09-08 - feat/participant-flow
+
+**What.** The participant surface: consent, bounded location capture, an offline queue, end
+and report. **The end-to-end slice is now complete** — a participant runs a visit on a phone
+and the console sees it appear on its own.
+
+**Why.** D-005 (bounded capture, not continuous tracking), D-014 (the two deviations this
+branch forced).
+
+**Files.**
+
+- `apps/api/src/session/dto/consent.dto.ts` + service/controller additions: consent, and
+  `GET /sessions/mine`
+- `apps/web/src/participant/useVisitTracker.ts`: geolocation, visibility, wake lock, flushing
+- `apps/web/src/participant/offlineQueue.ts` + `.spec.ts`: the buffer and 9 tests
+- `apps/web/src/participant/Consent.tsx`, `VisitPage.tsx`
+- `apps/api/src/pings/dto/create-ping.dto.ts`: the float fix
+- `apps/api/src/db/schemas/org-venue.schema.ts`, `db/seed.ts`, `auth/demo-users.ts`: the org id
+- `apps/web/tsconfig.spec.json`, `jest.config.js`
+
+**Now true.**
+
+1. **Consent gates location capture.** `start()` returns 409 `CONSENT_REQUIRED` without it.
+   Consent is recorded on the ASSIGNMENT with a server clock and a version, and re-consenting
+   keeps the first timestamp.
+2. **Capture stops when the page is hidden, deliberately.** Not an optimisation — a
+   backgrounded tab is throttled or suspended, so releasing the watch makes the gap explicit
+   instead of recording stale fixes. `coverageRatio` is what scores it.
+3. **Wake Lock is opportunistic and released on hide.** It stops a fix being lost
+   mid-interaction; it is NOT an instruction to hold a lit phone in a shop, which would defeat
+   the premise of a mystery visit. This is the clarification D-010 demanded of D-005.
+4. **Sampling is throttled to 30 s in the client.** `watchPosition` fires on movement, not on a
+   timer, so a walking participant would otherwise burn `MAX_PINGS_PER_SESSION`.
+5. **The offline buffer is `localStorage`, not IndexedDB** (D-014). Deviation from the backlog,
+   recorded rather than done quietly. `clientPingId` is generated once at capture time, which
+   is the property that actually makes a retry safe.
+6. **`ClientOrg._id` is a deterministic string** shared with the demo accounts.
+7. **`accuracyM` has no `maxDecimalPlaces`.** It rejected honest fixes.
+
+**Two bugs 353 passing tests could not see.** Both lived in seams between subsystems that were
+each correct alone, and both would have broken the demo:
+
+- `@IsNumber({ maxDecimalPlaces: 6 })` rejected honest fixes, because `8.6 + 2 * 1.4` is
+  `11.399999999999999` and every fixture used tidy numbers.
+- The seed's org ObjectId never matched the demo accounts' literal `'org-alfa-retail'`, so the
+  tenancy filter matched nothing and **the console was empty for every seeded visit.**
+
+Found by running the real flow from `db:seed` to the screen. Written up in `docs/AI-NOTES.md`,
+because the lesson generalises: a green suite says the parts agree with my assumptions, not
+that they agree with each other.
+
+**Open.**
+
+- **Still no reaper**, so `abandoned` and `expired` remain unreachable. Blocked on the D-003
+  question about an in-process cron on a sleeping free tier.
+- **No admin surface.** The seed is the only way venues, tasks and assignments appear.
+- **Untested on a real phone.** Everything here was exercised over HTTP; the geolocation
+  permission prompt, the wake lock and iOS Safari's suspension behaviour are unverified. This
+  is the largest remaining unknown and needs an HTTPS deployment to check at all.
+- Nothing is deployed, and `docker compose up` still cannot work: no Dockerfiles, and the
+  `mongo` container is standalone so rule 9's transaction would fail against it.
