@@ -115,3 +115,56 @@ the full dependency list with a reason per package and the compatibility matrix.
 - Nest boot showed a ~17s gap before route resolution on Windows. Not diagnosed. Watch it during
   `feat/participant-flow`; if it affects `nest start --watch` the dev loop will hurt.
 - `theme.ts` still carries placeholder brand values. Time-box the extraction to 20 minutes.
+
+---
+
+### 2026-09-07 - feat/session-state-machine
+
+**What.** The pure session state machine, its transition allowlist, and the reaper timer
+rules. No HTTP, no persistence, no scheduler yet.
+
+**Why.** First of the two branches where being wrong is expensive and silent. It is also the
+spec for two collections that `feat/data-model` will write, which is why it now comes before
+that branch rather than after.
+
+**Files.**
+
+- `apps/api/src/session/state-machine.ts`: `transition`, `canTransition`, `allowedEvents`,
+  `isTerminal`, `dueEvent`. One type-only import from `@msp/shared` and nothing else
+- `apps/api/src/session/state-machine.spec.ts`: 93 tests, including the full state x event
+  product enumerated rather than sampled
+
+**Now true.**
+
+1. **Seven legal transitions, and only seven.** `pending -> active` (start),
+   `pending -> abandoned`, `active -> ended` (end), `active -> abandoned`,
+   `active -> expired`, `ended -> submitted` (submit), `ended -> abandoned`.
+2. **`submitted`, `abandoned` and `expired` are terminal.** Nothing leaves them. This is what
+   keeps rule 8 (append-only verification results) true — a verdict cannot be reopened by a
+   later state change.
+3. **`ended -> expired` deliberately does not exist.** The hard cap bounds how long we
+   *track* someone; once ended we are not tracking, so an unsubmitted report is `abandon`.
+   Having both would make two timers race for the same document.
+4. **No self-transitions.** Double-tapping "end visit" on a flaky connection is a 409, not a
+   silent no-op. Rule 5.
+5. **`transition` never no-ops.** It returns `{ok:false, code:'ILLEGAL_TRANSITION', from,
+   event, allowed, reason}`. The HTTP layer maps that to 409 and the body already carries
+   both the current state and the events that *would* have been legal.
+6. **The module is pure.** No `Date.now()`, no Mongoose, no Nest, no `process.env`, no
+   randomness. `dueEvent` takes `now` as an argument, which is why the timer tests need no
+   fake timers.
+7. **`dueEvent` prefers `expire` over `abandon`** when both have fired, because "tracked for
+   the maximum time" is a more accurate thing to tell a participant than "you went quiet".
+   Pending sessions are measured from `createdAt`, not `lastSeenAt`.
+8. **The reaper must still route its result through `transition`.** `dueEvent` only suggests;
+   it does not authorise. A test asserts every event a timer can produce is legal in the
+   state that produced it.
+
+**Open.**
+
+- The `sessionEvent` collection is **not** in this branch. It is a schema, so it belongs to
+  `feat/data-model`, which now follows this branch. The shape it needs is
+  `(sessionId, from, event, to, at)` — exactly what `TransitionResult` carries on success.
+- No scheduler wiring. `@nestjs/schedule` is installed but nothing calls `dueEvent` yet, and
+  the open question about whether an in-process cron survives a free-tier spin-down
+  (`docs/REQUIREMENTS.md` §5) is still unanswered.

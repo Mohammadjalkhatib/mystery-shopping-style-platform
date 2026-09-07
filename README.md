@@ -93,6 +93,22 @@ npm run dev              # api on :3000, web on :5173
 Object storage: without Docker you need either a local MinIO or an R2 bucket. Set the five
 `S3_*` values in `.env`. Evidence upload is the only feature that needs it.
 
+
+### Using MongoDB Atlas instead of the container
+
+The free M0 tier works and is what the deployed API uses. Three things catch people out:
+
+1. **The variable is `MONGO_URI`**, not `MONGODB_URI`. The app falls back to localhost if it
+   is misnamed, so a typo looks like "Atlas is down" rather than a config error.
+2. **Put the database name in the path.** Atlas copies the SRV string without one, and
+   Mongoose then silently uses `test`:
+   `mongodb+srv://<user>:<pass>@<cluster>.mongodb.net/mystery-shopping?retryWrites=true&w=majority`
+3. **Allowlist your IP** in Atlas under Network Access, and add the deployed API's egress IP
+   too. A missing allowlist surfaces as a connection timeout, not an auth error.
+
+M0 is a replica set, so multi-document transactions (design rule 9) and TTL indexes
+(rule 10) both work. Verified against 8.0.32.
+
 **Enable the git hooks once per clone:**
 
 ```bash
