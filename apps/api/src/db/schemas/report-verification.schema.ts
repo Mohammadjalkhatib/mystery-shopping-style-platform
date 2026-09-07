@@ -77,6 +77,20 @@ export const OutboxSchema = SchemaFactory.createForClass(OutboxEntry);
 OutboxSchema.index({ status: 1, runAfter: 1 });
 
 /**
+ * The RECLAIM query, and the reason it exists.
+ *
+ * `status: 'processing'` is set when a worker claims a row, and nothing moved it back. A
+ * worker that died mid-row left that visit unverified and un-retried, forever and silently
+ * -- the failure class CLAUDE.md section 5 says to care about. Rule 9 promises a retry for a
+ * FAILED attempt; it said nothing about a LOST one. Found by the schema-reviewer pass (D-012)
+ * and closed by the lease in evaluator.service.ts.
+ *
+ * `{status, lastAttemptAt}` serves `{status: 'processing', lastAttemptAt: {$lt: cutoff}}`;
+ * the `{status, runAfter}` index above cannot, because it has no lastAttemptAt component.
+ */
+OutboxSchema.index({ status: 1, lastAttemptAt: 1 });
+
+/**
  * Denormalised rollups. Mirrors `VisitRollups` in ../../verification/types.ts.
  *
  * Every field is required and bounded, because this is the console's ONLY substitute for the

@@ -1,6 +1,42 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { SESSION_EVENTS, SESSION_STATES, type SessionEvent, type SessionState } from '@msp/shared';
+import {
+  SESSION_EVENTS,
+  SESSION_STATES,
+  VERDICTS,
+  type SessionEvent,
+  type SessionState,
+  type Verdict,
+} from '@msp/shared';
 import { HydratedDocument } from 'mongoose';
+
+/**
+ * The venue geofence as it was when a session started. See `Session.venueSnapshot`.
+ *
+ * Deliberately a copy, not a reference: the whole point is that it does not move when the
+ * venue does.
+ */
+@Schema({ _id: false })
+export class VenueSnapshot {
+  @Prop({ required: true })
+  lat!: number;
+
+  @Prop({ required: true })
+  lng!: number;
+
+  @Prop({ required: true, min: 25, max: 500 })
+  radiusM!: number;
+
+  @Prop({ required: true, min: 0, max: 500 })
+  nearBufferM!: number;
+
+  @Prop({ required: true })
+  indoor!: boolean;
+
+  /** Server clock at which this copy was taken. */
+  @Prop({ required: true, type: Date })
+  snapshotAt!: Date;
+}
+export const VenueSnapshotSchema = SchemaFactory.createForClass(VenueSnapshot);
 
 /**
  * Hard ceiling on fixes per session (D-010).
@@ -138,6 +174,37 @@ export class Session {
    */
   @Prop({ required: true, default: 0, min: 0, max: MAX_PINGS_PER_SESSION })
   pingCount!: number;
+
+  /**
+   * The venue's geofence configuration AS IT WAS when this session started.
+   *
+   * Closes a D-012 finding. `distanceM` and `presence` are already pinned per ping at ingest
+   * time, but the evaluator previously read the venue LIVE, so an admin editing `radiusM`
+   * between the visit and its evaluation -- or before a re-run under a newer engineVersion --
+   * mixed two vintages of venue config into one verdict. That can make `proximity` contradict
+   * `presence` again in exactly the way D-010 item 5 fixed.
+   *
+   * One copy per visit on a cold document, not per ping. Null only for sessions created
+   * before this field existed, and for `pending` sessions that never started.
+   */
+  @Prop({ type: VenueSnapshotSchema, default: null })
+  venueSnapshot!: VenueSnapshot | null;
+
+  /**
+   * Denormalised pointer to the newest verification result, written by the evaluator.
+   *
+   * Does NOT violate rule 8: the result stays append-only, the session merely carries a
+   * pointer to the latest one. Without this the console list needs a second query per row
+   * (D-012), and it is also exactly what the SSE payload wants to send.
+   */
+  @Prop({ type: String, default: null })
+  latestResultId!: string | null;
+
+  @Prop({ type: String, enum: [...VERDICTS, null], default: null })
+  latestVerdict!: Verdict | null;
+
+  @Prop({ type: Number, default: null, min: 0, max: 100 })
+  latestScore!: number | null;
 }
 export type SessionDocument = HydratedDocument<Session>;
 export const SessionSchema = SchemaFactory.createForClass(Session);
