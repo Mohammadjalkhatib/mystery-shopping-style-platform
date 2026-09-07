@@ -1,0 +1,18 @@
+# Normalise everything to LF in the repository.
+* text=auto eol=lf
+
+# Shell scripts and git hooks MUST be LF, even on Windows. A CRLF shebang
+# makes bash fail with "bad interpreter" and the hook silently stops running.
+*.sh            text eol=lf
+.githooks/**    text eol=lf
+
+# Windows-only scripts stay CRLF
+*.bat           text eol=crlf
+*.cmd           text eol=crlf
+
+# Binary
+*.png binary
+*.jpg binary
+*.webp binary
+*.ico binary
+*.zip binary
