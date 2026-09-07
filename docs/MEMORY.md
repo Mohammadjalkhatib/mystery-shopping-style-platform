@@ -370,3 +370,70 @@ attack list rather than a feature description.
   radius edit between visit and evaluation still mixes vintages.
 - No rate limit beyond the per-session budget. A participant can post 20 fixes as fast as the
   network allows; the cap bounds total volume, not rate.
+
+---
+
+### 2026-09-07 - feat/report-and-outbox
+
+**What.** The visit lifecycle over HTTP, transactional report submission, and the evaluator.
+**The system produces verdicts for the first time** — until this branch nothing called
+`evaluate()`. Also closes both D-012 open items.
+
+**Why.** Rule 9 (decoupled submit and verification), rule 8 (append-only results), and the two
+outstanding findings from the schema review.
+
+**Files.**
+
+- `apps/api/src/session/sessions.service.ts`: `apply()` — the single funnel every state change
+  goes through, including the reaper's when it exists. Start takes the venue snapshot
+- `apps/api/src/session/sessions.controller.ts`: `GET/POST /sessions/:id`, `/start`, `/end`
+- `apps/api/src/reports/reports.service.ts`: the rule 9 transaction
+- `apps/api/src/reports/reports.controller.ts`, `dto/create-report.dto.ts`
+- `apps/api/src/verification/evaluator.service.ts`: outbox consumer with a lease, the ONLY
+  bridge between the database and the pure engine
+- `apps/api/src/db/schemas/task-session.schema.ts`: `VenueSnapshot`, `latestVerdict`/
+  `latestScore`/`latestResultId`
+- `apps/api/src/db/schemas/report-verification.schema.ts`: the `{status, lastAttemptAt}`
+  reclaim index
+- `apps/api/src/reports/visit-lifecycle.spec.ts`: 21 tests covering the whole loop
+
+**Now true.**
+
+1. **There is exactly one way to change session state**: `SessionsService.apply()`. It asks the
+   pure state machine, applies the update with **the current state in the filter** (a
+   compare-and-swap, so two concurrent requests cannot both win), and writes an append-only
+   `sessionEvent`. Do not add a second path.
+2. **The state transition happens FIRST inside the submit transaction.** With the report
+   written first, a second submit hit the unique index on `reports.sessionId` and surfaced as
+   a **500 duplicate-key error before the state machine was consulted** — rule 5 requires a
+   409 carrying the current state. The unique index is now the last line of defence, not the
+   first. Found by the tests.
+3. **Submit is one transaction**: state change + event + report + outbox row, or none of it.
+   Asserted both ways, including rollback. Needs a replica set.
+4. **The evaluator leases outbox rows** (`LEASE_SECONDS = 120`). A worker that dies mid-row is
+   reclaimed rather than leaving that visit unverified forever. Claim is atomic; two workers
+   racing means one gets the row and the other finds nothing. Closes a D-012 finding.
+5. **The evaluator reads the VENUE SNAPSHOT, never the live venue.** An admin widening
+   `radiusM` after a visit no longer changes how that visit is judged. Closes the other D-012
+   finding, and there is a test that edits the venue mid-visit and asserts the reason string
+   still says 75 m.
+6. **`latestVerdict`/`latestScore`/`latestResultId` are denormalised onto the session** by the
+   evaluator. Rule 8 is intact — the result is still append-only, the session just points at
+   the newest one. This is what the console list and the SSE payload will read.
+7. **Backoff and a give-up point**: failed rows retry with exponential backoff to
+   `MAX_ATTEMPTS = 5`, then land in `failed` rather than spinning the queue.
+8. **Verified live on Atlas**: start → 8 pings → end → submit → drain → a stored verdict with
+   signals and reasons, and `session.latestVerdict` matching the result document.
+
+**Open.**
+
+- **No reaper.** `dueEvent()` exists and `apply()` exists, but nothing calls them on a
+  schedule, so `abandoned` and `expired` are unreachable in practice. Blocked on the D-003
+  question the README raises: an in-process `@nestjs/schedule` cron does not run while a
+  free-tier service is asleep, and `SESSION_ABANDON_AFTER_SECONDS` is 900 — exactly the idle
+  window. Lazy-on-read reaping inside `SessionsService.view()` is the cheap deterministic
+  answer and is not built yet.
+- No SSE. The console cannot see any of this yet; that is `feat/business-console`.
+- The evaluator is only driven by an explicit `drain()` call. Nothing invokes it on a timer or
+  after submit, so today a verdict appears only when something asks. Wiring that up belongs
+  with the SSE work, since they share the same trigger.

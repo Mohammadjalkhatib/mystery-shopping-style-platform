@@ -5,6 +5,9 @@ import { HealthController } from './health/health.controller.js';
 import { AuthModule } from './auth/auth.module.js';
 import { DbModule } from './db/db.module.js';
 import { PingsModule } from './pings/pings.module.js';
+import { ReportsModule } from './reports/reports.module.js';
+import { SessionsModule } from './session/sessions.module.js';
+import { VerificationModule } from './verification/verification.module.js';
 
 @Module({
   imports: [
@@ -22,6 +25,9 @@ import { PingsModule } from './pings/pings.module.js';
     AuthModule,
     DbModule,
     PingsModule,
+    SessionsModule,
+    ReportsModule,
+    VerificationModule,
   ],
   controllers: [HealthController],
 })
