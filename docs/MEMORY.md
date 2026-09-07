@@ -313,3 +313,60 @@ Atlas M0 cluster.
   append-only, the session carries a pointer. That is also what the SSE payload wants.
 - `autoIndex` is on by default, so index builds run on every boot. Fine at this size, wrong
   for a large collection; revisit before anything resembling production traffic.
+
+---
+
+### 2026-09-07 - feat/ping-ingest
+
+**What.** The batch ping endpoint. Closes Batch 1: the spine is complete and the pieces
+connect — a fix posted here produces exactly the evidence shape the verification engine
+consumes.
+
+**Why.** Every line of this branch traces to a constraint handed forward by D-010
+(spoof-adversary) or D-012 (schema-reviewer). It is the first branch built against a written
+attack list rather than a feature description.
+
+**Files.**
+
+- `apps/api/src/pings/dto/create-ping.dto.ts`: the whole of rule 2 in one place. Only four
+  client-owned fields exist; anything else is a 400 naming the field
+- `apps/api/src/pings/pings.service.ts`: ingest. Per-fix server clock, device-clock bounds,
+  first-write-wins upsert, one atomic budget-and-state update
+- `apps/api/src/pings/pings.controller.ts`: `POST /sessions/:sessionId/pings`, participant-only
+- `apps/api/src/pings/pings.spec.ts`: 32 tests against a real replica set, one describe block
+  per documented constraint
+
+**Now true.**
+
+1. **`receivedAt` is stamped per fix, inside the loop.** A batch-level stamp would collapse
+   `coverageRatio`, zero `dwellSeconds`, and silently disable the engine's teleport check for
+   the whole batch. A test asserts distinct, monotonic timestamps within one batch.
+2. **Server computes `distanceM` and `presence`; the DTO REJECTS them.** Posting `distanceM`
+   returns 400 `property distanceM should not exist` — it is not stripped and 201'd (rule 2).
+3. **Idempotent, first-write-wins.** `$setOnInsert` on `(sessionId, clientPingId)`. A re-flush
+   reports `accepted: 0, duplicates: n` and **cannot rewrite a stored fix's coordinates**.
+4. **The budget is not burned by duplicates.** `$inc` uses `upsertedCount`, never batch length,
+   or rule 4's safety guarantee becomes a slow leak.
+5. **Budget, state re-check and `lastSeenAt` are ONE atomic conditional update.** A
+   read-then-check would be a TOCTOU across two concurrent offline flushes — exactly the
+   scenario rule 4 exists for.
+6. **Fixes are accepted only while `active`**, returning 409 with the current state and the
+   legal events. This closes the flush-after-end hole: the state machine allows
+   `ended -> submit`, so without it a participant could end the visit then flush a forged queue.
+7. **`accuracyM` must be positive and is never rounded.** Zero accuracy grants a free geofence;
+   rounding trips the engine's `distinct === 1` spoof branch on honest Android traces.
+8. **`capturedAt` is bounded to the session window ±6 h.** Out-of-window fixes are dropped and
+   counted, not fatal — one bad clock reading must not reject nineteen good fixes.
+9. **Authorization**: participants only, own session only. An admin posting fixes is 403 —
+   there is no legitimate reason for an admin to author location evidence.
+10. **Verified live on Atlas**: 3 accepted, re-flush 3 duplicates, 3 distinct `receivedAt`,
+    accuracy stored as sent, client `distanceM` refused by name.
+
+**Open.**
+
+- Nothing calls `evaluate()` yet. Ingest produces the trace; the outbox and evaluator that
+  turn it into a verdict are `feat/report-and-outbox`.
+- The venue config is still read live rather than snapshotted onto the session (D-012), so a
+  radius edit between visit and evaluation still mixes vintages.
+- No rate limit beyond the per-session budget. A participant can post 20 fixes as fast as the
+  network allows; the cap bounds total volume, not rate.
