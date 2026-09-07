@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import type { AuthUser, SessionEvent, SessionState } from '@msp/shared';
 import type { ClientSession, Model } from 'mongoose';
 import { Venue } from '../db/schemas/org-venue.schema.js';
+import { Assignment } from '../db/schemas/task-session.schema.js';
 import {
   Session,
   SessionEventDoc,
@@ -13,6 +14,8 @@ import { transition } from './state-machine.js';
 export interface SessionView {
   id: string;
   state: SessionState;
+  /** So the client knows whether to show the consent gate. */
+  consentedAt: Date | null;
   venue: { name: string; lat: number; lng: number; radiusM: number; indoor: boolean };
   startedAt: Date | null;
   endedAt: Date | null;
@@ -32,6 +35,7 @@ export class SessionsService {
     @InjectModel(Session.name) private readonly sessions: Model<Session>,
     @InjectModel(SessionEventDoc.name) private readonly events: Model<SessionEventDoc>,
     @InjectModel(Venue.name) private readonly venues: Model<Venue>,
+    @InjectModel(Assignment.name) private readonly assignments: Model<Assignment>,
   ) {}
 
   /**
@@ -111,13 +115,68 @@ export class SessionsService {
   }
 
   /**
+   * Record consent.
+   *
+   * Server clock, server-recorded, against the assignment rather than the session: consent is
+   * to take part in the task, and it survives a session being abandoned and re-created.
+   * Idempotent -- consenting twice keeps the FIRST timestamp, because the question a dispute
+   * asks is when they first agreed, not when they last tapped the button.
+   */
+  async consent(
+    sessionId: string,
+    user: AuthUser,
+    consentVersion: string,
+  ): Promise<{ consentedAt: Date; consentVersion: string }> {
+    const session = await this.assertOwned(sessionId, user);
+    const existing = await this.assignments
+      .findById(session.assignmentId)
+      .lean<{ consentedAt: Date | null; consentVersion: string | null }>();
+    if (!existing) throw new NotFoundException('Assignment not found');
+
+    if (existing.consentedAt) {
+      return { consentedAt: existing.consentedAt, consentVersion: existing.consentVersion ?? consentVersion };
+    }
+
+    const now = new Date();
+    await this.assignments.updateOne(
+      { _id: session.assignmentId },
+      { $set: { consentedAt: now, consentVersion } },
+    );
+    return { consentedAt: now, consentVersion };
+  }
+
+  /** The visits belonging to the signed-in participant. Never takes an id from the caller. */
+  async mine(user: AuthUser): Promise<SessionView[]> {
+    const rows = await this.sessions
+      .find({ participantId: user.id, state: { $in: ['pending', 'active', 'ended'] } })
+      .sort({ createdAtServer: -1 })
+      .limit(20)
+      .lean<{ _id: unknown }[]>();
+    return Promise.all(rows.map((r) => this.view(String(r._id))));
+  }
+
+  /**
    * Start a visit.
    *
    * Takes the venue snapshot here (D-012): the geofence the participant is judged against is
    * the one in force when they started, not whatever an admin edits it to later.
+   *
+   * Refuses without consent. Starting location capture on someone who has not agreed to it
+   * would make the consent screen decoration, and this is the most sensitive data the system
+   * collects.
    */
   async start(sessionId: string, user: AuthUser): Promise<SessionView> {
     const session = await this.assertOwned(sessionId, user);
+
+    const assignment = await this.assignments
+      .findById(session.assignmentId)
+      .lean<{ consentedAt: Date | null }>();
+    if (!assignment?.consentedAt) {
+      throw new ConflictException({
+        code: 'CONSENT_REQUIRED',
+        message: 'Location capture cannot start until the participant has consented.',
+      });
+    }
     const venue = await this.venues.findById(session.venueId).lean<{
       name: string;
       location: { coordinates: [number, number] };
@@ -158,12 +217,18 @@ export class SessionsService {
       _id: unknown;
       state: SessionState;
       venueId: string;
+      assignmentId: string;
       startedAt: Date | null;
       endedAt: Date | null;
       pingCount: number;
       venueSnapshot: VenueSnapshot | null;
     }>();
     if (!s) throw new NotFoundException('Session not found');
+
+    const assignment = await this.assignments
+      .findById(s.assignmentId)
+      .select({ consentedAt: 1 })
+      .lean<{ consentedAt: Date | null }>();
 
     // Prefer the snapshot: it is what the participant is actually being judged against.
     const venue = await this.venues.findById(s.venueId).lean<{
@@ -177,6 +242,7 @@ export class SessionsService {
     return {
       id: String(s._id),
       state: s.state,
+      consentedAt: assignment?.consentedAt ?? null,
       venue: {
         name: venue?.name ?? 'Unknown venue',
         lat: snap?.lat ?? venue?.location.coordinates[1] ?? 0,
@@ -194,11 +260,11 @@ export class SessionsService {
   private async assertOwned(
     sessionId: string,
     user: AuthUser,
-  ): Promise<{ venueId: string; participantId: string }> {
+  ): Promise<{ venueId: string; participantId: string; assignmentId: string }> {
     const s = await this.sessions
       .findById(sessionId)
-      .select({ participantId: 1, venueId: 1 })
-      .lean<{ participantId: string; venueId: string }>();
+      .select({ participantId: 1, venueId: 1, assignmentId: 1 })
+      .lean<{ participantId: string; venueId: string; assignmentId: string }>();
     if (!s) throw new NotFoundException('Session not found');
     if (s.participantId !== user.id) {
       throw new ForbiddenException('This session belongs to another participant');

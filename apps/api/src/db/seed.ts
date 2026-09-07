@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { DEMO_CLIENT_ORG_ID } from '../auth/demo-users.js';
 import { ClientOrgSchema, VenueSchema } from './schemas/org-venue.schema.js';
 import { AssignmentSchema, SessionSchema, TaskSchema } from './schemas/task-session.schema.js';
 
@@ -50,12 +51,19 @@ export async function seed(uri: string): Promise<void> {
   const Assignment = conn.model('Assignment', AssignmentSchema);
   const Session = conn.model('Session', SessionSchema);
 
-  const org = await Org.findOneAndUpdate(
-    { slug: SEED_ORG_SLUG },
-    { $setOnInsert: { name: 'Alfa Retail', slug: SEED_ORG_SLUG } },
+  /**
+   * The org is seeded with a DETERMINISTIC _id that matches what the demo accounts carry.
+   *
+   * Previously this took whatever ObjectId Mongo generated, while demo-users.ts carried the
+   * literal 'org-alfa-retail'. The tenancy filter compares the two, so it never matched and
+   * the console was empty for every seeded visit. See D-014.
+   */
+  await Org.findOneAndUpdate(
+    { _id: DEMO_CLIENT_ORG_ID },
+    { $setOnInsert: { _id: DEMO_CLIENT_ORG_ID, name: 'Alfa Retail', slug: SEED_ORG_SLUG } },
     { upsert: true, returnDocument: 'after' },
   );
-  const clientOrgId = String(org._id);
+  const clientOrgId = DEMO_CLIENT_ORG_ID;
 
   let venueCount = 0;
   let taskCount = 0;

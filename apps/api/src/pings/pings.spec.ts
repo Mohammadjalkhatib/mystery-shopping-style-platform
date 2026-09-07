@@ -200,6 +200,18 @@ describe('ping ingest', () => {
       await post(sessionId, { fixes: [fix({ accuracyM: -5 })] }).expect(400);
     });
 
+    it('accepts the messy floats real GPS actually produces', async () => {
+      // 8.6 + 2 * 1.4 = 11.399999999999999. A maxDecimalPlaces cap rejected honest fixes with
+      // a 400 while an attacker picking round numbers sailed through. Found by a live probe,
+      // not by these tests, because every fixture used tidy values.
+      const sessionId = await makeSession();
+      const messy = 8.6 + 2 * 1.4;
+      expect(String(messy)).toContain('999');
+      await post(sessionId, { fixes: [fix({ accuracyM: messy })] }).expect(200);
+      const stored = await Pings.findOne({ sessionId }).lean<{ accuracyM: number }>();
+      expect(stored!.accuracyM).toBe(messy);
+    });
+
     it('does not round accuracyM', async () => {
       // Rounding would trip the engine's `distinct === 1` spoof branch on honest Android
       // traces, which report a quantised repeating accuracy (D-010).

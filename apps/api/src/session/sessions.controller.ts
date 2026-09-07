@@ -1,6 +1,7 @@
-import { Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
 import type { AuthUser } from '@msp/shared';
 import { CurrentUser, Roles } from '../auth/auth.decorators.js';
+import { ConsentDto } from './dto/consent.dto.js';
 import { SessionsService, type SessionView } from './sessions.service.js';
 
 /**
@@ -13,6 +14,25 @@ import { SessionsService, type SessionView } from './sessions.service.js';
 @Controller('sessions')
 export class SessionsController {
   constructor(private readonly sessions: SessionsService) {}
+
+  /** The signed-in participant's own visits. No id is taken from the caller. */
+  @Roles('participant')
+  @Get('mine')
+  mine(@CurrentUser() user: AuthUser): Promise<SessionView[]> {
+    return this.sessions.mine(user);
+  }
+
+  /** Consent, recorded against the assignment with a server timestamp and a version. */
+  @Roles('participant')
+  @Post(':sessionId/consent')
+  @HttpCode(200)
+  consent(
+    @Param('sessionId') sessionId: string,
+    @Body() dto: ConsentDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<{ consentedAt: Date; consentVersion: string }> {
+    return this.sessions.consent(sessionId, user, dto.consentVersion);
+  }
 
   @Roles('participant')
   @Get(':sessionId')
