@@ -168,3 +168,71 @@ that branch rather than after.
 - No scheduler wiring. `@nestjs/schedule` is installed but nothing calls `dueEvent` yet, and
   the open question about whether an in-process cron survives a free-tier spin-down
   (`docs/REQUIREMENTS.md` §5) is still unanswered.
+
+---
+
+### 2026-09-07 - feat/verification-engine
+
+**What.** The pure verification engine: nine signals, weighted scoring from a neutral base,
+verdict banding, rollups, and 15 fixture traces. Plus the canonical haversine and presence
+rule. The most important branch in the project.
+
+**Why.** D-001 (score not boolean), D-009 (how signals combine, and why the weights are a
+prior rather than a fit).
+
+**Files.**
+
+- `apps/api/src/geo/haversine.ts`: the ONE distance implementation, plus the presence rule
+  and the 100 m accuracy cap
+- `apps/api/src/verification/types.ts`: the evidence contract. Also the spec `feat/ping-ingest`
+  must satisfy — every field is server-computed or explicitly labelled untrusted
+- `apps/api/src/verification/rollups.ts`: dwell, coverage, min distance, median accuracy
+- `apps/api/src/verification/signals.ts`: the nine signals and their weights
+- `apps/api/src/verification/engine.ts`: base score, summation, banding
+- `apps/api/test/fixtures/`: `trace-builder.ts` (seeded, deterministic) and `scenarios.ts`
+  (15 named traces)
+- `apps/api/tsconfig.spec.json`: editor/typecheck config for tests, so specs are covered
+  without polluting the build output
+
+**Now true.**
+
+1. **Base score is 50, not 0.** Zero would make "no evidence" identical to "proven absent",
+   which contradicts D-005. A visit we learned nothing about lands in `needs_review`.
+2. **Positives are capped so a perfect honest trace scores 90, not 100.** The first cut let
+   positives sum to +72 over the base, so everything clamped at 100 and the clamp silently ate
+   every penalty — a 9.6 km teleport still auto-verified at 92. **In an additive model the
+   ceiling is a weight.** Do not add a positive signal without re-checking the headroom.
+3. **Signals must not restate one another.** `presenceDwell` and `coverage` now return null
+   when `minDistanceM` is null, because `noUsableEvidence` has already said it. Check any new
+   signal for this.
+4. **Dwell intervals are capped** at one sampling window (3x the expected interval). Without
+   that cap two typed coordinates five minutes apart bought 300 s of dwell from two observed
+   instants and auto-verified at 78, outranking the honest visit it imitated. D-010.
+5. **`sophisticatedSpoof` auto-verifies at 94, and that is pinned by a test on purpose.** A
+   forgery that jitters coordinates, varies accuracy and fakes an approach is indistinguishable
+   from an honest visit from a browser. D-001 says we do not claim to prove presence; this is
+   what that costs. Making it fail would punish honest visits identically.
+6. **Every signal is verdict-decisive.** A test removes each signal in turn and re-scores all
+   15 fixtures; if a band never moves, that signal is decoration and the test fails by name.
+   Three fixtures (`sparseButHonest`, `constantAccuracy`, `noApproachNoDeparture`) exist
+   purely to give the weaker signals a margin where they decide something.
+7. **Dwell is integrated over intervals between fixes, not counted per fix**, so a spoofer
+   cannot buy dwell time by sampling faster.
+8. **The engine is pure**: no Mongoose, no Nest, no `Date.now()`, no `process.env`, no
+   randomness. All time arrives inside the evidence object.
+9. **The geo-fixtures skill had a wrong reference distance** (said 9.6 km, actual 10.62 km).
+   Corrected in the skill and recorded in `docs/AI-NOTES.md`.
+
+**Open.**
+
+- `spoof-adversary` has been run and its findings folded in; see D-010. Two are accepted
+  rather than fixed: the decorative-signal gate is partly circular (fixtures were written to
+  make weak signals decisive), and there is still no server-side network signal (IP region,
+  ASN, mid-session ASN change) anywhere in the evidence contract. That last one is the
+  strongest evidence a browser cannot forge, and the best candidate for the next slice.
+- **Seven constraints are handed forward to `feat/ping-ingest` in D-010.** The critical one:
+  `receivedAt` must be stamped per fix, never per batch. `batchFlushedHonestVisit` is that
+  requirement written as a failing-if-you-get-it-wrong test.
+- Thresholds and weights are a prior, not a fit. D-009 says what would make them principled.
+- No persistence and no outbox yet; `evaluate()` is called by nothing. That is
+  `feat/report-and-outbox`.

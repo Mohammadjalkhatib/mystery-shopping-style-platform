@@ -19,8 +19,9 @@
     "build": "npm run build --workspace @msp/shared && npm run build --workspace @msp/api && npm run build --workspace @msp/web",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
-    "typecheck": "tsc --build --verbose",
-    "db:seed": "npm run db:seed --workspace @msp/api"
+    "typecheck": "tsc --build --verbose && tsc -p apps/api/tsconfig.spec.json",
+    "db:seed": "npm run db:seed --workspace @msp/api",
+    "typecheck:tests": "tsc -p apps/api/tsconfig.spec.json"
   },
   "devDependencies": {
     "@types/jest": "30.0.0",
