@@ -5,6 +5,7 @@ import type { Connection, Model } from 'mongoose';
 import { OutboxEntry, Report } from '../db/schemas/report-verification.schema.js';
 import { Session } from '../db/schemas/task-session.schema.js';
 import { SessionsService } from '../session/sessions.service.js';
+import { EvaluatorRunner } from '../verification/evaluator.runner.js';
 import type { CreateReportDto } from './dto/create-report.dto.js';
 
 @Injectable()
@@ -15,6 +16,7 @@ export class ReportsService {
     @InjectModel(Session.name) private readonly sessions: Model<Session>,
     @InjectModel(OutboxEntry.name) private readonly outbox: Model<OutboxEntry>,
     private readonly sessionsService: SessionsService,
+    private readonly runner: EvaluatorRunner,
   ) {}
 
   /**
@@ -92,6 +94,16 @@ export class ReportsService {
     } finally {
       await dbSession.endSession();
     }
+
+    /**
+     * Nudge the evaluator, AFTER the transaction has committed and without awaiting it.
+     *
+     * Ordering matters: kicking inside the transaction would let the evaluator read a session
+     * the transaction had not committed yet. Not awaiting matters too -- rule 9 makes submit a
+     * fast write that must not fail because verification is slow. If this kick is lost, the
+     * periodic sweep picks the outbox row up, which is the whole point of having an outbox.
+     */
+    this.runner.kick();
 
     return { sessionId, submittedAt: now, queuedForVerification: true };
   }

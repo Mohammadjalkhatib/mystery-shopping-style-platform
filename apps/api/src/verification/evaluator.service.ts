@@ -8,6 +8,8 @@ import {
   VerificationResultDoc,
 } from '../db/schemas/report-verification.schema.js';
 import { Session, type VenueSnapshot } from '../db/schemas/task-session.schema.js';
+import { Venue } from '../db/schemas/org-venue.schema.js';
+import { VisitEventsService } from '../console/visit-events.service.js';
 import { evaluate } from './engine.js';
 import { DEFAULT_ENGINE_CONFIG, type EngineConfig, type EvidenceFix, type VisitEvidence } from './types.js';
 
@@ -32,6 +34,8 @@ export class EvaluatorService {
     @InjectModel(Ping.name) private readonly pings: Model<Ping>,
     @InjectModel(VerificationResultDoc.name)
     private readonly results: Model<VerificationResultDoc>,
+    @InjectModel(Venue.name) private readonly venues: Model<Venue>,
+    private readonly visitEvents: VisitEventsService,
     configService: ConfigService,
   ) {
     // Thresholds are config, not constants, because they are placeholders until there is
@@ -148,6 +152,8 @@ export class EvaluatorService {
   async evaluateSession(sessionId: string): Promise<VerificationResultDoc | null> {
     const session = await this.sessions.findById(sessionId).lean<{
       clientOrgId: string;
+      participantId: string;
+      venueId: string;
       startedAt: Date | null;
       endedAt: Date | null;
       venueSnapshot: VenueSnapshot | null;
@@ -235,6 +241,27 @@ export class EvaluatorService {
         },
       },
     );
+
+    /**
+     * Announce it. This is what makes the console update with no refresh (D-004), and it is
+     * deliberately the LAST thing that happens: the event is only published once the result
+     * and the session pointer are both durably written, so a listener cannot be told about a
+     * verdict it would then fail to read.
+     */
+    const venue = await this.venues
+      .findById(session.venueId)
+      .select({ name: 1 })
+      .lean<{ name: string }>();
+
+    this.visitEvents.publish({
+      clientOrgId: session.clientOrgId,
+      sessionId,
+      verdict: output.verdict,
+      score: output.score,
+      venueName: venue?.name ?? 'Unknown venue',
+      participantId: session.participantId,
+      endedAt: session.endedAt.toISOString(),
+    });
 
     this.logger.log(
       `Session ${sessionId}: ${output.verdict} (${output.score}) via ${output.engineVersion}`,

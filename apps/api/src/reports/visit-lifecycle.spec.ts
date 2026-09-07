@@ -27,6 +27,8 @@ import { PingsController } from '../pings/pings.controller.js';
 import { PingsService } from '../pings/pings.service.js';
 import { SessionsController } from '../session/sessions.controller.js';
 import { SessionsService } from '../session/sessions.service.js';
+import { VisitEventsService } from '../console/visit-events.service.js';
+import { EvaluatorRunner } from '../verification/evaluator.runner.js';
 import { EvaluatorService, LEASE_SECONDS } from '../verification/evaluator.service.js';
 import { ReportsController } from './reports.controller.js';
 import { ReportsService } from './reports.service.js';
@@ -65,6 +67,25 @@ describe('visit lifecycle', () => {
   };
 
   const auth = (tok = token) => ({ Authorization: `Bearer ${tok}` });
+
+  /**
+   * Poll until a condition holds.
+   *
+   * Needed because submit now kicks the evaluator itself (EvaluatorRunner). These tests used
+   * to drive drain() by hand and assert it returned 1; that assertion started failing the
+   * moment the trigger was wired, because the row was already done. Waiting for the OUTCOME
+   * rather than driving the mechanism is the stronger test anyway: it is what a reviewer
+   * watching the console actually experiences.
+   */
+  const waitFor = async <T>(fn: () => Promise<T | null>, ms = 5000): Promise<T> => {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      const v = await fn();
+      if (v) return v;
+      if (Date.now() > deadline) throw new Error('timed out waiting for condition');
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  };
 
   const makeSession = async (participantId = 'u-participant-1'): Promise<string> => {
     const now = new Date();
@@ -126,6 +147,8 @@ describe('visit lifecycle', () => {
         ReportsService,
         PingsService,
         EvaluatorService,
+        EvaluatorRunner,
+        VisitEventsService,
         { provide: getConnectionToken(), useValue: conn },
         { provide: getModelToken(Session.name), useValue: Sessions },
         { provide: getModelToken(SessionEventDoc.name), useValue: Events },
@@ -172,28 +195,31 @@ describe('visit lifecycle', () => {
         .expect(201);
       expect(submitted.body).toMatchObject({ queuedForVerification: true });
 
-      // Before the evaluator runs there is no verdict, and the response never pretended
-      // otherwise (rule 9: submit and verification are decoupled).
-      expect(await Results.countDocuments({ sessionId: id })).toBe(0);
-      expect(await Outbox.countDocuments({ sessionId: id, status: 'pending' })).toBe(1);
+      // The submit response carries no verdict: verification is decoupled from submit
+      // (rule 9), so the API never pretends a score exists at this point.
+      expect(JSON.stringify(submitted.body)).not.toMatch(/verdict|score/);
 
-      expect(await evaluator.drain()).toBe(1);
-
-      const result = await Results.findOne({ sessionId: id }).lean<{
+      // The verdict arrives on its own, with no further request. This is the behaviour the
+      // brief asks for and the thing the console's live feed depends on.
+      const result = await waitFor(async () =>
+        Results.findOne({ sessionId: id }).lean<{
         verdict: string;
         score: number;
         engineVersion: string;
         signals: { code: string; reason: string }[];
         rollups: { fixCount: number };
-      }>();
-      expect(result).toBeTruthy();
-      expect(result!.score).toBeGreaterThanOrEqual(0);
-      expect(result!.engineVersion).toBeTruthy();
-      expect(result!.signals.length).toBeGreaterThan(0);
-      for (const s of result!.signals) expect(s.reason.length).toBeGreaterThan(20);
-      expect(result!.rollups.fixCount).toBe(8);
+      }>(),
+      );
+      expect(result.score).toBeGreaterThanOrEqual(0);
+      expect(result.engineVersion).toBeTruthy();
+      expect(result.signals.length).toBeGreaterThan(0);
+      for (const s of result.signals) expect(s.reason.length).toBeGreaterThan(20);
+      expect(result.rollups.fixCount).toBe(8);
 
-      expect(await Outbox.countDocuments({ sessionId: id, status: 'done' })).toBe(1);
+      // And the outbox row is settled rather than left mid-flight.
+      await waitFor(async () =>
+        (await Outbox.countDocuments({ sessionId: id, status: 'done' })) === 1 ? true : null,
+      );
     });
 
     it('records an append-only event for every transition', async () => {
@@ -233,17 +259,17 @@ describe('visit lifecycle', () => {
         .set(auth())
         .send({ notes: 'Another ordinary visit report here.', rating: 5 })
         .expect(201);
-      await evaluator.drain();
-
-      const s = await Sessions.findById(id).lean<{
-        latestVerdict: string | null;
-        latestScore: number | null;
-        latestResultId: string | null;
-      }>();
-      expect(s!.latestVerdict).toBeTruthy();
-      expect(s!.latestScore).toBeGreaterThanOrEqual(0);
-      const result = await Results.findById(s!.latestResultId).lean<{ verdict: string }>();
-      expect(result!.verdict).toBe(s!.latestVerdict);
+      const s = await waitFor(async () => {
+        const doc = await Sessions.findById(id).lean<{
+          latestVerdict: string | null;
+          latestScore: number | null;
+          latestResultId: string | null;
+        }>();
+        return doc?.latestVerdict ? doc : null;
+      });
+      expect(s.latestScore).toBeGreaterThanOrEqual(0);
+      const result = await Results.findById(s.latestResultId).lean<{ verdict: string }>();
+      expect(result!.verdict).toBe(s.latestVerdict);
     });
   });
 
@@ -331,13 +357,13 @@ describe('visit lifecycle', () => {
         .set(auth())
         .send({ notes: 'Visit conducted under the original radius.', rating: 4 })
         .expect(201);
-      await evaluator.drain();
-
       // The evaluator used the snapshot, not the live 500 m radius.
-      const result = await Results.findOne({ sessionId: id })
-        .sort({ createdAt: -1 })
-        .lean<{ signals: { code: string; reason: string }[] }>();
-      const proximity = result!.signals.find((s) => s.code === 'proximity');
+      const result = await waitFor(async () =>
+        Results.findOne({ sessionId: id })
+          .sort({ createdAt: -1 })
+          .lean<{ signals: { code: string; reason: string }[] }>(),
+      );
+      const proximity = result.signals.find((s) => s.code === 'proximity');
       expect(proximity?.reason).toContain('75 m');
       expect(proximity?.reason).not.toContain('500 m');
 

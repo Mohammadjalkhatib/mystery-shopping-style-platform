@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { HealthController } from './health/health.controller.js';
 import { AuthModule } from './auth/auth.module.js';
+import { ConsoleModule } from './console/console.module.js';
 import { DbModule } from './db/db.module.js';
 import { PingsModule } from './pings/pings.module.js';
 import { ReportsModule } from './reports/reports.module.js';
@@ -28,6 +29,7 @@ import { VerificationModule } from './verification/verification.module.js';
     SessionsModule,
     ReportsModule,
     VerificationModule,
+    ConsoleModule,
   ],
   controllers: [HealthController],
 })

@@ -1,65 +1,46 @@
-import { Alert, Box, Card, CardContent, Chip, Stack, Typography } from '@mui/material';
-import { useEffect, useState } from 'react';
-import { VERDICTS } from '@msp/shared';
-import { verdictPalette } from './theme/theme';
-
-const API = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000';
+import { Alert, Box, CircularProgress, Container, Typography } from '@mui/material';
+import { AuthProvider, useAuth } from './auth/AuthContext.js';
+import { Console } from './pages/Console.js';
+import { Login } from './pages/Login.js';
 
 /**
- * Scaffold screen only. Exists to prove the toolchain end to end: MUI theme applied,
- * @msp/shared resolving across the workspace, and the API reachable through CORS.
- * feat/participant-flow replaces this entirely.
+ * Routing by role rather than by URL, for now.
+ *
+ * The participant app is a separate surface and is not built yet (feat/participant-flow), so
+ * a participant signing in is told so plainly instead of being dropped into a console they
+ * have no permission to read.
  */
+function Router() {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <Box sx={{ minHeight: '100dvh', display: 'grid', placeItems: 'center' }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+  if (!user) return <Login />;
+  if (user.role === 'participant') {
+    return (
+      <Container maxWidth="sm" sx={{ py: 6 }}>
+        <Typography variant="h1" sx={{ fontSize: '1.5rem', mb: 2 }}>
+          Hello, {user.displayName}
+        </Typography>
+        <Alert severity="info">
+          The participant visit screen is not built yet. Sign in as <code>business</code> to see
+          the visit console.
+        </Alert>
+      </Container>
+    );
+  }
+  return <Console />;
+}
+
 export function App() {
-  const [health, setHealth] = useState<string>('checking...');
-
-  useEffect(() => {
-    fetch(`${API}/health`)
-      .then((r) => r.json())
-      .then((d) => setHealth(`${d.status} (mongo: ${d.mongo})`))
-      .catch(() => setHealth('unreachable'));
-  }, []);
-
   return (
-    <Box sx={{ p: 3, maxWidth: 640, mx: 'auto' }}>
-      <Typography variant="h1" gutterBottom>
-        theQA Visits
-      </Typography>
-      <Alert severity="info" sx={{ mb: 3 }}>
-        Scaffold only. No features yet.
-      </Alert>
-
-      <Card sx={{ mb: 3 }}>
-        <CardContent>
-          <Typography variant="h3" gutterBottom>
-            API health
-          </Typography>
-          <Typography color="text.secondary">{health}</Typography>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent>
-          <Typography variant="h3" gutterBottom>
-            Verdicts
-          </Typography>
-          <Typography color="text.secondary" sx={{ mb: 2 }}>
-            Deliberately not green/red. See D-001.
-          </Typography>
-          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
-            {VERDICTS.map((v) => (
-              <Chip
-                key={v}
-                label={v}
-                sx={{
-                  bgcolor: verdictPalette[v].main,
-                  color: verdictPalette[v].contrastText,
-                }}
-              />
-            ))}
-          </Stack>
-        </CardContent>
-      </Card>
-    </Box>
+    <AuthProvider>
+      <Router />
+    </AuthProvider>
   );
 }

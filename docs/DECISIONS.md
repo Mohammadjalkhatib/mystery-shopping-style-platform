@@ -525,3 +525,46 @@ churning now, but it is a cost on the hot collection rather than an oversight.
 shared tier that restricts some admin commands and that `collMod` should be checked before
 merging rather than after. It works: the retention window was narrowed 30→7 days and widened
 back on the live M0 cluster, both through `collMod`, with the privacy warnings firing.
+
+---
+
+## D-013: In-process SSE fan-out with a replay buffer, and fetch instead of EventSource
+
+**Date:** 2026-09-07
+**Status:** accepted
+
+**Decision.** The live visit feed is an in-process RxJS subject with a 50-event replay buffer
+per organisation. The browser reads it with `fetch` and a ReadableStream rather than the
+native `EventSource`, and tracks `Last-Event-ID` explicitly.
+
+**Context.** D-004 chose SSE and asserted that "browsers reconnect SSE natively, so there is
+no reconnection code to write." That is true of the transport and false of the requirement.
+On reconnect the browser sends `Last-Event-ID`; a server that ignores it drops every event
+from the gap, and "the visit appears with no refresh" is the one thing the brief explicitly
+asks for. Two further things only show up off localhost: free-tier platforms sit behind
+buffering proxies that hold a stream until their buffer fills, and those proxies drop idle
+connections at around 30-60 s -- and a visit feed is idle most of the time by nature.
+
+**Alternatives considered.**
+
+- *Native `EventSource`.* The obvious choice, and it handles reconnection and `Last-Event-ID`
+  for free. Rejected because **it cannot send an `Authorization` header.** The workarounds are
+  putting the bearer token in the query string, where it lands in access logs, proxy logs and
+  browser history, or converting the whole app to cookie auth for the sake of one endpoint.
+  Reading the stream with `fetch` keeps the header and costs about thirty lines, and it makes
+  `Last-Event-ID` explicit rather than magic.
+- *A Mongo change stream or Redis pub/sub for fan-out.* Correct for more than one API
+  instance. Rejected as premature: this build runs one container, and a change stream would
+  add a second failure mode and an ordering story for no visible benefit in the slice.
+- *Polling the visit list every few seconds.* Genuinely adequate at demo scale and already
+  rejected in D-004. Worth restating that the reason is the requirement wording, not
+  performance.
+
+**Consequences.** The fan-out is **single-instance**. A second API replica would leave each
+console connected to one process and seeing only the visits that process evaluated — this is
+the first thing that breaks under horizontal scaling, and the fix is a change stream or Redis.
+The replay buffer is bounded at 50 events per org and lives in memory, so a client
+disconnected for longer than 50 visits, or across a restart, silently misses the overflow; the
+list endpoint on mount is the backstop. `X-Accel-Buffering: no` and a 20 s comment heartbeat
+are both required for the stream to survive a proxy, and neither is testable on localhost —
+verified against the deployed URL is the only way to know.

@@ -437,3 +437,68 @@ outstanding findings from the schema review.
 - The evaluator is only driven by an explicit `drain()` call. Nothing invokes it on a timer or
   after submit, so today a verdict appears only when something asks. Wiring that up belongs
   with the SSE work, since they share the same trigger.
+
+---
+
+### 2026-09-07 - feat/business-console
+
+**What.** The business console: a live visit feed over SSE, a detail view showing the evidence
+trail, a review override, and the React app that renders them. Also wires the evaluator
+trigger, so a verdict now appears on its own after a submit.
+
+**Why.** D-004 (SSE), D-013 (fan-out and the fetch-based client), rule 6 (the console never
+reads pings), rule 8 (an override is a separate document, never a mutation).
+
+**Files.**
+
+- `apps/api/src/console/visit-events.service.ts`: in-process pub/sub with a per-org replay
+  buffer
+- `apps/api/src/console/console.service.ts`: every console read. **Has no Ping model injected
+  at all** -- rule 6 is enforced by construction, not by discipline
+- `apps/api/src/console/console.controller.ts`: list, counts, detail, review, and the SSE
+  stream with its heartbeat and buffering header
+- `apps/api/src/verification/evaluator.runner.ts`: the trigger. A kick after submit plus a
+  periodic sweep
+- `apps/web/src/hooks/useVisitStream.ts`: fetch-based SSE client with explicit `Last-Event-ID`
+- `apps/web/src/pages/Console.tsx`, `Login.tsx`, `api/client.ts`, `auth/AuthContext.tsx`,
+  `components/VerdictChip.tsx`
+- `apps/api/src/console/console.spec.ts`: 21 tests
+
+**Now true.**
+
+1. **A verdict appears without anyone asking for it.** `EvaluatorRunner.kick()` fires after
+   submit (fire-and-forget, outside the transaction, so a slow evaluator cannot fail a submit)
+   and a 15 s sweep catches anything the kick lost. Rule 9 promised the evaluator could retry
+   and be re-run; a trigger that only fires on the happy path would not have delivered that.
+2. **`EventSource` is not used, deliberately** (D-013). It cannot send an `Authorization`
+   header, and the alternatives were a token in the query string or cookie auth for one
+   endpoint. The client reads the stream with `fetch`.
+3. **`Last-Event-ID` is honoured on both sides.** Events missed during a reconnect are
+   replayed from a 50-per-org buffer before live events resume.
+4. **`X-Accel-Buffering: no` and a 20 s heartbeat.** Neither is observable on localhost and
+   both are required for the stream to survive a free-tier proxy.
+5. **Tenancy is enforced on the stream as well as the queries.** The org comes from the token;
+   there is no parameter for it, and a test asserts another org's event never reaches the
+   subscriber.
+6. **The review queue is a filter on the feed, not a separate surface.** Same data, same code
+   path, a quarter of the work. This was the trim proposed in the session-zero plan.
+7. **An override writes a `reviewAction` and never touches the verification result** (rule 8),
+   pinned to the specific result so it is tied to an engine version. A stated reason is
+   required -- that is also the labelled data D-009 needs.
+8. **The UI never says "verified".** `auto_verified` renders as "Consistent with a genuine
+   visit" in a confident neutral, not a green tick, because D-001 is that the system does not
+   claim to prove presence and a green tick undoes that whatever the copy says.
+9. **Verified live on Atlas**: console opens the stream, a participant completes a visit, and
+   the event arrives on the stream with the verdict, score and venue -- with no request from
+   the console. Detail shows 6 signals with reasons; the override returns 201.
+
+**Open.**
+
+- **Still no reaper**, and no admin surface for creating venues, tasks or assignments -- the
+  seed is the only way data appears. That is the "Tasks tab" half of what the backlog called
+  the combined console.
+- The participant screen is still not built, so a participant signing in is shown a message
+  saying so rather than a broken page.
+- SSE fan-out is single-instance (D-013). A second replica would split the consoles.
+- The web bundle is 495 kB, mostly MUI. Fine for a demo, worth a code-split before anything
+  resembling production.
