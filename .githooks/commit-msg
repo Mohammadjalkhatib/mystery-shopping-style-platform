@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Strips AI attribution trailers from commit messages.
+#
+# Why this exists: the `attribution` setting in .claude/settings.json is the documented
+# way to disable Claude Code commit trailers, but there is a known class of bugs where
+# it is not always honoured, particularly when the commit is crafted through the shell
+# rather than the built-in commit path. This hook makes the rule enforced rather than
+# requested. Belt and braces.
+#
+# Enable once per clone:
+#   git config core.hooksPath .githooks
+#   chmod +x .githooks/commit-msg
+
+set -euo pipefail
+MSG_FILE="$1"
+
+# portable in-place edit (GNU sed and BSD sed disagree on -i)
+tmp="$(mktemp)"
+grep -v -E '^(Co-Authored-By: Claude|Co-authored-by: Claude)' "$MSG_FILE" \
+  | grep -v -E 'Generated with \[?Claude Code' \
+  | grep -v -E '^Claude-Session:' \
+  | grep -v -E 'https://claude\.ai/code/session_' \
+  > "$tmp"
+
+# collapse any trailing blank lines left behind
+awk 'NF {p=1} p' "$tmp" | awk '{lines[NR]=$0} END {last=NR; while (last>0 && lines[last]=="") last--; for(i=1;i<=last;i++) print lines[i]}' > "$MSG_FILE"
+rm -f "$tmp"

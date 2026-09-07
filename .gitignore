@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+coverage/
+.env
+.env.local
+*.log
+.DS_Store
+.vscode/
+.idea/
+apps/*/dist/
+apps/*/node_modules/
+packages/*/dist/
+packages/*/node_modules/
+
+# Claude Code local overrides, not shared
+.claude/settings.local.json
