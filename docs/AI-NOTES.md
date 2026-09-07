@@ -59,3 +59,42 @@ edits would have broken every distance in the system while making the test go gr
 The general lesson for the rest of this build: a stated constant in a project doc is an
 assertion, not an axiom. Where a number is cheap to derive independently, derive it. I would
 not have caught this by reading either file; I caught it because the test ran.
+
+### 2026-09-08 - Two seam bugs that 353 passing tests could not see
+
+**What it did.** The participant flow branch shipped with a full suite green: 353 tests, unit
+and integration, every one against a real MongoDB replica set. Then the first end-to-end run
+of the actual flow against the seeded database failed twice in a row.
+
+**Why it was wrong.**
+
+1. `create-ping.dto.ts` had `@IsNumber({ maxDecimalPlaces: 6 })` on `accuracyM`. A browser's
+   `coords.accuracy` is an arbitrary double and ordinary float arithmetic produces values like
+   `11.399999999999999`, so the API returned 400 on honest fixes. An attacker, picking round
+   numbers, would have sailed through. Every ping fixture in the test suite used tidy values
+   like `9.4` and `12`, so nothing caught it.
+2. The seed wrote `clientOrgId` as whatever ObjectId Mongo generated for the organisation,
+   while `demo-users.ts` gave the business account the literal string `'org-alfa-retail'`. The
+   console's tenancy filter compares those two values. They never matched, so **a reviewer
+   signing in as `business` would have seen an empty console for every seeded visit** — the
+   headline demo, silently broken.
+
+**What I did instead.** Removed the decimal-places constraint with a comment explaining why
+precision is not the threat, and added a regression test that asserts `8.6 + 2 * 1.4` is
+accepted and stored unrounded. Gave `ClientOrg` a string `_id` and made the seed and the demo
+accounts share one exported constant, with a test that asserts every seeded session's
+`clientOrgId` equals the business user's.
+
+**Would I have caught this without knowing the domain?** The interesting part is not domain
+knowledge, it is that **both bugs live in the seams between subsystems that are each correct
+in isolation.** The DTO is correct; the fixtures are correct; they disagree about what a
+plausible float looks like. The seed is correct; the demo accounts are correct; they disagree
+about what names an organisation. Unit tests cannot see either, because a unit test constructs
+both sides of the seam itself and is therefore self-consistent by construction. Integration
+tests did not see them either, for the same reason — I built the fixtures.
+
+The only thing that found them was running the real flow against the real seeded database and
+reading the output. That is worth remembering for the rest of this build: **a green suite says
+the parts agree with my assumptions, not that they agree with each other.** Where two
+subsystems were written at different times, the test that matters is the one that starts from
+`npm run db:seed` and ends at the screen.

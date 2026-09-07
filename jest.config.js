@@ -10,7 +10,10 @@
 /** @type {import('jest').Config} */
 module.exports = {
   testEnvironment: 'node',
-  roots: ['<rootDir>/apps/api', '<rootDir>/packages/shared'],
+  // apps/web is included ONLY for the offline queue: CLAUDE.md section 5 rules out UI
+  // rendering tests, but the queue is pure logic where a bug loses or duplicates evidence
+  // silently. No component is rendered anywhere in this project.
+  roots: ['<rootDir>/apps/api', '<rootDir>/packages/shared', '<rootDir>/apps/web/src/participant'],
   testMatch: ['**/*.spec.ts'],
   extensionsToTreatAsEsm: ['.ts'],
   // Maps our own `./foo.js` ESM imports back to `foo.ts` without touching node_modules.

@@ -60,7 +60,21 @@ export class CreatePingFixDto {
    * repeating accuracy for a stationary device on the same Wi-Fi scan, and rounding here
    * would trip the engine's `distinct === 1` spoof branch on honest traces (D-010).
    */
-  @IsNumber({ maxDecimalPlaces: 6 })
+  /**
+   * NOTE: no `maxDecimalPlaces`.
+   *
+   * It was there and it was a bug. `coords.accuracy` is an arbitrary double, and ordinary
+   * float arithmetic produces values like 11.399999999999999 — so a cap of six decimal
+   * places rejected honest fixes with a 400 while an attacker, who picks round numbers,
+   * sailed through. Caught by a live end-to-end probe, not by the unit tests, because every
+   * fixture used tidy values.
+   *
+   * Precision is not a threat here. The real constraints are that it must be positive (zero
+   * grants a free geofence, D-010) and bounded, and that it must never be rounded — Android
+   * reports quantised repeats and rounding would trip the engine's constant-accuracy spoof
+   * branch on an honest trace.
+   */
+  @IsNumber()
   @IsPositive()
   @Max(100_000)
   accuracyM!: number;

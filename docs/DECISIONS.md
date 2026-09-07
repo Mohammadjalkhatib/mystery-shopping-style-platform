@@ -568,3 +568,52 @@ disconnected for longer than 50 visits, or across a restart, silently misses the
 list endpoint on mount is the backstop. `X-Accel-Buffering: no` and a 20 s comment heartbeat
 are both required for the stream to survive a proxy, and neither is testable on localhost —
 verified against the deployed URL is the only way to know.
+
+---
+
+## D-014: localStorage for the offline buffer, and a deterministic demo org id
+
+**Date:** 2026-09-08
+**Status:** accepted
+
+**Decision.** Two things the participant flow forced, neither of which was the plan.
+
+**1. The offline buffer is `localStorage`, not IndexedDB.** The backlog specified IndexedDB.
+What the requirement actually needs is: survive a reload and a period offline, then flush
+safely. The payload is a few hundred fixes of five short fields -- single-digit kilobytes
+against a ~5 MB limit, and `MAX_PINGS_PER_SESSION` bounds it structurally. IndexedDB would buy
+async writes and a far larger ceiling, and cost an async wrapper, a schema version, an upgrade
+path and a set of failure modes, for data that is deleted minutes later.
+
+The safety property is not the storage engine. It is that `clientPingId` is generated ONCE at
+capture time and stored with the fix, so a flush that runs twice is a server-side no-op
+(rule 4, first-write-wins). That holds identically in either store. Revisit if evidence upload
+or a much longer visit lands.
+
+**2. The seeded organisation has a deterministic string `_id`.** It was a generated ObjectId
+while the demo accounts carried the literal `'org-alfa-retail'`. The tenancy filter compares
+those two values, so it never matched: **a reviewer signing in as `business` saw an empty
+console for every seeded visit.** `ClientOrg._id` is now a string, and the seed and the demo
+users share one constant.
+
+**Alternatives considered.**
+
+- *IndexedDB as specified.* Rejected above. Recorded rather than silently substituted, because
+  deviating from a written requirement without saying so is how a reviewer loses trust in
+  everything else in the document.
+- *Make demo users look up the seeded org at boot.* Would also fix the id mismatch. Rejected
+  because it makes the auth module depend on seed data having run, which is worse than a
+  shared constant, and it would fail differently on an unseeded database.
+
+**Consequences.** `localStorage` is synchronous, so a very large buffer would block the main
+thread on write -- the ping cap is what keeps that theoretical. A string org `_id` is
+inconsistent with the ObjectId ids used elsewhere, which is mildly ugly and was already flagged
+in D-012 as a cost worth naming rather than churning.
+
+**The part worth saying plainly:** the org-id mismatch was invisible to all 353 tests, because
+every test builds its own data with a self-consistent org id. It only exists where two
+internally-correct subsystems meet, which is exactly the demo a reviewer opens. It was found by
+running the actual flow end to end against the real database, and nothing short of that would
+have found it. The same run also caught `@IsNumber({ maxDecimalPlaces: 6 })` rejecting honest
+fixes, because `8.6 + 2 * 1.4` is `11.399999999999999` and every test fixture had used tidy
+numbers. Two seam bugs, one probe.

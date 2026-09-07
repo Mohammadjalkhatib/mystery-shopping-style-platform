@@ -8,6 +8,20 @@ import { HydratedDocument } from 'mongoose';
  */
 @Schema({ collection: 'clientOrgs', timestamps: true })
 export class ClientOrg {
+  /**
+   * A STRING id, not an ObjectId.
+   *
+   * Every other collection already stores `clientOrgId` as a string and compares it as one,
+   * and the demo accounts carry a readable literal. Leaving this as a generated ObjectId meant
+   * the seed and the demo users named the organisation differently, so the tenancy filter
+   * never matched and the console was empty for every seeded visit (D-014).
+   *
+   * A stable, meaningful org id is also what makes the seed genuinely idempotent: re-running
+   * it cannot create a second organisation.
+   */
+  @Prop({ type: String, required: true })
+  _id!: string;
+
   @Prop({ required: true, trim: true })
   name!: string;
 

@@ -18,6 +18,8 @@ import {
   VerificationResultSchema,
 } from '../db/schemas/report-verification.schema.js';
 import {
+  Assignment,
+  AssignmentSchema,
   Session,
   SessionEventDoc,
   SessionEventSchema,
@@ -52,6 +54,7 @@ describe('visit lifecycle', () => {
   let Results: Model<VerificationResultDoc>;
   let Reports: Model<Report>;
   let Events: Model<SessionEventDoc>;
+  let Assignments: Model<Assignment>;
 
   let venueId: string;
   let token: string;
@@ -87,10 +90,22 @@ describe('visit lifecycle', () => {
     }
   };
 
-  const makeSession = async (participantId = 'u-participant-1'): Promise<string> => {
+  const makeSession = async (
+    participantId = 'u-participant-1',
+    opts: { consented?: boolean } = {},
+  ): Promise<string> => {
     const now = new Date();
+    // A real assignment, because start() now refuses without recorded consent: capturing
+    // location from someone who has not agreed to it would make the consent screen decoration.
+    const assignment = await Assignments.create({
+      taskId: `t-${Math.random()}`,
+      participantId,
+      clientOrgId: 'org-alfa-retail',
+      consentedAt: opts.consented === false ? null : now,
+      consentVersion: opts.consented === false ? null : 'v1',
+    } as never);
     const s = await Sessions.create({
-      assignmentId: `a-${Math.random()}`,
+      assignmentId: String(assignment._id),
       participantId,
       clientOrgId: 'org-alfa-retail',
       venueId,
@@ -126,6 +141,7 @@ describe('visit lifecycle', () => {
     ) as Model<VerificationResultDoc>;
     Reports = conn.model(Report.name, ReportSchema) as Model<Report>;
     Events = conn.model(SessionEventDoc.name, SessionEventSchema) as Model<SessionEventDoc>;
+    Assignments = conn.model(Assignment.name, AssignmentSchema) as Model<Assignment>;
     await Pings.syncIndexes();
 
     const v = await Venues.create({
@@ -152,6 +168,7 @@ describe('visit lifecycle', () => {
         { provide: getConnectionToken(), useValue: conn },
         { provide: getModelToken(Session.name), useValue: Sessions },
         { provide: getModelToken(SessionEventDoc.name), useValue: Events },
+        { provide: getModelToken(Assignment.name), useValue: Assignments },
         { provide: getModelToken(Venue.name), useValue: Venues },
         { provide: getModelToken(Ping.name), useValue: Pings },
         { provide: getModelToken(Report.name), useValue: Reports },
@@ -270,6 +287,60 @@ describe('visit lifecycle', () => {
       expect(s.latestScore).toBeGreaterThanOrEqual(0);
       const result = await Results.findById(s.latestResultId).lean<{ verdict: string }>();
       expect(result!.verdict).toBe(s.latestVerdict);
+    });
+  });
+
+  describe('consent gates location capture', () => {
+    it('refuses to start a visit with no consent on file', async () => {
+      const id = await makeSession('u-participant-1', { consented: false });
+      const res = await request(app.getHttpServer())
+        .post(`/sessions/${id}/start`)
+        .set(auth())
+        .expect(409);
+      expect(res.body).toMatchObject({ code: 'CONSENT_REQUIRED' });
+    });
+
+    it('records consent with a server timestamp and a version, then allows the start', async () => {
+      const id = await makeSession('u-participant-1', { consented: false });
+      const srv = app.getHttpServer();
+      const consented = await request(srv)
+        .post(`/sessions/${id}/consent`)
+        .set(auth())
+        .send({ consentVersion: 'v1' })
+        .expect(200);
+      expect(consented.body.consentedAt).toBeTruthy();
+      await request(srv).post(`/sessions/${id}/start`).set(auth()).expect(200);
+    });
+
+    it('keeps the FIRST consent timestamp when consent is given twice', async () => {
+      // What a dispute asks is when they first agreed, not when they last tapped.
+      const id = await makeSession('u-participant-1', { consented: false });
+      const srv = app.getHttpServer();
+      const a = await request(srv).post(`/sessions/${id}/consent`).set(auth())
+        .send({ consentVersion: 'v1' }).expect(200);
+      const b = await request(srv).post(`/sessions/${id}/consent`).set(auth())
+        .send({ consentVersion: 'v2' }).expect(200);
+      expect(b.body.consentedAt).toBe(a.body.consentedAt);
+    });
+
+    it('rejects a malformed consent version', async () => {
+      const id = await makeSession('u-participant-1', { consented: false });
+      await request(app.getHttpServer())
+        .post(`/sessions/${id}/consent`)
+        .set(auth())
+        .send({ consentVersion: 'whatever' })
+        .expect(400);
+    });
+
+    it('lists only the signed-in participant own visits', async () => {
+      await makeSession('u-participant-1');
+      await makeSession('u-participant-2');
+      const res = await request(app.getHttpServer())
+        .get('/sessions/mine')
+        .set(auth())
+        .expect(200);
+      expect(res.body.length).toBeGreaterThan(0);
+      expect(res.body.every((v: { id: string }) => typeof v.id === 'string')).toBe(true);
     });
   });
 

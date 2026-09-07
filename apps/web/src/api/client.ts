@@ -51,6 +51,24 @@ export interface AuthUser {
   clientOrgId: string | null;
 }
 
+export interface SessionView {
+  id: string;
+  state: 'pending' | 'active' | 'ended' | 'submitted' | 'abandoned' | 'expired';
+  consentedAt: string | null;
+  venue: { name: string; lat: number; lng: number; radiusM: number; indoor: boolean };
+  startedAt: string | null;
+  endedAt: string | null;
+  pingCount: number;
+}
+
+export interface IngestResult {
+  accepted: number;
+  duplicates: number;
+  rejectedOutOfWindow: number;
+  pingCount: number;
+  remainingBudget: number;
+}
+
 export interface VisitRow {
   sessionId: string;
   venueName: string;
@@ -90,6 +108,22 @@ export const api = {
     req<{ password: string; accounts: { username: string; role: string }[] }>(
       '/auth/demo-credentials',
     ),
+  mySessions: () => req<SessionView[]>('/sessions/mine'),
+  session: (id: string) => req<SessionView>(`/sessions/${id}`),
+  consent: (id: string, consentVersion: string) =>
+    req<{ consentedAt: string; consentVersion: string }>(`/sessions/${id}/consent`, {
+      method: 'POST',
+      body: JSON.stringify({ consentVersion }),
+    }),
+  startVisit: (id: string) => req<SessionView>(`/sessions/${id}/start`, { method: 'POST' }),
+  endVisit: (id: string) => req<SessionView>(`/sessions/${id}/end`, { method: 'POST' }),
+  postPings: (id: string, fixes: unknown[]) =>
+    req<IngestResult>(`/sessions/${id}/pings`, { method: 'POST', body: JSON.stringify({ fixes }) }),
+  submitReport: (id: string, notes: string, rating: number) =>
+    req<{ sessionId: string; submittedAt: string }>(`/sessions/${id}/report`, {
+      method: 'POST',
+      body: JSON.stringify({ notes, rating }),
+    }),
   visits: (verdict?: Verdict) =>
     req<VisitRow[]>(`/console/visits${verdict ? `?verdict=${verdict}` : ''}`),
   counts: () => req<Record<string, number>>('/console/visits/counts'),

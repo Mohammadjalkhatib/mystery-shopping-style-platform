@@ -18,7 +18,19 @@ export interface DemoUser extends AuthUser {
   password: string;
 }
 
-const ORG_A = 'org-alfa-retail';
+/**
+ * The demo organisation id, used as the ClientOrg._id by the seed.
+ *
+ * A literal string rather than a generated ObjectId, and shared with seed.ts on purpose.
+ * These were two independent values -- the demo users carried this constant while the seed
+ * wrote whatever ObjectId Mongo generated -- so the tenancy filter never matched and a
+ * reviewer signing in as `business` saw an EMPTY CONSOLE for every seeded visit.
+ *
+ * Every test missed it because each builds its own data with a self-consistent org id. It
+ * only appears where the two subsystems meet, which is the demo. See D-014.
+ */
+export const DEMO_CLIENT_ORG_ID = 'org-alfa-retail';
+const ORG_A = DEMO_CLIENT_ORG_ID;
 
 export const DEMO_USERS: readonly DemoUser[] = [
   {

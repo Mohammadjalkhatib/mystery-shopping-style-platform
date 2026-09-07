@@ -5,6 +5,7 @@ import { VenueSchema } from './schemas/org-venue.schema.js';
 import { PING_TTL_INDEX_NAME } from './schemas/ping.schema.js';
 import { SessionEventSchema, SessionSchema } from './schemas/task-session.schema.js';
 import { VerificationResultSchema } from './schemas/report-verification.schema.js';
+import { DEMO_CLIENT_ORG_ID, DEMO_USERS } from '../auth/demo-users.js';
 import { seed } from './seed.js';
 
 /**
@@ -188,6 +189,26 @@ describe('schema-reviewer findings (D-012)', () => {
         (i) => i.name === PING_TTL_INDEX_NAME,
       );
       expect(idx?.expireAfterSeconds).toBe(30 * 86_400);
+    });
+  });
+
+  describe('the seed and the demo accounts agree on the org id (D-014)', () => {
+    it('seeds sessions whose clientOrgId matches what the business user carries', async () => {
+      // They were two independent values. The tenancy filter compares them, so it never
+      // matched and a reviewer signing in as  saw an empty console for every
+      // seeded visit. Every other test missed it because each builds self-consistent data.
+      const uri = mongod.getUri('seed-org-id');
+      await seed(uri);
+      const c = await mongoose.createConnection(uri).asPromise();
+      const sessions = await c.model('Session', SessionSchema).find().lean<{ clientOrgId: string }[]>();
+      await c.close();
+
+      const business = DEMO_USERS.find((u) => u.role === 'business')!;
+      expect(sessions.length).toBeGreaterThan(0);
+      for (const s of sessions) {
+        expect(s.clientOrgId).toBe(business.clientOrgId);
+        expect(s.clientOrgId).toBe(DEMO_CLIENT_ORG_ID);
+      }
     });
   });
 
