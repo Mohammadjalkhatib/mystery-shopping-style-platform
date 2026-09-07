@@ -38,8 +38,15 @@ looks like the product rather than like a tutorial.
 | `AVENUES_MALL` | 29.3028 | 47.9383 | indoor reference, expect degraded accuracy |
 | `SALMIYA` | 29.3339 | 48.0758 | second venue, far enough to test teleports |
 
-Distance from `KUWAIT_CITY_CENTRE` to `SALMIYA` is roughly 9.6 km. Use that as the known-value
+Distance from `KUWAIT_CITY_CENTRE` to `SALMIYA` is **10.62 km**. Use that as the known-value
 assertion for the haversine test rather than inventing a synthetic pair.
+
+> Corrected 2026-09-07. This previously said "roughly 9.6 km", which is wrong: the true
+> haversine distance is 10.619 km (N-S component 4.64 km, E-W component 9.55 km at
+> cos(29.35 deg)). The bad value was caught by `apps/api/src/geo/haversine.spec.ts` failing
+> against a correct implementation. Recorded in `docs/AI-NOTES.md`, because a wrong number
+> in a file that says "use this as the assertion" is how a correct implementation gets
+> "fixed" into a broken one.
 
 ## Generating a jittered trace
 

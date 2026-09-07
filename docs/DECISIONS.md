@@ -283,3 +283,133 @@ token is not a JWT, so nothing else can validate it, though it also has none of 
 family of JWT footguns. Swapping in real auth later means replacing `AuthService.login` and the
 demo user list; `AuthGuard`, `RolesGuard`, `@Roles()`, `@CurrentUser()` and every boundary test
 stay exactly as they are. That seam is the reason this is defensible rather than lazy.
+
+---
+
+## D-009: Additive signal scoring from a neutral base, with weights that are admittedly arbitrary
+
+**Date:** 2026-09-07
+**Status:** accepted
+
+**Decision.** The engine starts every visit at **50** and adds or subtracts a weighted
+contribution per signal, clamped to 0..100. Nine signals. Bands come from config:
+`>= 75` auto-verified, `< 30` rejected, the rest to human review. The weights were reasoned
+about, not measured, and this entry says so rather than dressing them up.
+
+**Context.** D-001 committed to a score with an evidence trail. That leaves the actual
+question open: how do signals combine into a number? There is no labelled data — no set of
+visits known to be genuine or fraudulent — so nothing here is fitted. It is a prior.
+
+**Alternatives considered.**
+
+- *Start at 0 and accumulate positive evidence.* The obvious shape. Rejected because it makes
+  "no evidence" identical to "proven absent", which directly contradicts D-005: gaps are a
+  normal condition on mobile web, not proof of anything. Starting at the middle of the band
+  means a visit we learned nothing about lands in `needs_review`, which is the honest answer.
+- *Multiplicative confidence, or a probability product.* More principled-looking, and it
+  composes badly: one signal near zero annihilates the score regardless of the rest, and with
+  hand-picked rather than fitted factors that is a landmine, not a feature. It would also
+  imply a calibrated probability, which is exactly the overclaim D-001 exists to avoid.
+- *A hand-written decision tree.* Easy to explain, and it was tempting. Rejected because
+  every threshold becomes a cliff, and the review band — the thing that makes D-001 work —
+  is much harder to express as a region than as a range on a scalar.
+
+**Consequences.** Three, and the first is the one to raise in a debrief.
+
+1. **The score is ordinal, not a probability.** It ranks visits for triage. A 74 and a 76 are
+   not meaningfully different, and the system must never render it as "76% likely genuine".
+2. **Balance is load-bearing and was initially wrong.** The first weights let positive signals
+   sum to +72 over a base of 50, so an honest trace clamped at 100 and the clamp silently
+   absorbed every penalty: a teleport of 9.6 km in 30 s still scored 92 and auto-verified.
+   Positives are now capped so a perfect honest visit lands at 90, leaving real headroom for
+   negatives to bite. The lesson is that in an additive model the *ceiling* is a weight too.
+3. **Signals must not restate one another.** `noUsableEvidence`, `presenceDwell` and
+   `coverage` all fired on a trace with no usable fixes, counting one fact three times and
+   burying the real reason under two derived ones. The latter two now return null when there
+   is no usable evidence. Any new signal has to be checked for this.
+
+**What would make it principled.** A few hundred visits labelled by the review queue, then
+fit the weights by logistic regression and calibrate the bands against a chosen
+false-accept/false-reject trade-off. The review queue is the data collection mechanism; that
+is a large part of why D-001 insisted on it. Until then these numbers are a starting point
+that is honest about being one.
+
+---
+
+## D-010: Findings from the first spoof-adversary pass, and what was changed
+
+**Date:** 2026-09-07
+**Status:** accepted
+
+**Decision.** Six changes to the engine in response to the red-team pass required by
+`CLAUDE.md` §6, plus seven constraints handed forward to `feat/ping-ingest`. The finding that
+mattered most was not an attack — it was that the engine punished honest participants harder
+than it punished forgers.
+
+**Context.** The adversary pass found an attack **cheaper than the documented limit in D-009**.
+No script: type a venue coordinate into DevTools Sensors, wait five minutes, nudge the last
+decimal, switch the override off, then let the real phone supply the rest of the trace from
+wherever you actually are. It scored **78, auto-verified** — and it outranked `honestWithGaps`
+at 72. A forgery beat the honest visit it was imitating.
+
+The cause was mine: `dwellSeconds` credited the full interval between two consecutive `inside`
+fixes with no cap, while `coverageRatio` capped gaps at three sampling intervals. The
+docstring said "we did not observe the middle, so we do not claim it" and the code claimed it
+anyway. Worse, `honestWithGaps` credited 360 s of pocketed gap as dwell, so **the bug was
+baked into a fixture labelled honest** and no test could see it.
+
+**Alternatives considered.**
+
+- *Raise the auto threshold from 75.* Would have suppressed this attack and every honest visit
+  with it. Rejected: the attack scored 78 because the arithmetic was wrong, not because the
+  band was loose. Moving the goalposts hides a bug instead of fixing it.
+- *Leave `clockSkew` as it was and accept the false positives.* Rejected once it was clear the
+  signal is inverted: `abs(receivedAt - capturedAt)` measures **queue latency**, so an honest
+  participant flushing after ten minutes underground paid, while an attacker setting
+  `capturedAt = Date.now()` paid nothing. It taxed precisely the offline buffering rule 4
+  exists to make safe.
+
+**What changed.**
+
+1. **Dwell intervals capped** at the same maxGap coverage uses. The attack drops 78 → 60,
+   `needs_review`. `honestWithGaps` drops from 480 s of dwell to the 210 s actually witnessed.
+2. **`approachDeparture` softened from -18 to -6** and reworded from an accusation to "could
+   not be corroborated". `CLAUDE.md` §1 describes the honest flow as "starts a visit session,
+   keeps the tab open while on site, ends the session" — start-inside, end-inside. The old
+   weight sent **the modal honest visit** to manual review. The fixture asserting that was
+   renamed from `noApproachNoDeparture` to `startedAndEndedOnSite`, because it was never a
+   spoof. The one-sided case now costs -2 instead of nothing, which closes the toggle-off gap.
+3. **`clockSkew` only fires at the extreme.** The middle band returns null. The statistic that
+   would actually catch a forgery is the *variance* of skew across a trace — a forger's latency
+   is suspiciously constant — and that is a follow-up, not a guess to make now.
+4. **`teleport` no longer skips pairs sharing a server timestamp.** `if (seconds <= 0) continue`
+   silently disabled the movement check for every fix in a batch. It also now runs over usable
+   fixes only, so one cached cell-tower fix cannot fire a -30 penalty on an honest trace.
+5. **`proximity` uses the same accuracy tolerance as the presence rule.** Previously a fix could
+   be `inside` for dwell while proximity called it "well outside the geofence", putting two
+   contradictory sentences in front of a business user about the same visit.
+6. **`medianAccuracyM` is computed over usable fixes only**, and `Math.min(...spread)` /
+   `Math.max(...spread)` were replaced with `reduce` — a long offline flush would have thrown
+   `RangeError` and stalled the outbox on permanent retry.
+
+**Consequences.** Two findings are accepted rather than fixed, and both should be raised in a
+debrief rather than buried.
+
+- **The decorative-signal gate is partly circular.** Three fixtures were written specifically
+  to give weak signals a decisive margin, so the gate proves those fixtures exist, not that the
+  signals matter in production. It still catches a genuinely dead signal; it does not prove
+  relevance. Real traffic is the only fix.
+- **The highest-value missing signal is server-side network evidence** — coarse IP region and
+  ASN, and especially a mid-session ASN change. It is the one class of evidence a browser
+  cannot forge, and it is absent from the evidence contract entirely. A free VPN defeats naive
+  IP-region matching, but a free VPN also puts the request on a datacentre ASN, which is itself
+  the tell. Not built here; it is the strongest candidate for the next verification slice.
+
+**Handed forward to `feat/ping-ingest`** (each of these is an attack if got wrong):
+`receivedAt` must be stamped **per fix, inside the loop, never per batch**; `accuracyM` must be
+rejected at `<= 0` and **must not be rounded** (Android reports quantised repeats, and rounding
+would trip the `distinct === 1` branch on honest traces); `capturedAt` must be bounded against
+the session window; idempotent upsert must be **first-write-wins** (`$setOnInsert`, not `$set`)
+so a re-flush cannot rewrite a stored fix; pings accepted only while the session is `active`;
+fixes per session capped; and `venue.radiusM` bounded in the schema, because a 5000 m radius
+auto-verifies the city. `batchFlushedHonestVisit` exists as an executable form of the first one.
