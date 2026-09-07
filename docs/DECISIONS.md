@@ -171,3 +171,115 @@ switching apps still stops updates.
 condition rather than an error, which is more complex than a continuous trace would have
 been. In exchange the system is honest about what it observed. This is the pushback I would
 most want to discuss in the debrief.
+
+---
+
+## D-006: Pin TypeScript at 6.0.3 rather than the current 7.x
+
+**Date:** 2026-09-07
+**Status:** accepted
+
+**Decision.** TypeScript `6.0.3` across all three workspaces, even though `7.0.2` is the
+published `latest`.
+
+**Context.** The instruction was to modernise the stack. Every other package went to its
+current major. TypeScript is the one that could not, and the blocker is not taste: two
+packages in the tree exclude 7.x outright. `ts-jest@29.4.12` declares
+`typescript: ">=4.3 <7"`, and `@nestjs/cli@12.0.0` itself depends on `typescript: ~6.0.2`.
+TypeScript 7 is the Go rewrite of the compiler and the decorator-heavy ecosystem this repo
+sits in has not landed on it. Every layer here is decorator-driven, from `@Injectable()` to
+`@Sse()` to every `class-validator` rule.
+
+**Alternatives considered.**
+
+- *TypeScript 7 with `@swc/jest` replacing `ts-jest`.* Genuinely clears the peer conflict, and
+  Nest supports SWC officially. Rejected because SWC strips types rather than checking them.
+  On a codebase whose entire premise is "the server does not trust the client", silently
+  losing type checking in the test path trades away the thing being tested. It also leaves
+  `@nestjs/cli` on TS 6 regardless, so we would be running two compiler versions.
+- *TypeScript 5.9.3, the last 5.x.* Safe and boring. Rejected because 6.0.3 satisfies every
+  peer range in the tree and is what the Nest CLI ships anyway, so there is no reason to give
+  up a major for nothing.
+
+**Consequences.** We are one major behind on the compiler and will stay there until `ts-jest`
+widens its peer range. `moduleResolution: "node10"` is deprecated in 6.x and errors without an
+`ignoreDeprecations` escape hatch, which is what pushed the whole repo to `node16` resolution —
+that turned out to be the right move anyway. Revisit when `ts-jest` supports 7.
+
+---
+
+## D-007: The API is an ESM package, because NestJS 12 gives no alternative
+
+**Date:** 2026-09-07
+**Status:** accepted
+
+**Decision.** `apps/api` and `packages/shared` are both `"type": "module"`. Relative imports
+carry explicit `.js` extensions. Types imported from CommonJS dependencies must use
+`import type`, never a value import.
+
+**Context.** This was not a preference. NestJS 12 ships **no CommonJS entry point at all** —
+`@nestjs/common`, `@nestjs/core`, `@nestjs/mongoose`, `@nestjs/config` and
+`@nestjs/platform-express` are all `"type": "module"` with a single ESM path in `exports`.
+Under `node16` resolution TypeScript reports TS1479 on every Nest import from a CommonJS file.
+There is no configuration that makes a CJS API consume Nest 12.
+
+**Alternatives considered.**
+
+- *Stay on NestJS 11, which is CommonJS.* Everything would have worked with no extension
+  discipline, no Jest ESM flags, and standard `ts-jest`. Rejected because the brief for this
+  session was to modernise, and because Nest 11 is where this problem gets deferred rather
+  than solved. Recorded honestly: this would have been the lower-risk choice for a three-day
+  build, and it is the fallback if ESM costs us more than it has so far.
+- *Keep source ESM but transpile to CommonJS for tests only.* Would have kept `ts-jest` in its
+  default mode. Rejected because the pure tests would pass while any test touching Nest would
+  fail at `require()`, which is the worst possible split: green where it does not matter, red
+  where it does.
+
+**Consequences.** Three ongoing costs. (1) Every relative import needs a `.js` extension, on a
+file that is written as `.ts`. (2) Jest needs `--experimental-vm-modules`; we invoke
+`node --experimental-vm-modules node_modules/jest/bin/jest.js` directly so it works on
+PowerShell, cmd and sh without adding `cross-env`. (3) **Named imports from CommonJS
+dependencies compile and then throw at runtime** — `import { Connection } from 'mongoose'`
+type-checks cleanly and dies with "does not provide an export named 'Connection'", because
+Node's `cjs-module-lexer` cannot statically detect it. This was caught by the scaffold smoke
+test, not by the compiler. The rule for the rest of the build: **`import type` for types from
+CJS packages, default-import-plus-property-access for runtime values.** Mongoose and rxjs are
+both CommonJS and both will hit this.
+
+---
+
+## D-008: Demo authentication with real authorization boundaries
+
+**Date:** 2026-09-07
+**Status:** accepted
+
+**Decision.** Authentication is a hardcoded list of demo accounts — `admin`, `business`, and
+`user1` through `user10`, all with the password `demo1234`. Login returns an HMAC-signed token.
+There is no user collection, no password hashing, no registration, no refresh tokens, no
+password reset. **Authorization, by contrast, is real**: a global deny-by-default guard, a
+`@Roles()` guard, and one test per boundary as required by `CLAUDE.md` §5.
+
+**Context.** Auth was absent from the backlog, from the decision log and from the design rules,
+yet `JWT_SECRET` sat in `.env.example`, three roles are implied by the flow, and §5 mandates a
+test per authorization boundary. That combination is how a build ends up with auth retrofitted
+inconsistently across controllers written on different days. The budget is three days and none
+of it is being graded on password storage.
+
+**Alternatives considered.**
+
+- *Real JWT with `@nestjs/jwt`, `@nestjs/passport` and `passport-jwt`.* The conventional answer.
+  Rejected because it adds four dependencies and a registration/hashing/refresh surface to
+  demonstrate something nobody doubts, and it would take a session that the verification engine
+  needs more. Nothing in the brief asks for identity management.
+- *No auth at all, with a role passed as a query parameter.* Cheapest. Rejected because it makes
+  every authorization test meaningless, and the console filtering by client org would then be a
+  suggestion rather than a boundary. The whole premise of this system is that the client is not
+  trusted; shipping an app where anyone can claim to be an admin contradicts rule 2 in the most
+  visible way possible.
+
+**Consequences.** Credentials are public and in source control, which is correct for a demo and
+catastrophic anywhere else — hence the loud comment in `demo-users.ts` and this entry. The
+token is not a JWT, so nothing else can validate it, though it also has none of the `alg: none`
+family of JWT footguns. Swapping in real auth later means replacing `AuthService.login` and the
+demo user list; `AuthGuard`, `RolesGuard`, `@Roles()`, `@CurrentUser()` and every boundary test
+stay exactly as they are. That seam is the reason this is defensible rather than lazy.

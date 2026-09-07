@@ -15,3 +15,7 @@ packages/*/node_modules/
 
 # Claude Code local overrides, not shared
 .claude/settings.local.json
+
+# TypeScript project-reference build state
+*.tsbuildinfo
+apps/web/dist-types/

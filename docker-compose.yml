@@ -6,7 +6,9 @@
 
 services:
   mongo:
-    image: mongo:7
+    # Mongo 8 to match what mongodb-memory-server pulls for the test suite (8.2.6).
+    # Running a different major locally than in tests is how you find a bug in production.
+    image: mongo:8
     restart: unless-stopped
     ports:
       - "27017:27017"
@@ -19,6 +21,9 @@ services:
       retries: 5
 
   minio:
+    # TODO(chore/dockerize): pin to a dated RELEASE tag. Left floating because the tag has
+    # to be verified against a running daemon, and minio may be dropped entirely if
+    # feat/evidence-upload is cut.
     image: minio/minio:latest
     restart: unless-stopped
     command: server /data --console-address ":9001"
