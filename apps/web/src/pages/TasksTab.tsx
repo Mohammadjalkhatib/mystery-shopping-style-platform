@@ -203,6 +203,34 @@ function VenueForm({
     return { lat, lng };
   })();
 
+  /**
+   * A share link is not a coordinate.
+   *
+   * `https://maps.app.goo.gl/...` cannot be resolved from here -- it needs a redirect the
+   * browser will not let us follow -- so the only useful thing is to say what to do instead.
+   * This is the mistake that actually happened: the link went in the address field and
+   * approximate numbers went in here.
+   */
+  const looksLikeLink = /https?:\/\/|goo\.gl|maps\.app|google\.[a-z]+\/maps/i.test(coords);
+
+  /**
+   * How many decimal places the coarser half carries.
+   *
+   * Deliberately NOT a copy of the server's rule, which scales the requirement against the
+   * radius. Duplicating that here would be a second copy of a threshold, free to drift; the
+   * server stays the authority and returns a message naming both numbers. This is only an
+   * early nudge, because four decimals is the answer at every radius the schema permits.
+   */
+  const decimalsGiven = parsed
+    ? Math.min(
+        ...coords.split(',').map((x) => {
+          const frac = x.trim().split('.')[1];
+          return frac ? frac.length : 0;
+        }),
+      )
+    : null;
+  const coarse = decimalsGiven !== null && decimalsGiven < 4;
+
   const submit = async (): Promise<void> => {
     if (!parsed) return;
     setBusy(true);
@@ -227,7 +255,7 @@ function VenueForm({
     }
   };
 
-  const ready = name.length >= 2 && address.length >= 2 && parsed !== null && !busy;
+  const ready = name.length >= 2 && address.length >= 2 && parsed !== null && !coarse && !looksLikeLink && !busy;
 
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
@@ -259,13 +287,17 @@ function VenueForm({
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
           <TextField
             label="Coordinates"
-            placeholder="31.957, 35.9137"
+            placeholder="31.9399, 35.8486"
             helperText={
-              coords && !parsed
-                ? 'Expected "lat, lng"'
-                : 'Right-click the spot in Google Maps and paste'
+              looksLikeLink
+                ? 'That is a share link, not a coordinate. Open it, right-click the pin, and copy the two numbers.'
+                : coords && !parsed
+                  ? 'Expected "lat, lng"'
+                  : coarse
+                    ? `Only ${decimalsGiven} decimal places — that locates the venue to within hundreds of metres. Use at least 4.`
+                    : 'Right-click the spot in Google Maps and paste'
             }
-            error={Boolean(coords) && !parsed}
+            error={Boolean(coords) && (!parsed || looksLikeLink || coarse)}
             value={coords}
             onChange={(e) => setCoords(e.target.value)}
             fullWidth

@@ -263,6 +263,26 @@ describe('admin surface', () => {
         .expect(400);
     });
 
+    it('rejects a coordinate too coarse for the geofence it defines (D-020)', async () => {
+      // The exact input that produced a venue 4.8 km from where the participant stood.
+      const res = await request(app.getHttpServer())
+        .post('/venues')
+        .set(auth(bizToken))
+        .send(venueBody({ lat: 31.98, lng: 35.83, radiusM: 25 }))
+        .expect(400);
+      expect(JSON.stringify(res.body)).toMatch(/decimal places/);
+    });
+
+    it('accepts the same coordinate when the fence is wide enough to tolerate it', async () => {
+      // The rule scales with the radius rather than demanding a fixed digit count. Three
+      // decimals is ~56 m: useless at 25 m, fine at 500 m.
+      await request(app.getHttpServer())
+        .post('/venues')
+        .set(auth(bizToken))
+        .send(venueBody({ name: `Coarse ${Math.random()}`, lat: 31.939, lng: 35.848, radiusM: 500 }))
+        .expect(201);
+    });
+
     it('rejects an out-of-range coordinate', async () => {
       await request(app.getHttpServer())
         .post('/venues')

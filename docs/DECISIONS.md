@@ -852,3 +852,48 @@ knowing. Reaping is only as timely as the next read: a session that nobody looks
 billing or payouts. The sweep is capped at 100 sessions per read, so the first read after a
 long outage may take several passes to settle. And the participant's list now shows dead
 visits for a day, which is a small step towards a history screen this deliberately is not.
+
+---
+
+## D-020: Refuse a venue coordinate coarser than the geofence it defines
+
+**Date:** 2026-09-08
+**Status:** accepted
+
+**Decision.** `POST /venues` rejects coordinates whose implied precision is worse than half the
+radius. A value written to `d` decimal places locates a point to within half a unit of the last
+place, so the check is arithmetic on how the number was written, not on the number itself. In
+practice: three decimals for a wide fence, four for anything tighter.
+
+**Context.** A venue was created at `31.98, 35.83` with a 25 m radius. Two decimals locate a
+point to within about 557 m, so that fence could not be entered from anywhere on earth. The
+participant stood in the right shop; the system measured 4,789 m and rejected the visit. Every
+layer was correct — capture was flawless that run, 7 fixes at a 30 s cadence, 100 % coverage,
+3–6 m accuracy — and the verdict was still wrong, because the number it measured against was.
+This is the project's recurring failure shape: a seam where two correct things meet, and no
+test can see it because no test invents the coordinate.
+
+**Alternatives considered.**
+
+- *Demand a fixed number of decimal places, say five, for every venue.* One rule, no arithmetic,
+  trivially explained. Rejected because it is wrong in both directions: five decimals is
+  needless ceremony for a 500 m fence around a mall, and it says nothing about *why*, so the
+  next person to widen the radius has no idea whether the rule still applies.
+- *Warn in the UI and let the server accept it.* Keeps the API permissive and the fix cheap.
+  Rejected because the UI is not the only writer — the seed and any future import go through
+  the same service, and this failure is silent and expensive precisely because it produces a
+  plausible-looking venue that reads as an engine bug months later.
+- *Infer the venue location from the pasted Google Maps link.* It is what the user actually had
+  on their clipboard, and it would remove the retyping entirely. Rejected for now: a
+  `maps.app.goo.gl` short link only resolves by following a redirect, which the browser will
+  not allow cross-origin and which would make venue creation depend on a third party being up.
+  The form detects the link and says what to do instead.
+
+**Consequences.** A legitimate venue that genuinely sits on a round coordinate cannot be entered
+as written and has to be given more decimals, which is a small lie about precision — accepted,
+because the alternative is accepting a fence nobody can enter. The threshold of half the radius
+is a judgement call, not a derived constant; what would make it principled is data on how far
+recorded venue coordinates sit from where participants actually stand, which is the same
+labelled data D-009 wants and this project does not have. The check does not run against
+existing venues, so a bad coordinate already in the database stays bad until someone edits it —
+and there is still no way to edit one.

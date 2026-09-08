@@ -9,6 +9,7 @@ import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import type { AuthUser } from '@msp/shared';
 import type { Connection, Model } from 'mongoose';
 import { DEMO_USERS } from '../auth/demo-users.js';
+import { checkCoordinatePrecision } from '../geo/precision.js';
 import { ClientOrg, Venue } from '../db/schemas/org-venue.schema.js';
 import { Assignment, Session, Task } from '../db/schemas/task-session.schema.js';
 import type { CreateAssignmentDto } from './dto/create-assignment.dto.js';
@@ -70,6 +71,27 @@ export class AdminService {
 
   async createVenue(user: AuthUser, dto: CreateVenueDto): Promise<VenueRow> {
     const clientOrgId = await this.resolveOrgForCreate(user, dto.clientOrgId);
+
+    /**
+     * A geofence is only as good as the centre it is measured from.
+     *
+     * `31.98, 35.83` with a 25 m radius was accepted once and produced a venue 4.8 km from
+     * where the participant actually stood: two decimals locate a point to within ~557 m, so
+     * that fence could not be entered from anywhere on earth. Every layer behaved correctly
+     * and the visit was still, correctly, rejected -- which is the worst kind of failure,
+     * because it looks like a broken engine. See D-020.
+     */
+    const precision = checkCoordinatePrecision(dto.lat, dto.lng, dto.radiusM);
+    if (!precision.ok) {
+      throw new BadRequestException(
+        `Those coordinates give ${precision.decimals} decimal places, which locates the venue ` +
+          `to about ${Math.round(precision.impliedM)} m. A ${dto.radiusM} m geofence needs the ` +
+          `centre known to about ${Math.round(precision.requiredM)} m, so this fence could not ` +
+          `be entered from anywhere. Use at least 4 decimal places, like 31.9399, 35.8486 — ` +
+          `right-click the exact spot in Google Maps and copy the numbers it shows. A share ` +
+          `link is not a coordinate.`,
+      );
+    }
 
     try {
       const venue = await this.venues.create({

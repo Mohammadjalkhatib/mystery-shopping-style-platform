@@ -1104,3 +1104,51 @@ and idempotency across two sweeps.
   deliberately not. If it grows, it needs its own endpoint.
 - Unchanged: no edit or delete on the admin surface, no Arabic pass, and the two open capture
   questions from the phone run.
+
+### 2026-09-08 - fix/venue-coordinate-precision
+
+**What.** `POST /venues` refuses a coordinate too coarse for the geofence it defines, and the
+venue form says so before you submit and recognises a pasted Google Maps share link.
+
+**Why.** D-020. A real visit was rejected while the participant was standing in the right shop.
+
+**Files.**
+
+- `apps/api/src/geo/precision.ts`: new, pure. `decimalPlaces`, `impliedPrecisionM`,
+  `checkCoordinatePrecision`.
+- `apps/api/src/geo/precision.spec.ts`: 16 tests, including the exact coordinate that caused it.
+- `apps/api/src/admin/admin.service.ts`: `createVenue` rejects with a message naming the implied
+  precision, the required precision and what to do.
+- `apps/api/src/admin/admin.spec.ts`: the failing coordinate is a 400; the same coordinate at a
+  500 m radius is a 201, because the rule scales.
+- `apps/web/src/pages/TasksTab.tsx`: decimal-count nudge and share-link detection.
+- `docs/DECISIONS.md`: D-020. `README.md`: the authoring section.
+
+**Now true.**
+
+1. **The engine has now been wrong zero times and looked wrong twice.** Both were the input.
+   The drive was a real rejection of a real absence; this one was a correct measurement against
+   a wrong centre. Before touching a threshold because a verdict looks wrong, check the venue
+   coordinate and the ping coordinates against a map.
+2. **`decimalPlaces` must round-and-compare, not count string digits.** The seeded venue reads
+   back as `35.913700000000006`; counting characters would claim fifteen decimals of precision
+   for a four decimal value and wave through exactly what this guard exists to catch.
+3. **The web does NOT duplicate the threshold.** It nudges on decimal count only; the server
+   owns the rule that scales with radius. A second copy of a threshold is the thing this repo
+   keeps getting bitten by.
+4. **The precision rule scales with the radius**, so it is not "always five decimals". Three
+   decimals (~56 m) is fine for a 500 m fence and useless for a 25 m one.
+5. **Existing venues are not re-validated.** `Lune` at `31.98, 35.83` is still in the live
+   database and still unusable, and there is still no venue edit endpoint.
+
+**Open.**
+
+- **`Lune`'s coordinates are still wrong in production.** The correct value is about
+  `31.9399, 35.8486`, taken from where the participant's own fixes clustered. Needs either a
+  direct database correction or the venue edit endpoint that does not exist.
+- **`accuracyRealism` penalised an honest participant -12 on that visit**: "Median accuracy was
+  4 m at an indoor venue. Indoor fixes normally degrade to tens of metres." They had a genuine
+  4 m fix at a venue flagged `indoor`. The signal is defensible against a spoofer but this was a
+  false positive, and it is the one signal observed firing wrongly on real data. Changing it
+  needs a spoof-adversary pass; NOT changed here.
+- Unchanged: reaper merged? no — `feat/lazy-reaper` is still an unmerged branch. No Arabic pass.

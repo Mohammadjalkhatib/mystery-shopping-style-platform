@@ -264,7 +264,7 @@ to the person it was created for.
 
 | Endpoint | Role | Notes |
 |---|---|---|
-| `POST /venues` | admin, business | `lat`/`lng` in, `[lng, lat]` stored. `radiusM` 25–500 |
+| `POST /venues` | admin, business | `lat`/`lng` in, `[lng, lat]` stored. `radiusM` 25–500. Coordinates must be precise enough for the radius — see D-020 |
 | `GET /venues` | admin, business | Scoped to your org |
 | `POST /tasks` | admin, business | Inherits its org from the venue |
 | `GET /tasks` | admin, business | With a live assignment count |
