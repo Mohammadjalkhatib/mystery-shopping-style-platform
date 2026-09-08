@@ -1,5 +1,6 @@
 import { Alert, Box, Button, Card, CardContent, Stack, Typography } from '@mui/material';
 import { useState } from 'react';
+import { useT } from '../i18n/LocaleContext.js';
 
 /** Bump this when the text below changes. The server records which version was agreed to. */
 export const CONSENT_VERSION = 'v1';
@@ -23,11 +24,12 @@ export function Consent({
   busy: boolean;
 }) {
   const [read, setRead] = useState(false);
+  const t = useT();
 
   return (
     <Box sx={{ p: 2, maxWidth: 560, mx: 'auto' }}>
       <Typography variant="h1" sx={{ fontSize: '1.4rem', mb: 0.5 }}>
-        Before you start
+        {t('consentTitle')}
       </Typography>
       <Typography color="text.secondary" sx={{ mb: 2 }}>
         {venueName}
@@ -38,45 +40,37 @@ export function Consent({
           <Stack spacing={2}>
             <Box>
               <Typography variant="h3" sx={{ fontSize: '1rem', mb: 0.5 }}>
-                What is collected
+                {t('consentCollectedTitle')}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                Your device&apos;s location, sampled while this page is open and in front of
-                you, from the moment you start the visit until you end it. Nothing is collected
-                before you start or after you end.
+                {t('consentCollectedBody')}
               </Typography>
             </Box>
 
             <Box>
               <Typography variant="h3" sx={{ fontSize: '1rem', mb: 0.5 }}>
-                What it is used for
+                {t('consentUsedTitle')}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                To judge how well the evidence supports the visit having happened. It produces
-                a score and a list of reasons — never a simple yes or no, and never proof that
-                you were somewhere. A human reviews anything uncertain.
+                {t('consentUsedBody')}
               </Typography>
             </Box>
 
             <Box>
               <Typography variant="h3" sx={{ fontSize: '1rem', mb: 0.5 }}>
-                How long it is kept
+                {t('consentKeptTitle')}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                The raw location trail is deleted automatically after the retention window,
-                by the database itself rather than by a job someone has to remember to run.
-                The summary of the visit is kept.
+                {t('consentKeptBody')}
               </Typography>
             </Box>
 
             <Box>
               <Typography variant="h3" sx={{ fontSize: '1rem', mb: 0.5 }}>
-                What this app cannot do
+                {t('consentCannotTitle')}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                It cannot follow you in the background. If you lock your phone or switch apps,
-                it stops receiving your location, and the gap is recorded as a gap. You can end
-                the visit at any time.
+                {t('consentCannotBody')}
               </Typography>
             </Box>
           </Stack>
@@ -85,13 +79,13 @@ export function Consent({
 
       {!read && (
         <Alert severity="info" sx={{ mb: 2 }}>
-          Please read the four sections above before agreeing.
+          {t('consentReadPrompt')}
         </Alert>
       )}
 
       <Stack spacing={1.5}>
         <Button variant="outlined" onClick={() => setRead(true)} disabled={read}>
-          {read ? 'Read ✓' : 'I have read this'}
+          {read ? t('consentHasRead') : t('consentMarkRead')}
         </Button>
         <Button
           variant="contained"
@@ -100,12 +94,12 @@ export function Consent({
           onClick={onAgree}
           fullWidth
         >
-          {busy ? 'Recording…' : 'I agree — continue'}
+          {busy ? t('consentRecording') : t('consentAgree')}
         </Button>
       </Stack>
 
       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
-        Consent version {CONSENT_VERSION}. Your agreement is recorded with a server timestamp.
+        {t('consentVersionNote', { version: CONSENT_VERSION })}
       </Typography>
     </Box>
   );

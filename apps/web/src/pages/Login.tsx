@@ -10,6 +10,7 @@ import {
   Typography,
 } from '@mui/material';
 import { useEffect, useState } from 'react';
+import { useLocale } from '../i18n/LocaleContext.js';
 import { api } from '../api/client.js';
 import { useAuth } from '../auth/AuthContext.js';
 
@@ -24,6 +25,7 @@ export function Login() {
   const { login } = useAuth();
   const [username, setUsername] = useState('business');
   const [password, setPassword] = useState('demo1234');
+  const { t, toggle } = useLocale();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [accounts, setAccounts] = useState<{ username: string; role: string }[]>([]);
@@ -52,9 +54,22 @@ export function Login() {
     <Box sx={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', p: 2 }}>
       <Card sx={{ width: '100%', maxWidth: 460 }}>
         <CardContent sx={{ p: 3 }}>
-          <Typography variant="h1" sx={{ fontSize: '1.5rem', mb: 0.5 }}>
-            theQA Visits
-          </Typography>
+          <Stack
+            direction="row"
+            sx={{ justifyContent: 'space-between', alignItems: 'flex-start', mb: 0.5 }}
+          >
+            <Typography variant="h1" sx={{ fontSize: '1.5rem' }}>
+              theQA Visits
+            </Typography>
+            {/*
+              The toggle is here as well as on the visit screen: a participant who arrives with
+              an Arabic browser meets this page first, and a sign-in form they cannot read is a
+              poor place to discover the language exists.
+            */}
+            <Button size="small" onClick={toggle}>
+              {t('language')}
+            </Button>
+          </Stack>
           <Typography color="text.secondary" sx={{ mb: 3 }}>
             Location-verified field visits.
           </Typography>
@@ -63,14 +78,14 @@ export function Login() {
             <Stack spacing={2}>
               {error && <Alert severity="error">{error}</Alert>}
               <TextField
-                label="Username"
+                label={t('username')}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 autoComplete="username"
                 fullWidth
               />
               <TextField
-                label="Password"
+                label={t('password')}
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -78,16 +93,16 @@ export function Login() {
                 fullWidth
               />
               <Button type="submit" variant="contained" size="large" disabled={busy}>
-                {busy ? 'Signing in…' : 'Sign in'}
+                {busy ? t('signingIn') : t('signIn')}
               </Button>
             </Stack>
           </form>
 
           {accounts.length > 0 && (
             <>
-              <Divider sx={{ my: 3 }}>Demo accounts</Divider>
+              <Divider sx={{ my: 3 }}>{t('demoAccounts')}</Divider>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                Password for all: <code>demo1234</code>
+                {t('demoPasswordFor')} <code>demo1234</code>
               </Typography>
               <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
                 {accounts.map((a) => (

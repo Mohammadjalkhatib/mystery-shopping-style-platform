@@ -48,11 +48,11 @@ Built and working end to end:
 - [x] Seeded demo data, relocatable for testing outside the client's market
 - [x] Authoring: create venues, tasks and assignments from the console's Tasks tab
 - [x] Abandoned and expired sessions, reaped lazily on read, with the reason shown to the participant
+- [x] Arabic pass on the participant screens, with RTL layout and a language toggle
 
 Not built:
 
 - [ ] Evidence upload to object storage — deliberately cut, see "Deliberately out of scope"
-- [ ] Arabic pass on participant screens
 - [ ] Capture watchdog — nothing notices if `watchPosition` stops delivering silently
 
 ---
@@ -560,7 +560,8 @@ Named so it is clear these are cuts, not omissions:
   useless with no history. Top of the "what I would build next" list
 - Native mobile apps, which are the correct answer for background tracking and mock-location
   detection and the wrong answer for a web slice
-- Full internationalisation. Participant screens get an Arabic pass, nothing more
+- Full internationalisation. The participant screens are English and Arabic with RTL (D-022);
+  the business console stays English, and so do the verification signal reasons it displays
 
 ---
 

@@ -1194,3 +1194,51 @@ puts the snapshot ~5.5 km from the live venue and asserts a fix at the snapshot 
 
 **Open.** `Lune` still needs correcting in production — do it through the deployed `PATCH`
 endpoint once this is on `main`, which also verifies the endpoint live.
+
+### 2026-09-08 - feat/arabic-pass
+
+**What.** The participant flow speaks Arabic and lays out right-to-left. Sign in, consent, the
+visit screen and the report, plus a language toggle on both screens a participant can reach.
+
+**Why.** D-022, and CLAUDE.md section 9 which scopes i18n to exactly this.
+
+**Files.**
+
+- `apps/web/src/i18n/strings.ts`: the dictionary. `Strings` is derived from the English object,
+  so Arabic is checked against it at compile time.
+- `apps/web/src/i18n/LocaleContext.tsx`: provider. Owns the dictionary AND the theme, because
+  direction is a theme concern and two providers that could disagree is a seam.
+- `apps/web/src/i18n/strings.spec.ts`: 5 tests. `jest.config.js`: the i18n dir added to roots.
+- `apps/web/src/theme/theme.ts`: `buildTheme(direction)`. `main.tsx`: LocaleProvider wraps all.
+- `apps/api/src/session/sessions.service.ts`: `terminalReasonCode` + `timeouts` on SessionView.
+- `Consent.tsx`, `VisitPage.tsx`, `Login.tsx`, `api/client.ts`.
+
+**Now true.**
+
+1. **`terminalReason` is the only server-composed sentence a participant sees**, so it now
+   travels as a CODE plus `timeouts`, and the client renders it. Any future participant-facing
+   string composed on the server needs the same treatment or the screen goes half-English.
+2. **No plural machinery, deliberately.** Copy is written count-neutrally — "Locations
+   recorded: 3", never "3 locations" — because English needs one plural rule and Arabic six.
+   Keep writing it that way; nothing enforces it.
+3. **RTL rests on `document.dir` plus MUI's own logical properties, not a plugin.** A component
+   written with a physical `marginLeft` will NOT mirror and nothing will warn. Use `ms`/`me` or
+   spacing shorthands.
+4. **In `ActiveVisit`, `t` is the tracker, not the translator.** The translator is `tx` there.
+   This is the one place the convention breaks and it will catch someone.
+5. **The console stays English**, including every verification signal reason. Translating those
+   means codes and parameters for all nine signals; that is the full i18n that was cut.
+6. **The dictionary test is the guard that matters.** Types catch a missing key; they do not
+   catch an empty string, an untranslated copy-paste, or a `{placeholder}` lost in translation.
+   All four are tested.
+
+**Verified rather than assumed.** 425 tests pass. Both web and api build clean.
+
+**Open.**
+
+- Not yet checked on a real phone in Arabic — RTL on a small screen is where a missed physical
+  margin actually shows, and this pass has only been reasoned about, not looked at.
+- Western digits, not Eastern Arabic numerals. Correct for Jordan and the Gulf; a choice, not
+  an oversight.
+- Unchanged: the capture watchdog is still blocked on the lock/unlock test, and
+  `accuracyRealism` still has the false positive from user2's visit.
