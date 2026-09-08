@@ -52,7 +52,7 @@ Built and working end to end:
 - [x] One evidence photo per visit: uploaded by the participant, shown on the console's evidence trail
 - [x] Console Overview: stat tiles, verdicts per day, and a ranking of the signals that fail most
 - [x] S3-compatible evidence storage (MinIO in compose), hand-signed, with a GridFS fallback
-- [x] Venue coordinates picked on a map rather than typed
+- [x] Venue coordinates picked on a map, with address search, rather than typed
 - [x] Capture watchdog: a silent `watchPosition` is re-attached, and restarts are shown
 
 Not built:
@@ -626,6 +626,10 @@ wearing a number.
 Named so it is clear these are cuts, not omissions:
 
 - Payments and reward disbursement
+- A commercial geocoder or tile host. Address search uses OpenStreetMap's Nominatim and the map
+  uses OSM community tiles (D-029, D-030) — no API key, no billing, and not sized for production
+  volume. Small-business coverage in Jordan and the Gulf is thinner than Google's
+
 - A provisioned production bucket. Evidence storage speaks S3 (D-028) and MinIO runs in compose,
   but the DEPLOYED demo has no credentials, so it falls back to MongoDB GridFS and photos share
   the 512 MB Atlas tier. Four environment variables switch it over; no code changes
