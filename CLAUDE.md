@@ -31,6 +31,8 @@ Repo: `https://github.com/Mohammadjalkhatib/mystery-shopping-style-platform.git`
 
 - `main` is protected and only receives merges from `dev` after approval. Never commit or push
   directly to `main`. Never merge to `main` without being asked explicitly.
+  **`main` is also the deployed branch** — Render tracks it, so a merge into `main` redeploys
+  the live demo. That raises the cost of a careless merge; it does not change the rule above.
 - `dev` is the integration branch. All feature work merges here first for testing.
 - Feature branches: `feat/<short-kebab-name>` or `fix/<short-kebab-name>`, always branched from
   `dev`, always merged back into `dev`.

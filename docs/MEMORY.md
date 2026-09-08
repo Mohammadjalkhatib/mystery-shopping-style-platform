@@ -803,3 +803,36 @@ the built bundle to confirm Vite actually inlined it. 359 tests pass.
 - The participant flow on a real phone is still untested — the reason all of this exists.
 - No admin surface; the seed remains the only way data enters the system.
 - The reaper is decided but unbuilt, so `abandoned` and `expired` stay unreachable.
+
+---
+
+### 2026-09-08 - docs/deploy-tracks-main
+
+**What.** The Render blueprint tracks `main`, not `dev`, and the docs say so.
+
+**Why.** Asked for directly. The first blueprint attempt failed with *"Blueprint file
+render.yaml not found on main branch"* — Render defaults to the repository's default branch,
+which is `main`, and `main` was still at `36cd2d7` with none of this work on it. The choice
+was to point Render at `dev` or to promote `dev` to `main`. Promoting won: what is live should
+be a reviewed merge, not whatever was pushed to the integration branch last.
+
+**Files.**
+
+- `README.md`: the blueprint step now says to leave Branch on `main`, and names the
+  consequence — a merge into `main` redeploys, a push to `dev` does not
+- `CLAUDE.md`: §2 records that `main` is the deployed branch
+
+**Now true.**
+
+1. **`main` is the deploy target.** `dev` is still the integration branch and every feature
+   still merges there first. The rule that `main` only receives merges from `dev` after being
+   asked explicitly is unchanged — it just costs more to get wrong now, because a merge into
+   `main` redeploys the live demo.
+2. **`main` was promoted from `36cd2d7` to the tip of `dev`**, 28 commits, on explicit
+   approval. That is the entire project to date: batches 1 and 2, the verified compose stack,
+   the seed fix (D-015) and the deploy prep (D-016).
+
+**Open.** Unchanged from the `chore/deploy` entry — nothing is deployed and verified yet. The
+blueprint has still never completed a build, so Render's Docker build from the repository
+root, SSE through its proxy, and a Nest boot inside 512 MB / 0.1 CPU remain unverified, and
+the participant flow has still never run on a phone.
