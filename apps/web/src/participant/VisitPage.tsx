@@ -1,5 +1,6 @@
 import {
   Alert,
+  Snackbar,
   AppBar,
   Box,
   Button,
@@ -37,6 +38,7 @@ export function VisitPage() {
   const [current, setCurrent] = useState<SessionView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState(false);
   const t = useT();
   const { toggle } = useLocale();
 
@@ -160,10 +162,35 @@ export function VisitPage() {
           session={current}
           onSubmitted={() => {
             clearQueue(current.id);
+            setSubmitted(true);
+            /**
+             * Advance the local state immediately as well as reloading.
+             *
+             * The reload is authoritative, but it is a round trip; without this the report
+             * form stays on screen for its duration, which is exactly long enough for someone
+             * to press submit a second time and be told they already did.
+             */
+            setCurrent((c) => (c ? { ...c, state: 'submitted' } : c));
             void load();
           }}
         />
       )}
+
+      {/*
+        Confirmation the participant cannot miss. The panel below says the same thing, but a
+        person who has just pressed a button is looking for an acknowledgement, not a changed
+        screen -- and before this there was neither.
+      */}
+      <Snackbar
+        open={submitted}
+        autoHideDuration={6000}
+        onClose={() => setSubmitted(false)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert severity="success" variant="filled" onClose={() => setSubmitted(false)}>
+          {t('participant.report.submittedToast')}
+        </Alert>
+      </Snackbar>
 
       {current && ['submitted', 'abandoned', 'expired'].includes(current.state) && (
         <Box sx={{ p: 3 }}>

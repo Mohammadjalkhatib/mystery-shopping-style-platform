@@ -17,6 +17,7 @@ import { ReaperService } from '../session/reaper.service.js';
 import {
   ConsoleService,
   type ConsoleStats,
+  type ParticipantStats,
   type VisitDetail,
   type VisitRow,
 } from './console.service.js';
@@ -88,6 +89,21 @@ export class ConsoleController {
   @Get('stats')
   stats(@CurrentUser() user: AuthUser, @Query('days') days?: string): Promise<ConsoleStats> {
     return this.console.stats(user, days ? Number(days) : undefined);
+  }
+
+  /**
+   * Per-participant results. Same tenancy rule as every other console read.
+   *
+   * A separate path from `visits/:sessionId`, so there is no chance of `participants` being
+   * captured as a session id.
+   */
+  @Roles('business', 'admin')
+  @Get('participants')
+  participants(
+    @CurrentUser() user: AuthUser,
+    @Query('days') days?: string,
+  ): Promise<ParticipantStats[]> {
+    return this.console.participantStats(user, days ? Number(days) : undefined);
   }
 
   @Roles('business', 'admin')

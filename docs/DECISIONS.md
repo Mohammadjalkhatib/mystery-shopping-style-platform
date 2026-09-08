@@ -1348,3 +1348,48 @@ instance and needs a shared limiter before it is not. Nominatim's coverage of sm
 Jordan and the Gulf is thinner than Google's, so some venues will not be findable by name and
 will still have to be located by dragging. The community servers are also not for production
 volume — a paid Nominatim host or a commercial geocoder is the answer if this ships for real.
+
+---
+
+## D-031: A per-participant view that ranks attention, not guilt
+
+**Date:** 2026-09-09
+**Status:** accepted
+
+**Decision.** `GET /console/participants` returns per-participant results — visit count, the
+three verdict counts, pass rate, median score and their most frequent penalty — sorted worst
+pass rate first. The People tab renders it under a banner saying plainly that it does not
+identify dishonesty.
+
+**Context.** Asked for as "who's working and who's cheating". The first half is a reporting
+question this system can answer well. The second half is one it cannot answer at all, and D-001
+is the whole reason: the platform does not claim to prove anyone was anywhere, so it certainly
+cannot prove someone was not.
+
+**Alternatives considered.**
+
+- *A trust or honesty score per participant.* What the request literally asks for, and the
+  number a client would most like. Refused, not deferred. A run of rejections is equally
+  consistent with a participant inventing visits, a venue saved at the wrong coordinate — which
+  has happened in this database (D-020) — and a phone whose GPS is poor indoors. A single number
+  laundered from those into "honesty" would be acted on as though it were evidence, and the
+  first person it accused would probably be the victim of a typo in a venue.
+- *Only surfacing rejection counts.* Simpler, and it is the column people look for. Rejected
+  because it is the column most likely to be misread on its own. The `topSignal` column is what
+  makes the list diagnostic rather than accusatory: `proximity` failing every time is a
+  different investigation from `coverage` failing every time — the first is about where someone
+  was, the second about whether the app was ever on screen.
+- *Grouping the signal aggregation by `participantId` in Mongo.* The obvious query. It was
+  written that way first and it was wrong: `verificationResults` carries `sessionId` and
+  `clientOrgId` and no participant. The pipeline would not have errored — every row would have
+  collapsed under a `null` key and the column would have been one meaningless bucket. It joins
+  through `sessionId` in the service instead.
+
+**Consequences.** Pass rate is unweighted, so one visit at 100% sorts alongside twenty at 100%;
+the visit count is displayed next to it precisely because the rate alone misleads at small n.
+Ranking people at all is a product decision with teeth — a list sorted worst-first will be read
+as a leaderboard of blame whatever the banner says, and the honest mitigation is that the banner
+is specific about the alternative explanations rather than a generic disclaimer. The window is
+fixed at 30 days with no control, and there is no per-venue breakdown, which is the cut that
+most limits its diagnostic value: a participant who fails only at one venue is the single
+clearest sign that the venue, not the person, is the problem.

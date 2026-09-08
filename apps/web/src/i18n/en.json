@@ -89,7 +89,9 @@
       "submit": "Submit report",
       "submitting": "Submitting…",
       "couldNotSubmit": "Could not submit",
-      "submitted": "Report submitted. It is being reviewed — you do not need to do anything else."
+      "submitted": "Report submitted. It is being reviewed — you do not need to do anything else.",
+      "submittedToast": "Report submitted — thank you.",
+      "submittedTitle": "Report received"
     },
     "ended": {
       "neverStarted": "This visit was never started, and was closed automatically after {mins} minutes.",
@@ -175,6 +177,20 @@
       "failuresPenalty": "{points} points lost",
       "noFailures": "No failing signals in this window.",
       "tabOverview": "Overview"
+    },
+    "people": {
+      "title": "People",
+      "subtitle": "Results per participant over the last 30 days, worst pass rate first.",
+      "notCheating": "This ranks who needs looking at, not who is dishonest. A run of rejections is equally consistent with a participant inventing visits, a venue saved at the wrong coordinate, or a phone with poor indoor GPS. The 'top issue' column is what tells those apart.",
+      "participant": "Participant",
+      "visits": "Visits",
+      "outcomes": "Outcomes",
+      "passRate": "Pass rate",
+      "medianScore": "Median score",
+      "topIssue": "Top issue",
+      "topIssueHint": "Fired on {count} of their visits",
+      "empty": "No completed visits in this window yet.",
+      "tab": "People"
     }
   },
   "admin": {
