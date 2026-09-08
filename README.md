@@ -45,7 +45,10 @@ Built and working end to end:
 - [x] Seeded demo data, relocatable for testing outside the client's market
 - [x] Authoring: create venues, tasks and assignments from the console's Tasks tab
 - [x] Abandoned and expired sessions, reaped lazily on read, with the reason shown to the participant
-- [x] Arabic pass on the participant screens, with RTL layout and a language toggle
+- [x] Arabic and English across the whole app — participant, console and admin — with RTL layout
+- [x] All copy in two editable JSON files, `apps/web/src/i18n/{en,ar}.json`, for new dialects
+- [x] Discreet mode: a dark clock overlay so the page is not conspicuous in-store, capture unaffected
+- [x] Responsive layouts: the visit list becomes cards on a phone, toolbars and forms adapt
 - [x] Capture watchdog: a silent `watchPosition` is re-attached, and restarts are shown
 
 Not built:
@@ -279,6 +282,38 @@ with `SEED_VENUE_LAT`/`LNG`, create a venue at coordinates you can actually stan
 task against it, and assign it to yourself. The seed relocation still works and is still the
 quickest path for a fresh database, but it moves the demo venues for everybody; a new venue
 does not.
+
+---
+
+## Translating the app
+
+All copy lives in two files:
+
+```
+apps/web/src/i18n/en.json    the source of truth
+apps/web/src/i18n/ar.json    Modern Standard Arabic
+```
+
+Both are plain nested JSON, keyed by area (`participant.consent.title`,
+`console.review.approve`). To add a dialect, copy `ar.json`, edit the values, and register it
+in `apps/web/src/i18n/strings.ts` beside the other two.
+
+Two rules, both enforced by `strings.spec.ts` so a bad edit fails the build rather than a
+participant's screen:
+
+- **Every key in `en.json` must exist in every other file.** English is the source of truth;
+  a key missing elsewhere falls back to English rather than blanking, but the test still fails.
+- **Placeholders in `{braces}` must survive translation exactly.** `{mins}`, `{count}`,
+  `{radius}` are substituted at render time. Drop one and the sentence loses the number it was
+  about; rename one and a raw brace is shown to the user.
+
+Write copy **count-neutrally** — "Locations recorded: 3", never "3 locations". English has one
+plural rule and Arabic has six, and there is deliberately no plural engine (D-022).
+
+**What does NOT live in these files.** The nine verification signal reasons — the sentences a
+business user reads on the evidence trail — are composed on the API in English and are not
+translated. That is a known limit, not an oversight: doing it properly means every signal
+returning a code and parameters instead of a sentence.
 
 ---
 
@@ -586,8 +621,9 @@ Named so it is clear these are cuts, not omissions:
   useless with no history. Top of the "what I would build next" list
 - Native mobile apps, which are the correct answer for background tracking and mock-location
   detection and the wrong answer for a web slice
-- Full internationalisation. The participant screens are English and Arabic with RTL (D-022);
-  the business console stays English, and so do the verification signal reasons it displays
+- Full internationalisation. The app is English and Arabic with RTL and its copy lives in two
+  JSON files (D-024), but the nine verification signal reasons are composed on the SERVER and
+  stay English in every locale. Fixing that means codes and parameters for each signal
 
 ---
 

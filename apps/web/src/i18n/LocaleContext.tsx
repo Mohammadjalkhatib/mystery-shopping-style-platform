@@ -1,7 +1,14 @@
 import { ThemeProvider } from '@mui/material';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { buildTheme } from '../theme/theme.js';
-import { DICTIONARIES, type Locale, type Strings } from './strings.js';
+import {
+  DICTIONARIES,
+  en as EN,
+  interpolate,
+  lookup,
+  type Locale,
+  type TranslationKey,
+} from './strings.js';
 
 const STORAGE_KEY = 'msp.locale';
 
@@ -10,7 +17,7 @@ interface LocaleValue {
   setLocale: (l: Locale) => void;
   toggle: () => void;
   /** Look up a string, substituting {placeholders}. */
-  t: (key: keyof Strings, vars?: Record<string, string | number>) => string;
+  t: (key: TranslationKey, vars?: Record<string, string | number>) => string;
   dir: 'ltr' | 'rtl';
 }
 
@@ -56,14 +63,16 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  /**
+   * Look up a dotted key, then interpolate.
+   *
+   * Falls back to English and finally to the key itself. A missing string must never blank a
+   * screen mid-visit: an untranslated sentence is recoverable, an empty button is not.
+   */
   const t = useCallback(
-    (key: keyof Strings, vars?: Record<string, string | number>): string => {
-      const raw = DICTIONARIES[locale][key];
-      if (!vars) return raw;
-      return Object.entries(vars).reduce(
-        (acc, [k, v]) => acc.replaceAll(`{${k}}`, String(v)),
-        raw,
-      );
+    (key: TranslationKey, vars?: Record<string, string | number>): string => {
+      const raw = lookup(DICTIONARIES[locale], key) ?? lookup(EN, key) ?? key;
+      return interpolate(raw, vars);
     },
     [locale],
   );

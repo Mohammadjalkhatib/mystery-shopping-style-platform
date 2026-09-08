@@ -26,6 +26,7 @@ import {
   type VenueRow,
 } from '../api/client.js';
 import { useAuth } from '../auth/AuthContext.js';
+import { useT } from '../i18n/LocaleContext.js';
 
 /**
  * Authoring: create a venue, define a task against it, assign it to a participant.
@@ -40,6 +41,7 @@ import { useAuth } from '../auth/AuthContext.js';
  */
 export function TasksTab() {
   const { user } = useAuth();
+  const t = useT();
   const [venues, setVenues] = useState<VenueRow[]>([]);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [participants, setParticipants] = useState<ParticipantRow[]>([]);
@@ -57,7 +59,7 @@ export function TasksTab() {
       setTasks(t);
       setParticipants(p);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load');
+      setError(e instanceof Error ? e.message : t('common.failedToLoad'));
     } finally {
       setLoading(false);
     }
@@ -72,7 +74,7 @@ export function TasksTab() {
     setError(null);
   };
   const fail = (e: unknown): void => {
-    setError(e instanceof Error ? e.message : 'Something went wrong');
+    setError(e instanceof Error ? e.message : t('common.somethingWentWrong'));
     setOk(null);
   };
 
@@ -85,7 +87,7 @@ export function TasksTab() {
   }
 
   return (
-    <Stack spacing={3}>
+    <Stack spacing={{ xs: 2, sm: 3 }}>
       {error && (
         <Alert severity="error" onClose={() => setError(null)}>
           {error}
@@ -103,7 +105,7 @@ export function TasksTab() {
         onCancelEdit={() => setEditing(null)}
         onCreated={(v) => {
           setVenues((prev) => [...prev, v].sort((a, b) => a.name.localeCompare(b.name)));
-          announce(`Venue "${v.name}" created with a ${v.radiusM} m geofence.`);
+          announce(t('admin.venueForm.created', { name: v.name, radius: v.radiusM }));
         }}
         onUpdated={(v) => {
           setVenues((prev) =>
@@ -111,28 +113,33 @@ export function TasksTab() {
           );
           setEditing(null);
           announce(
-            `"${v.name}" corrected to ${v.lat}, ${v.lng} with a ${v.radiusM} m geofence. ` +
-              `Visits already started keep the geofence they began with.`,
+            t('admin.venueForm.updated', {
+              name: v.name,
+              lat: v.lat,
+              lng: v.lng,
+              radius: v.radiusM,
+            }),
           );
         }}
         onError={fail}
       />
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
+      <Paper variant="outlined" sx={{ p: { xs: 1.5, sm: 2 } }}>
         <Typography variant="h3" sx={{ fontSize: '1rem', mb: 0.5 }}>
-          Venues
+          {t('admin.venueList.title')}
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-          Correcting a venue is safe: a visit that has already started is judged against the
-          geofence it began with, so a fix here never changes a verdict already reached.
+          {t('admin.venueList.explain')}
         </Typography>
         <Box sx={{ overflowX: 'auto' }}>
           <Table size="small">
             <TableHead>
               <TableRow>
-                <TableCell>Name</TableCell>
-                <TableCell>Coordinates</TableCell>
-                <TableCell align="right">Fence</TableCell>
+                <TableCell>{t('admin.venueList.name')}</TableCell>
+                <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
+                  {t('admin.venueList.coordinates')}
+                </TableCell>
+                <TableCell align="right">{t('admin.venueList.fence')}</TableCell>
                 <TableCell align="right" />
               </TableRow>
             </TableHead>
@@ -142,16 +149,22 @@ export function TasksTab() {
                   <TableCell>
                     {v.name}
                     {v.indoor && (
-                      <Chip size="small" variant="outlined" label="indoor" sx={{ ml: 1 }} />
+                      <Chip size="small" variant="outlined" label={t('admin.venueForm.indoor')} sx={{ ml: 1 }} />
                     )}
                   </TableCell>
-                  <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                  {/* The widest column and the least scannable; it survives on a tablet up. */}
+                  <TableCell
+                    sx={{
+                      fontVariantNumeric: 'tabular-nums',
+                      display: { xs: 'none', sm: 'table-cell' },
+                    }}
+                  >
                     {v.lat}, {v.lng}
                   </TableCell>
                   <TableCell align="right">{v.radiusM} m</TableCell>
                   <TableCell align="right">
                     <Button size="small" onClick={() => setEditing(v)}>
-                      Edit
+                      {t('admin.venueList.edit')}
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -160,7 +173,7 @@ export function TasksTab() {
                 <TableRow>
                   <TableCell colSpan={4}>
                     <Typography color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>
-                      No venues yet.
+                      {t('admin.venueList.empty')}
                     </Typography>
                   </TableCell>
                 </TableRow>
@@ -172,9 +185,10 @@ export function TasksTab() {
 
       <TaskForm
         venues={venues}
-        onCreated={(t) => {
-          setTasks((prev) => [t, ...prev]);
-          announce(`Task "${t.title}" created at ${t.venueName}.`);
+        // `nt`, not `t`: the translator is `t` in this scope now.
+        onCreated={(nt) => {
+          setTasks((prev) => [nt, ...prev]);
+          announce(t('admin.taskForm.created', { title: nt.title, venue: nt.venueName }));
         }}
         onError={fail}
       />
@@ -188,23 +202,23 @@ export function TasksTab() {
               t.id === taskId ? { ...t, assignmentCount: t.assignmentCount + 1 } : t,
             ),
           );
-          announce(`Assigned to ${who}. Their visit is now waiting in the participant app.`);
+          announce(t('admin.assignForm.assigned', { who }));
         }}
         onError={fail}
       />
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
+      <Paper variant="outlined" sx={{ p: { xs: 1.5, sm: 2 } }}>
         <Typography variant="h3" sx={{ fontSize: '1rem', mb: 1.5 }}>
-          Tasks
+          {t('admin.taskList.title')}
         </Typography>
         <Box sx={{ overflowX: 'auto' }}>
           <Table size="small">
             <TableHead>
               <TableRow>
-                <TableCell>Title</TableCell>
-                <TableCell>Venue</TableCell>
-                <TableCell align="right">Expected dwell</TableCell>
-                <TableCell align="right">Assigned</TableCell>
+                <TableCell>{t('admin.taskList.titleCol')}</TableCell>
+                <TableCell>{t('admin.taskList.venue')}</TableCell>
+                <TableCell align="right">{t('admin.taskList.dwell')}</TableCell>
+                <TableCell align="right">{t('admin.taskList.assigned')}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -222,7 +236,7 @@ export function TasksTab() {
                 <TableRow>
                   <TableCell colSpan={4}>
                     <Typography color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>
-                      No tasks yet. Create a venue, then a task against it.
+                      {t('admin.taskList.empty')}
                     </Typography>
                   </TableCell>
                 </TableRow>
@@ -252,6 +266,7 @@ function VenueForm({
   onUpdated: (v: VenueRow) => void;
   onError: (e: unknown) => void;
 }) {
+  const t = useT();
   const [name, setName] = useState('');
   const [address, setAddress] = useState('');
   const [coords, setCoords] = useState('');
@@ -365,26 +380,27 @@ function VenueForm({
   const ready = name.length >= 2 && address.length >= 2 && parsed !== null && !coarse && !looksLikeLink && !busy;
 
   return (
-    <Paper variant="outlined" sx={{ p: 2 }}>
+    <Paper variant="outlined" sx={{ p: { xs: 1.5, sm: 2 } }}>
       <Typography variant="h3" sx={{ fontSize: '1rem' }}>
-        {editing ? `Correcting "${editing.name}"` : '1 · New venue'}
+        {editing
+          ? t('admin.venueForm.editTitle', { name: editing.name })
+          : t('admin.venueForm.stepTitle')}
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        The geofence radius is per venue, never a global constant — a kiosk and a hypermarket
-        cannot share one. 25 to 500 m.
+        {t('admin.venueForm.explain')}
       </Typography>
       <Divider sx={{ mb: 2 }} />
       <Stack spacing={2}>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
           <TextField
-            label="Name"
+            label={t('admin.venueForm.name')}
             value={name}
             onChange={(e) => setName(e.target.value)}
             fullWidth
             size="small"
           />
           <TextField
-            label="Address"
+            label={t('admin.venueForm.address')}
             value={address}
             onChange={(e) => setAddress(e.target.value)}
             fullWidth
@@ -393,16 +409,16 @@ function VenueForm({
         </Stack>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
           <TextField
-            label="Coordinates"
-            placeholder="31.9399, 35.8486"
+            label={t('admin.venueForm.coordinates')}
+            placeholder={t('admin.venueForm.coordinatesPlaceholder')}
             helperText={
               looksLikeLink
-                ? 'That is a share link, not a coordinate. Open it, right-click the pin, and copy the two numbers.'
+                ? t('admin.venueForm.coordinatesLink')
                 : coords && !parsed
-                  ? 'Expected "lat, lng"'
+                  ? t('admin.venueForm.coordinatesExpected')
                   : coarse
-                    ? `Only ${decimalsGiven} decimal places — that locates the venue to within hundreds of metres. Use at least 4.`
-                    : 'Right-click the spot in Google Maps and paste'
+                    ? t('admin.venueForm.coordinatesCoarse', { count: decimalsGiven ?? 0 })
+                    : t('admin.venueForm.coordinatesHelp')
             }
             error={Boolean(coords) && (!parsed || looksLikeLink || coarse)}
             value={coords}
@@ -411,7 +427,7 @@ function VenueForm({
             size="small"
           />
           <TextField
-            label="Radius (m)"
+            label={t('admin.venueForm.radius')}
             type="number"
             value={radiusM}
             onChange={(e) => setRadiusM(e.target.value)}
@@ -421,8 +437,8 @@ function VenueForm({
         </Stack>
         {isAdmin && (
           <TextField
-            label="Client org id"
-            helperText="Admins have no organisation of their own, so this is required"
+            label={t('admin.venueForm.clientOrgId')}
+            helperText={t('admin.venueForm.clientOrgIdHelp')}
             value={clientOrgId}
             onChange={(e) => setClientOrgId(e.target.value)}
             size="small"
@@ -431,11 +447,10 @@ function VenueForm({
         <Stack direction="row" spacing={2} sx={{ alignItems: 'center' }}>
           <FormControlLabel
             control={<Switch checked={indoor} onChange={(e) => setIndoor(e.target.checked)} />}
-            label="Indoor"
+            label={t('admin.venueForm.indoor')}
           />
           <Typography variant="body2" color="text.secondary" sx={{ flexGrow: 1 }}>
-            Indoor venues legitimately report far worse accuracy, and the engine is told not to
-            punish it.
+            {t('admin.venueForm.indoorExplain')}
           </Typography>
           {editing && (
             <Button
@@ -444,11 +459,11 @@ function VenueForm({
                 onCancelEdit();
               }}
             >
-              Cancel
+              {t('common.cancel')}
             </Button>
           )}
           <Button variant="contained" disabled={!ready} onClick={() => void submit()}>
-            {editing ? 'Save correction' : 'Create venue'}
+            {editing ? t('admin.venueForm.save') : t('admin.venueForm.create')}
           </Button>
         </Stack>
       </Stack>
@@ -467,6 +482,7 @@ function TaskForm({
   onCreated: (t: TaskRow) => void;
   onError: (e: unknown) => void;
 }) {
+  const t = useT();
   const [venueId, setVenueId] = useState('');
   const [title, setTitle] = useState('');
   const [brief, setBrief] = useState('');
@@ -495,24 +511,24 @@ function TaskForm({
   const ready = venueId !== '' && title.length >= 3 && brief.length >= 10 && !busy;
 
   return (
-    <Paper variant="outlined" sx={{ p: 2 }}>
+    <Paper variant="outlined" sx={{ p: { xs: 1.5, sm: 2 } }}>
       <Typography variant="h3" sx={{ fontSize: '1rem' }}>
-        2 · New task
+        {t('admin.taskForm.stepTitle')}
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        A task belongs to the venue it is defined against, and inherits its organisation from it.
+        {t('admin.taskForm.explain')}
       </Typography>
       <Divider sx={{ mb: 2 }} />
       <Stack spacing={2}>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
           <TextField
             select
-            label="Venue"
+            label={t('admin.taskForm.venue')}
             value={venueId}
             onChange={(e) => setVenueId(e.target.value)}
             size="small"
             fullWidth
-            helperText={venues.length === 0 ? 'Create a venue first' : ' '}
+            helperText={venues.length === 0 ? t('admin.taskForm.venueFirst') : ' '}
             disabled={venues.length === 0}
           >
             {venues.map((v) => (
@@ -522,7 +538,7 @@ function TaskForm({
             ))}
           </TextField>
           <TextField
-            label="Expected dwell (min)"
+            label={t('admin.taskForm.dwell')}
             type="number"
             value={minutes}
             onChange={(e) => setMinutes(e.target.value)}
@@ -532,25 +548,25 @@ function TaskForm({
           />
         </Stack>
         <TextField
-          label="Title"
+          label={t('admin.taskForm.title')}
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           size="small"
           fullWidth
         />
         <TextField
-          label="Brief"
+          label={t('admin.taskForm.brief')}
           value={brief}
           onChange={(e) => setBrief(e.target.value)}
           size="small"
           fullWidth
           multiline
           minRows={2}
-          helperText="What the participant should actually do. They read this before starting."
+          helperText={t('admin.taskForm.briefHelp')}
         />
         <Box sx={{ textAlign: 'right' }}>
           <Button variant="contained" disabled={!ready} onClick={() => void submit()}>
-            Create task
+            {t('admin.taskForm.create')}
           </Button>
         </Box>
       </Stack>
@@ -571,6 +587,7 @@ function AssignForm({
   onAssigned: (taskId: string, who: string) => void;
   onError: (e: unknown) => void;
 }) {
+  const t = useT();
   const [taskId, setTaskId] = useState('');
   const [participantId, setParticipantId] = useState('');
   const [busy, setBusy] = useState(false);
@@ -594,25 +611,24 @@ function AssignForm({
   const ready = taskId !== '' && participantId !== '' && !busy;
 
   return (
-    <Paper variant="outlined" sx={{ p: 2 }}>
+    <Paper variant="outlined" sx={{ p: { xs: 1.5, sm: 2 } }}>
       <Typography variant="h3" sx={{ fontSize: '1rem' }}>
-        3 · Assign
+        {t('admin.assignForm.stepTitle')}
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        This opens a pending visit for that participant straight away. The same participant
-        cannot be given the same task twice.
+        {t('admin.assignForm.explain')}
       </Typography>
       <Divider sx={{ mb: 2 }} />
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ alignItems: 'flex-start' }}>
         <TextField
           select
-          label="Task"
+          label={t('admin.assignForm.task')}
           value={taskId}
           onChange={(e) => setTaskId(e.target.value)}
           size="small"
           fullWidth
           disabled={tasks.length === 0}
-          helperText={tasks.length === 0 ? 'Create a task first' : ' '}
+          helperText={tasks.length === 0 ? t('admin.assignForm.taskFirst') : ' '}
         >
           {tasks.map((t) => (
             <MenuItem key={t.id} value={t.id}>
@@ -622,7 +638,7 @@ function AssignForm({
         </TextField>
         <TextField
           select
-          label="Participant"
+          label={t('admin.assignForm.participant')}
           value={participantId}
           onChange={(e) => setParticipantId(e.target.value)}
           size="small"
@@ -636,7 +652,7 @@ function AssignForm({
           ))}
         </TextField>
         <Button variant="contained" disabled={!ready} onClick={() => void submit()} sx={{ mt: 0.5 }}>
-          Assign
+          {t('admin.assignForm.assign')}
         </Button>
       </Stack>
     </Paper>

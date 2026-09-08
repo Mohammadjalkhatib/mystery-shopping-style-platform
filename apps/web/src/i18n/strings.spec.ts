@@ -1,55 +1,94 @@
-import { ar, en } from './strings.js';
+import { ar, en, flatten, interpolate, lookup } from './strings.js';
 
 /**
- * The dictionary is the one part of the Arabic pass that fails SILENTLY.
+ * The dictionaries are the one part of the i18n layer that fails SILENTLY.
  *
- * A missing key renders as nothing, a stale key lingers for ever, and a translated string that
- * dropped its `{placeholder}` shows a participant a raw brace or, worse, a sentence missing the
- * number it was about. None of that throws, and none of it is caught by the type system — the
- * `Strings` type catches a MISSING key, but not an empty string, an untranslated one, or a lost
- * placeholder.
+ * The `TranslationKey` type catches a key that does not exist in English. It cannot catch an
+ * empty value, an untranslated copy-paste, a `{placeholder}` dropped in translation, or a key
+ * present in English and missing from Arabic — and every one of those renders as either nothing
+ * or a raw brace in front of a participant, without throwing.
  *
- * Per the testing policy this is not UI rendering; it is data with an invariant, and the
- * invariant is invisible when it breaks.
+ * These files are meant to be handed to a translator or copied to a dialect (D-024), so the
+ * guard has to survive someone editing JSON by hand with no TypeScript in sight.
  */
-describe('participant dictionary', () => {
-  const keys = Object.keys(en) as (keyof typeof en)[];
+describe('translation dictionaries', () => {
+  const flatEn = flatten(en);
+  const flatAr = flatten(ar);
+  const keys = Object.keys(flatEn);
 
-  it('has an Arabic entry for every English key', () => {
-    expect(Object.keys(ar).sort()).toEqual(keys.slice().sort());
+  it('covers a meaningful amount of the app', () => {
+    // A sanity floor. If this drops sharply, a whole section was deleted rather than edited.
+    expect(keys.length).toBeGreaterThan(100);
   });
 
-  it('has no empty strings in either language', () => {
+  it('has exactly the same keys in both languages', () => {
+    expect(Object.keys(flatAr).sort()).toEqual(keys.slice().sort());
+  });
+
+  it('has no empty values in either language', () => {
     for (const k of keys) {
-      expect(en[k].trim().length).toBeGreaterThan(0);
-      expect(ar[k].trim().length).toBeGreaterThan(0);
+      expect(flatEn[k]!.trim().length).toBeGreaterThan(0);
+      expect(flatAr[k]!.trim().length).toBeGreaterThan(0);
     }
   });
 
   it('keeps every placeholder through translation', () => {
     const placeholders = (s: string): string[] => (s.match(/\{[a-zA-Z]+\}/g) ?? []).sort();
     for (const k of keys) {
-      expect({ key: k, ph: placeholders(ar[k]) }).toEqual({
+      expect({ key: k, ph: placeholders(flatAr[k]!) }).toEqual({
         key: k,
-        ph: placeholders(en[k]),
+        ph: placeholders(flatEn[k]!),
       });
     }
   });
 
-  it('actually translates: no Arabic value is a copy of its English one', () => {
-    // `language` is the deliberate exception -- it holds the name of the OTHER language, so
-    // the English entry is Arabic script and vice versa.
-    for (const k of keys.filter((x) => x !== 'language')) {
-      // A value that is byte-identical is almost certainly an untranslated placeholder left
-      // behind while copying the block across.
-      expect(ar[k]).not.toBe(en[k]);
+  it('actually translates the prose', () => {
+    // Proper nouns and a placeholder-only string are legitimately identical; everything else
+    // being byte-identical means a block was copied and never translated.
+    const allowedIdentical = new Set([
+      'common.language',
+      'auth.appName',
+      'admin.venueForm.coordinatesPlaceholder',
+    ]);
+    for (const k of keys.filter((x) => !allowedIdentical.has(x))) {
+      expect({ key: k, same: flatAr[k] === flatEn[k] }).toEqual({ key: k, same: false });
     }
   });
 
-  it('contains Arabic script in the Arabic dictionary', () => {
+  it('contains Arabic script wherever there is prose to translate', () => {
     const arabic = /[؀-ۿ]/;
-    for (const k of keys.filter((x) => x !== 'language')) {
-      expect(arabic.test(ar[k])).toBe(true);
+    const latinOnly = new Set([
+      'common.language',
+      'auth.appName',
+      'admin.venueForm.coordinatesPlaceholder',
+    ]);
+    for (const k of keys.filter((x) => !latinOnly.has(x))) {
+      expect({ key: k, hasArabic: arabic.test(flatAr[k]!) }).toEqual({ key: k, hasArabic: true });
     }
+  });
+
+  it('excludes the translator note from the rendered key set', () => {
+    // `_readme` is guidance for whoever edits the file, not a string the app shows.
+    expect(keys.some((k) => k.includes('_readme'))).toBe(false);
+  });
+
+  describe('lookup and interpolate', () => {
+    it('resolves a nested path', () => {
+      expect(lookup(en, 'participant.consent.title')).toBe('Before you start');
+    });
+
+    it('returns undefined for a missing path rather than throwing', () => {
+      // A missing string must never blank a screen mid-visit.
+      expect(lookup(en, 'participant.nope.missing')).toBeUndefined();
+      expect(lookup(en, 'participant')).toBeUndefined();
+    });
+
+    it('substitutes every occurrence of a placeholder', () => {
+      expect(interpolate('{a} and {a} and {b}', { a: 1, b: 'x' })).toBe('1 and 1 and x');
+    });
+
+    it('leaves an unsupplied placeholder visible rather than blanking it', () => {
+      expect(interpolate('{mins} minutes', {})).toBe('{mins} minutes');
+    });
   });
 });

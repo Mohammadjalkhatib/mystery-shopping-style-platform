@@ -1,5 +1,7 @@
 import { Chip, Tooltip } from '@mui/material';
 import type { Verdict } from '@msp/shared';
+import { useT } from '../i18n/LocaleContext.js';
+import type { TranslationKey } from '../i18n/strings.js';
 import { verdictPalette } from '../theme/theme.js';
 
 /**
@@ -9,28 +11,29 @@ import { verdictPalette } from '../theme/theme.js';
  * UI no matter what the copy says, so `auto_verified` reads as a confident neutral and the
  * label says "consistent with a genuine visit" rather than "verified".
  */
-const LABEL: Record<Verdict, string> = {
-  auto_verified: 'Consistent with a genuine visit',
-  needs_review: 'Needs review',
-  rejected: 'Not supported by the evidence',
+const LABEL: Record<Verdict, TranslationKey> = {
+  auto_verified: 'verdict.auto_verified',
+  needs_review: 'verdict.needs_review',
+  rejected: 'verdict.rejected',
 };
 
-const EXPLAIN: Record<Verdict, string> = {
-  auto_verified: 'The evidence is consistent with a real visit. This is not proof of presence.',
-  needs_review: 'The evidence is ambiguous. A human decides.',
-  rejected: 'The evidence does not support this visit having taken place as described.',
+const EXPLAIN: Record<Verdict, TranslationKey> = {
+  auto_verified: 'verdict.explainAuto',
+  needs_review: 'verdict.explainReview',
+  rejected: 'verdict.explainRejected',
 };
 
 export function VerdictChip({ verdict, score }: { verdict: Verdict | null; score?: number | null }) {
+  const t = useT();
   if (!verdict) {
-    return <Chip size="small" label="Awaiting verification" variant="outlined" />;
+    return <Chip size="small" label={t('verdict.pending')} variant="outlined" />;
   }
   const c = verdictPalette[verdict];
   return (
-    <Tooltip title={EXPLAIN[verdict]}>
+    <Tooltip title={t(EXPLAIN[verdict])}>
       <Chip
         size="small"
-        label={score == null ? LABEL[verdict] : `${LABEL[verdict]} · ${score}`}
+        label={score == null ? t(LABEL[verdict]) : `${t(LABEL[verdict])} · ${score}`}
         sx={{ bgcolor: c.main, color: c.contrastText }}
       />
     </Tooltip>

@@ -950,7 +950,8 @@ D-012 has one; it is covered by a test and should be deleted once no such sessio
 ## D-022: A hand-written dictionary and document direction, no i18n or RTL library
 
 **Date:** 2026-09-08
-**Status:** accepted
+**Status:** superseded in part by D-024 — the no-library decision stands, the TypeScript file
+format and the participant-only scope do not
 
 **Decision.** The Arabic pass is a typed object of about ninety strings, a context that swaps
 the dictionary and the theme's `direction` together, and `document.documentElement.dir`. No
@@ -1036,3 +1037,89 @@ when it is merely honest. It also cannot help while the screen is off, which is 
 that 48 minute hole probably came from — this narrows the ambiguity rather than removing it.
 And it is still unverified against the failure it was written for: nothing here has been run on
 an iPhone.
+
+---
+
+## D-024: Translations move to two JSON files, and cover the whole app
+
+**Date:** 2026-09-08
+**Status:** accepted, supersedes the format and scope halves of D-022
+
+**Decision.** `en.json` and `ar.json` hold every user-facing string in the web app — participant
+flow, business console and admin surface — nested by area and addressed by dotted key. English
+is the source of truth: `TranslationKey` is derived from it, so a key that does not exist is a
+compile error. Still no i18n library; D-022's reasoning there is unchanged.
+
+**Context.** D-022 scoped the Arabic pass to the participant screens because CLAUDE.md section 9
+said "participant screens get an Arabic pass, nothing more". The user asked for the whole site
+and for the content as two editable files they can copy to other dialects. A TypeScript object
+is a bad artifact to hand someone who is translating rather than programming: it cannot be
+opened by a translation tool, and editing it risks breaking the build in ways a non-developer
+cannot diagnose.
+
+**Alternatives considered.**
+
+- *Keep the TypeScript dictionary and hand over an export.* No build changes, and the type
+  safety is stronger. Rejected because an export is a copy: the moment it is edited it has
+  diverged from the source, and the whole point is that the file the user edits is the file the
+  app ships.
+- *One flat file of dotted keys.* Simpler lookup, no recursion, and the key names read the same.
+  Rejected because a flat list stops being navigable at about eighty entries and there are now
+  over a hundred and forty; nesting by area is what lets a translator find "everything the
+  consent screen says" without searching.
+- *Keep the console in English.* What D-022 decided, and defensible — it is an internal tool.
+  Overridden by the user's request. Worth noting the cost is now visible in the product: the
+  console chrome is Arabic while the verification signal reasons inside it are English, because
+  those are composed on the server. That is a real seam and it is not fixed here.
+
+**Consequences.** Type safety is now derived from a JSON file, so a malformed edit surfaces as a
+confusing type error somewhere else rather than at the line that broke. Runtime lookup replaces a
+compile-time property access, which is why `t()` falls back to English and then to the key itself
+— a missing string must never blank a screen mid-visit. Adding a dialect means copying `ar.json`
+and registering it in one place; nothing lazy-loads, so every language ships to every user.
+Server-composed strings — the nine verification signal reasons, and API error messages — remain
+English regardless of locale, which is the honest limit of what this change achieves.
+
+---
+
+## D-025: A discreet screen for the participant, which does not imitate a lock screen
+
+**Date:** 2026-09-08
+**Status:** accepted
+
+**Decision.** A button on the active-visit screen puts up a full-screen dark overlay showing a
+clock and a dim line saying the visit is still running. Hold for 800 ms to dismiss. It is an
+overlay only: no timer pauses, no fix is suppressed, no state changes.
+
+**Context.** Capture requires the tab to be open and visible (D-005) — a backgrounded tab is
+throttled and the watch is released. So the app's honest advice has been "keep this page in front
+of you", which for a mystery shopper means standing in a store holding a bright screen headed
+"Your visit / Capturing / 12:04 on site". The requirement the product actually has is to be
+inconspicuous to shop staff, and the app was working against it.
+
+**Alternatives considered.**
+
+- *Faithfully imitate the iOS or Android lock screen* — carrier row, wallpaper, notification
+  stack, slide to unlock. The most convincing cover, and what was asked for. Rejected on three
+  grounds: cloning system UI is the visual grammar of a phishing screen and a bad habit to build
+  into a product; it breaks cosmetically every time an OS restyles, on devices we cannot test;
+  and it is unnecessary, because a dark screen with a clock already reads as an idle phone to
+  anyone glancing at it. The requirement is "not obviously a working app", not "indistinguishable
+  from a locked phone".
+- *A blank black screen with nothing on it.* Simplest and most concealing. Rejected because a
+  participant cannot then tell whether their phone is recording, asleep or crashed — it conceals
+  from the user as well as the bystander, and this system's one consistent rule is that it does
+  not deceive the person using it.
+- *Tap anywhere to dismiss.* Fewer instructions. Rejected because a phone in a pocket taps
+  constantly; hold-to-dismiss is what survives the situation the feature exists for.
+- *Actually pause capture while the cover is up.* Rejected outright: the participant would be
+  standing in the venue producing no evidence, which turns the feature that helps them do the job
+  into the reason their visit is rejected.
+
+**Consequences.** The screen stays lit and bright-ish, so it saves no battery and is not
+invisible in a dark room — it is cover, not camouflage. Anyone who picks up the phone dismisses
+it by holding, so it protects against a glance and not against handling. It has been reasoned
+about but not observed on a real phone in a real shop, which is the only test that matters and
+has not been run. And it slightly weakens the honesty of the visit screen: the participant now
+has a supported way to make the app look like it is not running, which is defensible only
+because the line saying it IS running never leaves the screen.
