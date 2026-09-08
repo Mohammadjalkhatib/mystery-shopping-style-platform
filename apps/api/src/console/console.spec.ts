@@ -17,6 +17,7 @@ import {
   VerificationResultSchema,
 } from '../db/schemas/report-verification.schema.js';
 import { Session, SessionSchema } from '../db/schemas/task-session.schema.js';
+import { ReaperService } from '../session/reaper.service.js';
 import { ConsoleController } from './console.controller.js';
 import { ConsoleService } from './console.service.js';
 import { VisitEventsService } from './visit-events.service.js';
@@ -131,6 +132,16 @@ describe('business console', () => {
       providers: [
         ConsoleService,
         VisitEventsService,
+        /**
+         * Stubbed, not wired.
+         *
+         * The controller sweeps overdue sessions before every list (D-019), but this suite is
+         * about what the console READS -- tenancy, replay, rule 6. Standing up the real reaper
+         * here would drag in SessionsService and three more models to prove nothing this file
+         * asserts, and would let a reaper change quietly break console tests. The reaper has
+         * its own suite; the wiring is proved by the build and by the live check.
+         */
+        { provide: ReaperService, useValue: { reapForOrg: async (): Promise<number> => 0 } },
         { provide: getModelToken(Session.name), useValue: Sessions },
         { provide: getModelToken(VerificationResultDoc.name), useValue: Results },
         { provide: getModelToken(Venue.name), useValue: Venues },

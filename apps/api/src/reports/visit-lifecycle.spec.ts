@@ -28,6 +28,7 @@ import {
 import { PingsController } from '../pings/pings.controller.js';
 import { PingsService } from '../pings/pings.service.js';
 import { SessionsController } from '../session/sessions.controller.js';
+import { ReaperService } from '../session/reaper.service.js';
 import { SessionsService } from '../session/sessions.service.js';
 import { VisitEventsService } from '../console/visit-events.service.js';
 import { EvaluatorRunner } from '../verification/evaluator.runner.js';
@@ -160,6 +161,13 @@ describe('visit lifecycle', () => {
       controllers: [SessionsController, ReportsController, PingsController],
       providers: [
         SessionsService,
+        /**
+         * The REAL reaper, not a stub. GET /sessions/mine sweeps before it reads (D-019), and
+         * this is the one suite that walks a whole visit through that endpoint -- so it is
+         * also the only place that proves a sweep does not reap a session that is legitimately
+         * in progress. A stub here would hide exactly that regression.
+         */
+        ReaperService,
         ReportsService,
         PingsService,
         EvaluatorService,

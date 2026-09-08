@@ -1044,3 +1044,63 @@ transposed. In the running app a participant gets 403 on `POST /venues`, no toke
 - Not exercised against the LIVE deployment, because Render tracks `main` and this is on a
   branch. That check is still owed.
 - Unchanged: no reaper, no Arabic pass, and the two open capture questions from the phone run.
+
+### 2026-09-08 - feat/lazy-reaper
+
+**What.** `abandoned` and `expired` are reachable. Sessions are reaped lazily when a participant
+reads their visits or the console reads its feed, and a reaped participant is told which timer
+fired and why.
+
+**Why.** D-016 decided the mechanism; D-019 decides the trigger surfaces and the UX. `dueEvent()`
+and `apply()` had been written and tested since the state machine landed with nothing calling
+them.
+
+**Files.**
+
+- `apps/api/src/session/reaper.service.ts`: new. `reapForParticipant` and `reapForOrg`, both
+  bounded at 100 sessions per sweep.
+- `apps/api/src/session/sessions.controller.ts`: `/sessions/mine` sweeps first, awaited.
+- `apps/api/src/console/console.controller.ts`: `/console/visits` and `/visits/counts` sweep the
+  org first. `console.module.ts` imports `SessionsModule` to reach the reaper.
+- `apps/api/src/session/sessions.service.ts`: `SessionView.terminalReason`, and `mine()` now also
+  returns sessions reaped in the last 24 h.
+- `apps/api/src/session/reaper.spec.ts`: 15 tests. `apps/web`: the terminal-state alert shows
+  the reason. `docs/DECISIONS.md`: D-019. `README.md`: features, env table, what is missing.
+
+**Now true.**
+
+1. **The candidate query is deliberately wider than the rule.** It selects anything plausibly
+   due and lets `dueEvent()` decide per document. Do not "optimise" the timer logic into the
+   Mongo filter — that would be a second copy of the rule, free to disagree with the pure
+   function that is actually tested.
+2. **The reaper must never break the read it hangs off.** Every failure inside `sweep()` is
+   swallowed and logged. A stale row is a smaller problem than a broken page, and that
+   asymmetry is the only reason this is safe in a read path.
+3. **`endedAt` is NOT set when reaping.** The participant did not end the visit; writing a time
+   would assert something that never happened. `lastSeenAt` moves, because `apply()` moves it.
+4. **The console read now performs writes.** It does not break rule 6 — the write is to
+   `sessions`, which the console already reads, and the ping collection is untouched.
+5. **`sessionEvents` refuses `deleteMany` at the model level.** A test that clears collections
+   between cases cannot clear that one; scope assertions by `sessionId` instead. Rule 8 is
+   enforced by a pre-hook, not by convention, and it caught this suite.
+6. **`visit-lifecycle.spec` wires the REAL reaper, on purpose.** It is the only suite that walks
+   a whole visit through `/sessions/mine`, so it is the only place that proves a sweep does not
+   reap a session that is legitimately in progress. `console.spec` stubs it, because that suite
+   is about what the console reads.
+7. **Mongoose 9 does not export `FilterQuery` as a named type** under this module resolution.
+   Use `Record<string, unknown>`, which is what `console.service.ts` already does.
+
+**Verified rather than assumed.** 397 tests pass, 15 of them new: both timers, expiry preferred
+over abandonment, `ended` never expiring, terminal sessions untouched, org and participant scope
+boundaries, the append-only event written with `actor: 'system:reaper'`, `endedAt` left null,
+and idempotency across two sweeps.
+
+**Open.**
+
+- **Not yet exercised against the live deployment**, and not yet merged.
+- A session nobody reads stays `active` for ever. Correct for a demo, wrong for anything that
+  pays people — that needs a real scheduler on a tier that does not sleep.
+- The 24-hour terminal window on `/sessions/mine` is a step towards a history screen this is
+  deliberately not. If it grows, it needs its own endpoint.
+- Unchanged: no edit or delete on the admin surface, no Arabic pass, and the two open capture
+  questions from the phone run.

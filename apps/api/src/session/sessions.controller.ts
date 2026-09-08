@@ -2,6 +2,7 @@ import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
 import type { AuthUser } from '@msp/shared';
 import { CurrentUser, Roles } from '../auth/auth.decorators.js';
 import { ConsentDto } from './dto/consent.dto.js';
+import { ReaperService } from './reaper.service.js';
 import { SessionsService, type SessionView } from './sessions.service.js';
 
 /**
@@ -13,12 +14,23 @@ import { SessionsService, type SessionView } from './sessions.service.js';
  */
 @Controller('sessions')
 export class SessionsController {
-  constructor(private readonly sessions: SessionsService) {}
+  constructor(
+    private readonly sessions: SessionsService,
+    private readonly reaper: ReaperService,
+  ) {}
 
-  /** The signed-in participant's own visits. No id is taken from the caller. */
+  /**
+   * The signed-in participant's own visits. No id is taken from the caller.
+   *
+   * Reaps first (D-019). The sweep is awaited rather than fired and forgotten, because the
+   * whole point is that this response reflects the reap -- a participant must not be shown an
+   * `active` visit that the very same request has just abandoned. It cannot fail the read:
+   * every error inside the reaper is swallowed there.
+   */
   @Roles('participant')
   @Get('mine')
-  mine(@CurrentUser() user: AuthUser): Promise<SessionView[]> {
+  async mine(@CurrentUser() user: AuthUser): Promise<SessionView[]> {
+    await this.reaper.reapForParticipant(user.id);
     return this.sessions.mine(user);
   }
 
