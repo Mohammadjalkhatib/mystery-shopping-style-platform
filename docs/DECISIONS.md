@@ -617,3 +617,58 @@ running the actual flow end to end against the real database, and nothing short 
 have found it. The same run also caught `@IsNumber({ maxDecimalPlaces: 6 })` rejecting honest
 fixes, because `8.6 + 2 * 1.4` is `11.399999999999999` and every test fixture had used tidy
 numbers. Two seam bugs, one probe.
+
+---
+
+## D-015: The seed only touches sessions that never started
+
+**Date:** 2026-09-08
+**Status:** accepted
+
+**Decision.** The seed creates a session for an assignment that has none, and re-clocks a
+session that is still `startedAt: null`. A session that has ever started is left completely
+alone — no state reset, no clock rewrite.
+
+**Context.** D-012 made the seed `$set` `state: 'pending'` and both clocks on every run, so a
+demo session the reaper had abandoned off its idle clock could be revived. That fix was aimed
+at sessions that never started, but it was written to apply to all of them. The result,
+caught by the first completed `docker compose` run: a `down` + `up` on a preserved volume
+re-seeds and **resurrects submitted sessions into a state the state machine cannot produce** —
+`state: 'pending'` carrying `startedAt`, `endedAt` and `pingCount: 9`, with reports, outbox
+rows, session events and verification results still pointing at them. The business console
+showed 2 visits before the restart and 0 after.
+
+The corruption is worse than the disappearance. A resurrected session can be `start`ed again,
+and the evaluator builds evidence from every ping for a `sessionId`, so the next verdict would
+be computed over **a merged trace from two different visits** — and rule 8 makes results
+append-only, so a second result lands under the same `engineVersion` with no way to tell which
+visit it describes.
+
+**Alternatives considered.**
+
+- *Keep the reset, but make it complete: also clear `startedAt`, `endedAt`, `pingCount`,
+  `venueSnapshot`, `latest*`, and delete the dependent pings, reports, events, outbox rows and
+  verification results.* This is the honest version of "re-seeding resets the demo", and it
+  was the closer call. Rejected because a seed script that issues cascading deletes across six
+  collections is a liability the moment anyone points it at a database with real visits in it,
+  and because the thing being deleted is the reviewer's own evidence that the system works.
+  Destroying it on the documented start command is the wrong default.
+- *Insert an additional pending session per used assignment, so there is always something
+  openable.* Keeps history and keeps the demo replenished. Rejected because `assignmentId` is
+  `unique: true` on `sessions` and `GET /sessions/mine` returns a single session; allowing many
+  per assignment is a data-model change to solve a problem ten assignments already solve.
+- *Filtered upsert on `{ assignmentId, startedAt: null }` in one atomic call.* Rejected on a
+  mechanical detail: when the filter misses, the upsert attempts an insert and hits the unique
+  index on `assignmentId`, so the normal path is an `E11000` caught and swallowed. Read-then-
+  write is one extra round trip in a script that runs once and is obvious to read.
+
+**Consequences.** Re-running `docker compose up` is no longer a demo reset — `docker compose
+down -v` is, and the README has to say so. A reviewer who completes all ten demo visits gets
+nothing new to open until they do that. The seed now reports how many sessions it preserved,
+so "the console is not empty and no new session appeared" reads as a deliberate outcome rather
+than a broken seed. D-012's actual requirement survives: a pending session abandoned off its
+idle clock never started, so it is still revived.
+
+The narrower rule is `startedAt === null` rather than a list of states, because that is the
+property that matters — a session with a `startedAt` has evidence attached, whatever state it
+now reports.
