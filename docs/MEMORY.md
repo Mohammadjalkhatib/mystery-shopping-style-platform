@@ -1490,3 +1490,55 @@ file uploaded. Venue creation accepts a map-derived coordinate.
   next step. No pinch-zoom either; the +/− buttons are the only zoom control on a phone.
 - Tiles come from `tile.openstreetmap.org`. Fine for a demo, wrong for production volume — a
   paid tile host is needed, and the attribution notice is required by their policy.
+
+### 2026-09-09 - feat/geocode-search
+
+**What.** The venue map has a search box. Type a place, pick a result, the map jumps there at a
+zoom suited to what was found. Dragging still works for the final adjustment.
+
+**Why.** D-030. D-029 shipped a map with no way to find anything on it.
+
+**Files.**
+
+- `apps/api/src/geocode/nominatim.ts`: pure — query normalisation, URL building, response
+  mapping, zoom-by-kind. `nominatim.spec.ts`: 16 tests.
+- `apps/api/src/geocode/geocode.service.ts`: the client, the 1.1 s serialised rate limit, and a
+  bounded 10-minute cache. `.controller.ts`, `.module.ts`.
+- `apps/web/src/components/MapPicker.tsx`: debounced search with abort, results list.
+- `apps/web/src/api/client.ts`, `i18n/{en,ar}.json`.
+
+**Now true.**
+
+1. **THE BUG THIS FOUND: `Number(null)` is `0`, not `NaN`.** So is `Number('')`, `Number([])` and
+   `Number(false)`. A missing latitude parsed with a bare `Number()` becomes a venue at 0°, in
+   the Gulf of Guinea, that looks like a perfectly ordinary coordinate. A test caught it before
+   it shipped. `toCoordinate()` now accepts only a string or a number and returns null otherwise.
+   The same trap exists anywhere external numeric data is parsed — the ping DTO is safe because
+   class-validator checks types, but nothing else should reach for a bare `Number()`.
+2. **Geocoding is PROXIED, not called from the browser**, and the binding reason is that
+   Nominatim's policy requires a real `User-Agent`, which a page cannot set. The rate limit is
+   also per application, so it can only be honoured where requests converge.
+3. **The rate limiter is a serialised promise chain, not a counter.** Parallel callers queue
+   rather than race, which is what makes the 1.1 s interval a guarantee instead of a hope.
+4. **`geocode/` is its own module and NOT part of `geo/`.** `geo/` is pure — haversine and the
+   precision rule — and this does network I/O, holds a cache and enforces a limit. Keeping them
+   apart is what stops the pure half growing an untestable dependency.
+5. **Result labels are third-party text.** Length-capped on the server, rendered as text by
+   React, never as markup.
+6. **`zoomForKind` is duplicated client-side**, deliberately and trivially: sending a zoom per
+   result would put a presentation decision in the API payload. If it grows past a handful of
+   cases it belongs in `@msp/shared`.
+
+**Verified rather than assumed.** 517 tests pass. Against real Nominatim from the compose stack:
+"mecca street amman" returned Mecca Mall at 31.97767, 35.84389 with Arabic labels; "city mall
+amman" returned one result. Boundaries: no token 401, participant 403, two-character query 400.
+Cache measured — 837 ms cold, 64 ms warm for the same query.
+
+**Open.**
+
+- **In-process cache and limiter.** One instance today, so exact; a second instance would double
+  the upstream rate and need a shared limiter.
+- **No reverse geocoding** — the pin does not say what it is on top of. Rejected for now on
+  request budget, since it would fire on every pan.
+- Nominatim's coverage of small businesses in Jordan and the Gulf is thinner than Google's, so
+  some venues still have to be found by dragging. Community servers are not for production volume.

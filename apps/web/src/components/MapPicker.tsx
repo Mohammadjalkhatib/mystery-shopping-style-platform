@@ -1,5 +1,17 @@
-import { Box, IconButton, Stack, Typography } from '@mui/material';
+import {
+  Box,
+  CircularProgress,
+  IconButton,
+  List,
+  ListItemButton,
+  ListItemText,
+  Paper,
+  Stack,
+  TextField,
+  Typography,
+} from '@mui/material';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { api, type GeocodeResult } from '../api/client.js';
 import { useT } from '../i18n/LocaleContext.js';
 import {
   clampZoom,
@@ -9,6 +21,13 @@ import {
   panCentre,
   tilesForViewport,
 } from './slippy.js';
+
+/**
+ * Long enough that typing a word does not fire a request per keystroke, short enough that it
+ * still feels like search. Nominatim's limit is one request per second for the whole
+ * application, so this is politeness with teeth.
+ */
+const SEARCH_DEBOUNCE_MS = 450;
 
 const HEIGHT = 260;
 
@@ -44,6 +63,11 @@ export function MapPicker({
   const [centre, setCentre] = useState({ lat: lat ?? 31.9539, lng: lng ?? 35.9106 });
   const drag = useRef<{ x: number; y: number } | null>(null);
 
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<GeocodeResult[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+
   // Tiles are laid out in pixels, so the actual rendered width has to be known, not assumed.
   useEffect(() => {
     const el = boxRef.current;
@@ -68,6 +92,43 @@ export function MapPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lat, lng]);
 
+  /**
+   * Debounced search, with the in-flight request aborted when the query moves on.
+   *
+   * Both halves matter. The debounce keeps us inside Nominatim's one-request-per-second budget;
+   * the abort stops a slow early request landing AFTER a fast later one and repainting the list
+   * with results for a query the user has already replaced.
+   */
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 3) {
+      setResults(null);
+      setSearchError(null);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      setSearching(true);
+      setSearchError(null);
+      api
+        .geocode(q, controller.signal)
+        .then((r) => setResults(r))
+        .catch((e: unknown) => {
+          if (controller.signal.aborted) return;
+          setResults(null);
+          setSearchError(e instanceof Error ? e.message : 'search failed');
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setSearching(false);
+        });
+    }, SEARCH_DEBOUNCE_MS);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [query]);
+
   const emit = useCallback(
     (c: { lat: number; lng: number }, z: number) => {
       const d = decimalsForZoom(z);
@@ -75,6 +136,22 @@ export function MapPicker({
     },
     [onPick],
   );
+
+  /**
+   * Jump to a result, then hand the coordinate straight to the form.
+   *
+   * The zoom is chosen from what was found (`zoomForKind` on the server): dropping street level
+   * on a whole country is as useless as showing a province for a coffee shop. The pin is still
+   * draggable afterwards, because a geocoder puts you on the building, not the doorway.
+   */
+  const choose = (r: GeocodeResult): void => {
+    const z = clampZoom(zoomFor(r.kind));
+    setZoom(z);
+    setCentre({ lat: r.lat, lng: r.lng });
+    emit({ lat: r.lat, lng: r.lng }, z);
+    setResults(null);
+    setQuery(r.label.split(',')[0] ?? r.label);
+  };
 
   const onPointerDown = (e: React.PointerEvent): void => {
     drag.current = { x: e.clientX, y: e.clientY };
@@ -118,6 +195,64 @@ export function MapPicker({
 
   return (
     <Box>
+      <Box sx={{ position: 'relative', mb: 1 }}>
+        <TextField
+          fullWidth
+          size="small"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={t('admin.venueForm.searchPlaceholder')}
+          slotProps={{
+            input: {
+              endAdornment: searching ? <CircularProgress size={16} /> : undefined,
+            },
+          }}
+        />
+
+        {searchError && (
+          <Typography variant="caption" color="error" sx={{ display: 'block', mt: 0.5 }}>
+            {t('admin.venueForm.searchFailed')}
+          </Typography>
+        )}
+
+        {results !== null && (
+          <Paper
+            variant="outlined"
+            sx={{
+              position: 'absolute',
+              zIndex: 5,
+              left: 0,
+              right: 0,
+              mt: 0.5,
+              maxHeight: 220,
+              overflowY: 'auto',
+            }}
+          >
+            {results.length === 0 ? (
+              <Typography variant="body2" color="text.secondary" sx={{ p: 1.5 }}>
+                {t('admin.venueForm.noResults')}
+              </Typography>
+            ) : (
+              <List dense disablePadding>
+                {results.map((r) => (
+                  <ListItemButton key={`${r.lat},${r.lng},${r.label}`} onClick={() => choose(r)}>
+                    {/*
+                      `label` is text from a third party. React escapes it, and it was length
+                      capped on the server -- it is rendered as text and never as markup.
+                    */}
+                    <ListItemText
+                      primary={r.label}
+                      secondary={r.kind}
+                      slotProps={{ primary: { variant: 'body2' } }}
+                    />
+                  </ListItemButton>
+                ))}
+              </List>
+            )}
+          </Paper>
+        )}
+      </Box>
+
       <Box
         ref={boxRef}
         onPointerDown={onPointerDown}
@@ -202,7 +337,7 @@ export function MapPicker({
         sx={{ mt: 1, alignItems: 'center', justifyContent: 'space-between' }}
       >
         <Typography variant="caption" color="text.secondary">
-          {t('admin.venueForm.mapHint')}
+          {t('admin.venueForm.searchHint')}
         </Typography>
         <Typography
           variant="caption"
@@ -214,6 +349,20 @@ export function MapPicker({
       </Stack>
     </Box>
   );
+}
+
+/**
+ * Mirrors `zoomForKind` on the server.
+ *
+ * Duplicated deliberately and kept trivial: sending a zoom per result would put a presentation
+ * decision in the API payload, and the alternative -- a shared package for four `if`s -- is not
+ * worth a module boundary. If this grows past a handful of cases it belongs in `@msp/shared`.
+ */
+function zoomFor(kind: string): number {
+  if (['country', 'state', 'region'].includes(kind)) return 7;
+  if (['city', 'county', 'province', 'administrative'].includes(kind)) return 12;
+  if (['suburb', 'neighbourhood', 'village', 'town'].includes(kind)) return 15;
+  return 17;
 }
 
 function ZoomButton({

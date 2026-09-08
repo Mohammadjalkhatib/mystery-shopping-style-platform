@@ -140,6 +140,13 @@ export interface ParticipantRow {
   displayName: string;
 }
 
+export interface GeocodeResult {
+  label: string;
+  lat: number;
+  lng: number;
+  kind: string;
+}
+
 export interface ConsoleStats {
   days: number;
   totals: { visits: number; auto_verified: number; needs_review: number; rejected: number };
@@ -252,6 +259,9 @@ export const api = {
       body: JSON.stringify({ taskId, participantId }),
     }),
   participants: () => req<ParticipantRow[]>('/participants'),
+  /** Address search for the venue map. Proxied by the API — see D-030. */
+  geocode: (q: string, signal?: AbortSignal) =>
+    req<GeocodeResult[]>(`/geocode?q=${encodeURIComponent(q)}`, { signal }),
 };
 
 export { BASE as API_BASE };
