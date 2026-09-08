@@ -147,6 +147,19 @@ export interface GeocodeResult {
   kind: string;
 }
 
+export interface ParticipantStats {
+  participantId: string;
+  displayName: string;
+  visits: number;
+  auto_verified: number;
+  needs_review: number;
+  rejected: number;
+  passRate: number;
+  medianScore: number | null;
+  topSignal: { code: string; visits: number } | null;
+  lastVisitAt: string | null;
+}
+
 export interface ConsoleStats {
   days: number;
   totals: { visits: number; auto_verified: number; needs_review: number; rejected: number };
@@ -232,6 +245,10 @@ export const api = {
     req<VisitRow[]>(`/console/visits${verdict ? `?verdict=${verdict}` : ''}`),
   counts: () => req<Record<string, number>>('/console/visits/counts'),
   stats: (days = 30) => req<ConsoleStats>(`/console/stats?days=${days}`),
+  /** Per-participant results for the People tab. Distinct from `participants`, which is the
+   * roster the assign form picks from. */
+  participantStats: (days = 30) =>
+    req<ParticipantStats[]>(`/console/participants?days=${days}`),
   visit: (id: string) => req<VisitDetail>(`/console/visits/${id}`),
   review: (id: string, decision: 'approve' | 'reject', note: string) =>
     req<{ ok: true }>(`/console/visits/${id}/review`, {

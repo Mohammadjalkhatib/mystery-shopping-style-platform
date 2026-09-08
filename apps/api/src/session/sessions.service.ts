@@ -178,13 +178,22 @@ export class SessionsService {
      * "I came back the next morning" and short enough that the list does not become a history
      * screen, which is not what this is (D-019).
      */
-    const reapedSince = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const recentlySince = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const rows = await this.sessions
       .find({
         participantId: user.id,
         $or: [
           { state: { $in: ['pending', 'active', 'ended'] } },
-          { state: { $in: ['abandoned', 'expired'] }, lastSeenAt: { $gte: reapedSince } },
+          /**
+           * `submitted` belongs here too, and its absence was a real bug.
+           *
+           * Without it the list came back WITHOUT the visit the participant had just
+           * submitted, the screen kept showing the stale `ended` session it already had, the
+           * report form stayed up as though nothing had happened -- and pressing submit again
+           * produced "already submitted". The participant got an error for the successful
+           * path and no confirmation for the success.
+           */
+          { state: { $in: ['submitted', 'abandoned', 'expired'] }, lastSeenAt: { $gte: recentlySince } },
         ],
       })
       .sort({ createdAtServer: -1 })
