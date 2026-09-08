@@ -32,6 +32,7 @@ import { useAuth } from '../auth/AuthContext.js';
 import { VerdictChip } from '../components/VerdictChip.js';
 import { useT } from '../i18n/LocaleContext.js';
 import { useVisitStream, type VisitEvent } from '../hooks/useVisitStream.js';
+import { Dashboard } from './Dashboard.js';
 import { TasksTab } from './TasksTab.js';
 
 type Filter = 'all' | Verdict;
@@ -47,7 +48,7 @@ const FILTERS: { key: Filter; label: TranslationKey }[] = [
 export function Console() {
   const { user, logout } = useAuth();
   const t = useT();
-  const [tab, setTab] = useState<'visits' | 'tasks'>('visits');
+  const [tab, setTab] = useState<'overview' | 'visits' | 'tasks'>('overview');
   const [filter, setFilter] = useState<Filter>('all');
   const [rows, setRows] = useState<VisitRow[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -183,11 +184,19 @@ export function Console() {
           produces them. Tabs rather than routes, because App.tsx routes by role and there is
           no URL worth sharing -- every screen is scoped to the signed-in account anyway.
         */}
-        <Tabs value={tab} onChange={(_e, v: 'visits' | 'tasks') => setTab(v)} sx={{ mb: 2 }}>
+        <Tabs
+          value={tab}
+          onChange={(_e, v: 'overview' | 'visits' | 'tasks') => setTab(v)}
+          variant="scrollable"
+          allowScrollButtonsMobile
+          sx={{ mb: 2 }}
+        >
+          <Tab value="overview" label={t('console.dashboard.tabOverview')} />
           <Tab value="visits" label={t('console.tabVisits')} />
           <Tab value="tasks" label={t('console.tabTasks')} />
         </Tabs>
 
+        {tab === 'overview' && <Dashboard />}
         {tab === 'tasks' && <TasksTab />}
 
         {tab === 'visits' && (
@@ -446,6 +455,7 @@ function VisitDetailPanel({ sessionId, onDone }: { sessionId: string; onDone: ()
             {t('console.detail.reportTitle', { rating: d.report.rating })}
           </Typography>
           <Typography variant="body2">{d.report.notes}</Typography>
+          <EvidenceImage evidenceKey={d.report.evidenceKey} />
         </>
       )}
 
@@ -494,6 +504,78 @@ function VisitDetailPanel({ sessionId, onDone }: { sessionId: string; onDone: ()
           </Stack>
         </>
       )}
+    </Box>
+  );
+}
+
+/**
+ * The attached photo, if there is one.
+ *
+ * Fetched with the token and turned into an object URL rather than pointed at with `<img src>`:
+ * the read route is role- and tenancy-guarded, and a bare URL carries no Authorization header.
+ * That is also why the image cannot leak by someone sharing the link.
+ */
+function EvidenceImage({ evidenceKey }: { evidenceKey: string | null }) {
+  const t = useT();
+  const [url, setUrl] = useState<string | null>(null);
+  const [state, setState] = useState<'idle' | 'loading' | 'error'>('idle');
+
+  useEffect(() => {
+    if (!evidenceKey) return;
+    let revoked = false;
+    let objectUrl: string | null = null;
+    setState('loading');
+    api
+      .evidenceObjectUrl(evidenceKey)
+      .then((u) => {
+        objectUrl = u;
+        // The drawer can close mid-flight; without this the URL is created and never revoked.
+        if (revoked) {
+          URL.revokeObjectURL(u);
+          return;
+        }
+        setUrl(u);
+        setState('idle');
+      })
+      .catch(() => setState('error'));
+    return () => {
+      revoked = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [evidenceKey]);
+
+  if (!evidenceKey) {
+    return (
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+        {t('console.detail.noEvidence')}
+      </Typography>
+    );
+  }
+  if (state === 'error') {
+    return (
+      <Typography variant="caption" color="error" sx={{ display: 'block', mt: 1 }}>
+        {t('console.detail.evidenceFailed')}
+      </Typography>
+    );
+  }
+  if (!url) {
+    return (
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+        {t('console.detail.evidenceLoading')}
+      </Typography>
+    );
+  }
+  return (
+    <Box sx={{ mt: 1.5 }}>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+        {t('console.detail.evidenceTitle')}
+      </Typography>
+      <Box
+        component="img"
+        src={url}
+        alt=""
+        sx={{ display: 'block', width: '100%', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}
+      />
     </Box>
   );
 }

@@ -20,6 +20,7 @@ import { api, type SessionView } from '../api/client.js';
 import { useAuth } from '../auth/AuthContext.js';
 import { Consent, CONSENT_VERSION } from './Consent.js';
 import { DiscreetMode } from './DiscreetMode.js';
+import { EvidencePicker } from './EvidencePicker.js';
 import { clearQueue } from './offlineQueue.js';
 import { useVisitTracker } from './useVisitTracker.js';
 
@@ -365,6 +366,7 @@ function ActiveVisit({
 function ReportForm({ session, onSubmitted }: { session: SessionView; onSubmitted: () => void }) {
   const [notes, setNotes] = useState('');
   const [rating, setRating] = useState<number | null>(4);
+  const [evidenceKey, setEvidenceKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const t = useT();
@@ -373,7 +375,7 @@ function ReportForm({ session, onSubmitted }: { session: SessionView; onSubmitte
     setBusy(true);
     setError(null);
     try {
-      await api.submitReport(session.id, notes, rating ?? 3);
+      await api.submitReport(session.id, notes, rating ?? 3, evidenceKey ?? undefined);
       onSubmitted();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not submit');
@@ -415,6 +417,8 @@ function ReportForm({ session, onSubmitted }: { session: SessionView; onSubmitte
             helperText={t('participant.report.notesCounter', { count: notes.trim().length })}
             error={notes.length > 0 && notes.trim().length < 10}
           />
+          <Divider sx={{ my: 2 }} />
+          <EvidencePicker sessionId={session.id} onChange={setEvidenceKey} />
         </CardContent>
       </Card>
 

@@ -28,6 +28,7 @@ import {
 import { PingsController } from '../pings/pings.controller.js';
 import { PingsService } from '../pings/pings.service.js';
 import { SessionsController } from '../session/sessions.controller.js';
+import { EvidenceService } from '../evidence/evidence.service.js';
 import { ReaperService } from '../session/reaper.service.js';
 import { SessionsService } from '../session/sessions.service.js';
 import { VisitEventsService } from '../console/visit-events.service.js';
@@ -168,6 +169,12 @@ describe('visit lifecycle', () => {
          * in progress. A stub here would hide exactly that regression.
          */
         ReaperService,
+        /**
+         * The real EvidenceService, not a stub. This suite walks a whole visit through submit,
+         * which now sweeps unreferenced photos after the transaction commits — so this is the
+         * only place that proves the sweep cannot break a submission that has no photo at all.
+         */
+        EvidenceService,
         ReportsService,
         PingsService,
         EvaluatorService,

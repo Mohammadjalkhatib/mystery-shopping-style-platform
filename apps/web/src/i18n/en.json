@@ -33,7 +33,7 @@
       "usedTitle": "What it is used for",
       "usedBody": "To judge how well the evidence supports the visit having happened. It produces a score and a list of reasons — never a simple yes or no, and never proof that you were somewhere. A human reviews anything uncertain.",
       "keptTitle": "How long it is kept",
-      "keptBody": "The raw location trail is deleted automatically after the retention window, by the database itself rather than by a job someone has to remember to run. The summary of the visit is kept.",
+      "keptBody": "The raw location trail is deleted automatically after the retention window, by the database itself rather than by a job someone has to remember to run. The summary of the visit is kept. A photo you attach is kept with the report, not deleted on that schedule.",
       "cannotTitle": "What this app cannot do",
       "cannotBody": "It cannot follow you in the background. If you lock your phone or switch apps, it stops receiving your location, and the gap is recorded as a gap. You can end the visit at any time.",
       "readPrompt": "Please read the four sections above before agreeing.",
@@ -97,6 +97,18 @@
       "noReport": "This visit was ended but no report was filed within {mins} minutes, so it was closed automatically.",
       "expired": "This visit reached the {hours}-hour limit for a single session and was closed automatically. Location was no longer being recorded.",
       "generic": "This visit has ended and can no longer be continued."
+    },
+    "evidence": {
+      "attach": "Attach a photo",
+      "attachHint": "Optional. One photo of the shopfront, receipt or display — up to 6 MB.",
+      "choosePhoto": "Choose photo",
+      "replacePhoto": "Replace photo",
+      "remove": "Remove",
+      "uploading": "Uploading…",
+      "uploaded": "Photo attached",
+      "tooLarge": "That photo is too large. Maximum 6 MB.",
+      "wrongType": "Only JPEG, PNG or WebP images can be attached.",
+      "uploadFailed": "Could not upload that photo"
     }
   },
   "console": {
@@ -130,7 +142,11 @@
       "observedPercent": "{percent}% of the session observed",
       "closest": "closest {metres} m",
       "unusable": "{count} fixes too imprecise to use",
-      "reportTitle": "Participant report · {rating}/5"
+      "reportTitle": "Participant report · {rating}/5",
+      "evidenceTitle": "Attached photo",
+      "evidenceLoading": "Loading photo…",
+      "evidenceFailed": "Could not load the photo",
+      "noEvidence": "No photo attached"
     },
     "review": {
       "title": "Override",
@@ -140,6 +156,25 @@
       "reject": "Reject",
       "failed": "Review failed",
       "recorded": "{decision} by {reviewer} — {note}"
+    },
+    "dashboard": {
+      "title": "Overview",
+      "last30": "Last {days} days",
+      "visits": "Visits",
+      "autoVerified": "Auto-verified",
+      "needsReview": "Needs review",
+      "rejected": "Rejected",
+      "medianScore": "Median score",
+      "medianCoverage": "Median coverage",
+      "noData": "No completed visits in this window yet.",
+      "trendTitle": "Verdicts by day",
+      "trendHint": "Each bar is one day. Height is the number of visits that ended that day.",
+      "failuresTitle": "Most frequent failing signals",
+      "failuresHint": "Which checks cost visits the most, across this window. This is where to look first.",
+      "failuresVisits": "{count} visits",
+      "failuresPenalty": "{points} points lost",
+      "noFailures": "No failing signals in this window.",
+      "tabOverview": "Overview"
     }
   },
   "admin": {
