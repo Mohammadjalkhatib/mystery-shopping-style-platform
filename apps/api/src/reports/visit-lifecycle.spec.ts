@@ -29,6 +29,8 @@ import { PingsController } from '../pings/pings.controller.js';
 import { PingsService } from '../pings/pings.service.js';
 import { SessionsController } from '../session/sessions.controller.js';
 import { EvidenceService } from '../evidence/evidence.service.js';
+import { GridFsObjectStore } from '../evidence/storage/gridfs.store.js';
+import { OBJECT_STORE } from '../evidence/storage/object-store.js';
 import { ReaperService } from '../session/reaper.service.js';
 import { SessionsService } from '../session/sessions.service.js';
 import { VisitEventsService } from '../console/visit-events.service.js';
@@ -175,6 +177,7 @@ describe('visit lifecycle', () => {
          * only place that proves the sweep cannot break a submission that has no photo at all.
          */
         EvidenceService,
+        { provide: OBJECT_STORE, useFactory: () => new GridFsObjectStore(conn) },
         ReportsService,
         PingsService,
         EvaluatorService,

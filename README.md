@@ -51,6 +51,8 @@ Built and working end to end:
 - [x] Responsive layouts: the visit list becomes cards on a phone, toolbars and forms adapt
 - [x] One evidence photo per visit: uploaded by the participant, shown on the console's evidence trail
 - [x] Console Overview: stat tiles, verdicts per day, and a ranking of the signals that fail most
+- [x] S3-compatible evidence storage (MinIO in compose), hand-signed, with a GridFS fallback
+- [x] Venue coordinates picked on a map rather than typed
 - [x] Capture watchdog: a silent `watchPosition` is re-attached, and restarts are shown
 
 Not built:
@@ -491,7 +493,7 @@ See `.env.example`. Every value is documented there. The ones worth knowing abou
 | `VERIFY_AUTO_THRESHOLD` / `VERIFY_REJECT_THRESHOLD` | Verdict banding. Config rather than constants because they are placeholders until there is labelled data to tune them against |
 | `SESSION_HARD_CAP_SECONDS` | Sessions auto-end. Without this you accumulate zombie sessions and keep tracking people who think they are done |
 | `SESSION_ABANDON_AFTER_SECONDS` | How long a session may go quiet before the reaper closes it. Also the text the participant is shown, so the number and the message cannot drift apart |
-| `S3_*` | The only values that differ between MinIO locally and R2 in production |
+| `S3_*` | Where evidence photos go. Set ALL FOUR of `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` and the API uses the bucket; set none and it falls back to MongoDB GridFS. A PARTIAL set logs an error and falls back, so a typo is loud rather than silent (D-028). The choice is printed at boot |
 
 ---
 
@@ -624,8 +626,9 @@ wearing a number.
 Named so it is clear these are cuts, not omissions:
 
 - Payments and reward disbursement
-- Object storage. The evidence photo lives in MongoDB GridFS, not S3/R2 (D-026) — the interface
-  is narrow enough to swap, but no bucket is provisioned and photos share the 512 MB Atlas tier
+- A provisioned production bucket. Evidence storage speaks S3 (D-028) and MinIO runs in compose,
+  but the DEPLOYED demo has no credentials, so it falls back to MongoDB GridFS and photos share
+  the 512 MB Atlas tier. Four environment variables switch it over; no code changes
 - A full task authoring UI. Venues, tasks and assignments can be created, and a venue can be
   corrected; nothing can be deleted and tasks cannot be edited
 - Participant reputation scoring, which is the strongest long-run verification signal but

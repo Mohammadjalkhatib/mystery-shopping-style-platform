@@ -10,6 +10,8 @@ import { Report, ReportSchema } from '../db/schemas/report-verification.schema.j
 import { Session, SessionSchema } from '../db/schemas/task-session.schema.js';
 import { EvidenceController } from './evidence.controller.js';
 import { EvidenceService } from './evidence.service.js';
+import { GridFsObjectStore } from './storage/gridfs.store.js';
+import { OBJECT_STORE } from './storage/object-store.js';
 
 const ORG = 'org-alfa-retail';
 const OTHER_ORG = 'org-someone-else';
@@ -83,6 +85,14 @@ describe('evidence upload', () => {
       providers: [
         EvidenceService,
         { provide: getConnectionToken(), useValue: conn },
+        /**
+         * The GridFS store explicitly, not the config-driven factory.
+         *
+         * This suite is about the rules that hold whatever the backend is -- ownership,
+         * validation, the boundaries. Letting the factory choose would make these tests depend
+         * on whether S3_* happened to be set in the environment running them.
+         */
+        { provide: OBJECT_STORE, useFactory: () => new GridFsObjectStore(conn) },
         { provide: getModelToken(Session.name), useValue: Sessions },
         { provide: getModelToken(Report.name), useValue: Reports },
       ],

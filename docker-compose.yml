@@ -53,11 +53,23 @@ services:
       # a standalone and transactions fail exactly as they did before.
       MONGO_URI: mongodb://mongo:27017/${MONGO_DB_NAME:-mystery-shopping}?replicaSet=rs0
       WEB_PUBLIC_URL: http://localhost:5173
+      # Set here, not only in .env, so `docker compose up` exercises the S3 path by default.
+      # Remove these four and the api falls back to GridFS -- which is what the deployed demo
+      # does, since it has no bucket.
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: ${S3_BUCKET:-visit-evidence}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-minioadmin}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-minioadmin}
+      S3_REGION: ${S3_REGION:-auto}
+      S3_FORCE_PATH_STYLE: "true"
     ports:
       - "3000:3000"
     depends_on:
       mongo:
         condition: service_healthy
+      # The bucket must exist before the api tries to write to it.
+      minio-init:
+        condition: service_completed_successfully
     volumes:
       - ./apps/api/src:/app/apps/api/src
       - ./packages/shared/src:/app/packages/shared/src
@@ -113,17 +125,50 @@ services:
       - /app/node_modules
       - /app/apps/web/node_modules
 
+  # S3-compatible object storage for evidence photos (D-028). The api falls back to
+  # GridFS when the S3_* variables are absent, so this service is optional -- but with
+  # it present, `docker compose up` exercises the same code path as production.
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"   # the browser console, handy for confirming an upload landed
+    volumes:
+      - minio-data:/data
+
+  # One-shot. Waits for minio, creates the bucket, exits. This is the readiness signal.
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 ${S3_ACCESS_KEY_ID:-minioadmin} ${S3_SECRET_ACCESS_KEY:-minioadmin}; do
+        echo 'waiting for minio...'; sleep 1;
+      done;
+      mc mb --ignore-existing local/${S3_BUCKET:-visit-evidence};
+      echo 'bucket ready';
+      "
+
+
 volumes:
   mongo-data:
+  minio-data:
 
 # ---------------------------------------------------------------------------
-# NOT HERE, deliberately: minio.
+# minio is HERE now (D-028), and the three traps the previous note named are each
+# handled rather than rediscovered:
 #
-# It existed for `feat/evidence-upload`, which is on the cut list and is not built -- nothing
-# in this repo speaks S3 today. Keeping it would mean two unpinned `:latest` images, a bucket
-# init container, and a healthcheck using `curl`, which recent minio images no longer ship
-# (so `depends_on: service_healthy` would hang forever and look like a broken build rather
-# than a missing binary). A service nothing uses is not free; it is three failure modes.
-#
-# The `S3_*` values stay in .env.example so the shape is documented if that work resumes.
+# 1. Both images are PINNED. `:latest` on a storage service means a rebuild can change
+#    the on-disk format under a volume you still care about.
+# 2. NO healthcheck on minio itself. Recent minio images ship neither `curl` nor `wget`,
+#    so a healthcheck using either never passes and `depends_on: service_healthy` hangs
+#    forever -- which presents as a broken build rather than a missing binary.
+# 3. Readiness is proved by `minio-init` instead: `mc` retries until the server answers,
+#    creates the bucket, and exits 0. `service_completed_successfully` is a real signal,
+#    and the api waits on THAT.
 # ---------------------------------------------------------------------------
