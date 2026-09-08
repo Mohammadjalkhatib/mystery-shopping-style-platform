@@ -741,3 +741,65 @@ twice with data in between. Found by restarting the stack, which nobody had done
 - The api `development` image bakes `packages/shared/dist` but bind-mounts `packages/shared/src`
   over the source, so a change to shared is invisible in the container until a rebuild. Latent,
   did not bite this run.
+
+---
+
+### 2026-09-08 - chore/deploy
+
+**What.** Everything needed to deploy, and the two silent blockers that would have stopped it.
+A Render blueprint for both services, `PORT` support, and multi-origin CORS. **The deployment
+itself is not done** — the URLs in the README are still TODO.
+
+**Why.** D-016. Deployment is not cosmetic: `navigator.geolocation` and the Screen Wake Lock
+API are both refused on an insecure origin, so the participant flow cannot run on a phone at
+all until this is on HTTPS. That is still the largest unknown in the project.
+
+**Files.**
+
+- `apps/api/src/main.ts`: read `PORT` before `API_PORT`; CORS takes a comma-separated list
+- `render.yaml`: new, both services, secrets as `sync: false`
+- `README.md`: a Deploying section with the real steps, and the seeding step rewritten to
+  place venues where the tester actually stands
+- `.env.example`: `PORT` is the platform's, `API_PORT` is local only; `WEB_PUBLIC_URL` is a list
+- `docs/DECISIONS.md`: D-016
+
+**Now true.**
+
+1. **`PORT` wins over `API_PORT`.** Every container platform injects `PORT` and ignores what
+   the app would rather bind. This is the failure mode worth remembering: the app boots fine,
+   binds 3000, and the platform's health check times out against a port nothing is on — so it
+   presents as a hung deploy, not an error.
+2. **CORS is a list**, comma-separated and trimmed. There is never exactly one origin: the
+   deployed web app, plus localhost when developing against the deployed API.
+3. **The web app is a STATIC SITE on Render, and that is load-bearing, not stylistic.** Render
+   grants 750 instance-hours per month per workspace and a 31-day month is 744 — the allowance
+   covers exactly ONE permanently-awake service. Static sites consume none of it, so the whole
+   allowance goes to the API and the web app is always instant.
+4. **The API is kept awake by an external cron on `/health`**, every 10 minutes. It must not
+   point at `/robots.txt`: Render answers that itself while a service is asleep, so the ping
+   never reaches the app and never wakes it. This is a dependency living outside the repo.
+5. **The reaper is decided** (D-016, recorded there because the hosting is what settles it):
+   **lazy-on-read, not an in-process cron.** On a tier that sleeps — or stays up only while a
+   third-party pinger keeps hitting it — a cron stops silently on a missed ping, an exhausted
+   allowance or a redeploy, and `SESSION_ABANDON_AFTER_SECONDS` is 900, the same order as the
+   idle window. Still unbuilt; this only settles which one to build.
+6. **Atlas must allow `0.0.0.0/0`.** Free Render services have no static outbound IP.
+7. **Seeding happens from a workstation**, because Render's free plan has no one-off jobs.
+8. **The deployed demo is seeded at the tester's own coordinates, not Kuwait** (user's call).
+   `user1`-`user5` get the outdoor venue at the anchor, `user6`-`user10` the indoor one ~440 m
+   north-east. Clearing `SEED_VENUE_LAT`/`LNG` and re-seeding moves them back for submission;
+   they move rather than duplicate because the upsert is keyed on the venue name.
+
+**Verified rather than assumed.** `PORT` precedence checked in a container; a two-origin
+`WEB_PUBLIC_URL` with whitespace around the comma allows both and refuses a third; the static
+build command from `render.yaml` runs clean and `VITE_API_BASE_URL` was grepped back out of
+the built bundle to confirm Vite actually inlined it. 359 tests pass.
+
+**Open.**
+
+- **Nothing is deployed yet.** The blueprint has never been run, so Render's Docker build from
+  the repository root, SSE through Render's proxy, and the free instance's 512 MB / 0.1 CPU
+  under a Nest boot are all unverified. Fill in the README URLs once they are up.
+- The participant flow on a real phone is still untested — the reason all of this exists.
+- No admin surface; the seed remains the only way data enters the system.
+- The reaper is decided but unbuilt, so `abandoned` and `expired` stay unreachable.
