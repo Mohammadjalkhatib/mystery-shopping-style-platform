@@ -7,14 +7,14 @@
   "includeCoAuthoredBy": false,
   "permissions": {
     "deny": [
-      "Bash(git push --force:*)",
-      "Bash(git push origin main:*)",
-      "Bash(git checkout main:*)"
+      "Bash(git push --force:*)"
     ],
     "ask": [
       "Bash(git commit:*)",
       "Bash(git push:*)",
       "Bash(git merge:*)",
+      "Bash(git checkout main:*)",
+      "Bash(git push origin main:*)",
       "Bash(npm install:*)",
       "Bash(npm uninstall:*)"
     ]
