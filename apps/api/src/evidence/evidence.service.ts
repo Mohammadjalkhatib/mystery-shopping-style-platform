@@ -5,20 +5,20 @@ import {
   NotFoundException,
   PayloadTooLargeException,
 } from '@nestjs/common';
-import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { Inject } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
 import type { AuthUser } from '@msp/shared';
-import mongoose, { type Connection, type Model } from 'mongoose';
-import { randomUUID } from 'node:crypto';
+import type { Model } from 'mongoose';
 import type { Readable } from 'node:stream';
 import { Report } from '../db/schemas/report-verification.schema.js';
 import { Session } from '../db/schemas/task-session.schema.js';
 import {
   ALLOWED_EVIDENCE_TYPES,
-  EVIDENCE_BUCKET,
   looksLikeType,
   MAX_EVIDENCE_BYTES,
   type EvidenceContentType,
 } from './evidence.constants.js';
+import { OBJECT_STORE, type ObjectStore } from './storage/object-store.js';
 
 export interface StoredEvidence {
   evidenceKey: string;
@@ -47,42 +47,14 @@ export interface EvidenceStream {
 @Injectable()
 export class EvidenceService {
   constructor(
-    @InjectConnection() private readonly connection: Connection,
+    @Inject(OBJECT_STORE) private readonly objects: ObjectStore,
     @InjectModel(Session.name) private readonly sessions: Model<Session>,
     @InjectModel(Report.name) private readonly reports: Model<Report>,
   ) {}
 
-  private cachedBucket: mongoose.mongo.GridFSBucket | null = null;
-  private indexReady: Promise<void> | null = null;
-
-  /**
-   * Memoised. The driver caches "indexes checked" per bucket INSTANCE, so building a fresh one
-   * on every call re-runs that check and costs a round trip per upload.
-   */
-  private bucket(): mongoose.mongo.GridFSBucket {
-    if (this.cachedBucket) return this.cachedBucket;
-    const db = this.connection.db;
-    if (!db) throw new Error('No database connection for evidence storage');
-    this.cachedBucket = new mongoose.mongo.GridFSBucket(db, { bucketName: EVIDENCE_BUCKET });
-    return this.cachedBucket;
-  }
-
-  /**
-   * `metadata.sessionId` is a real query path, not decoration.
-   *
-   * The driver's default GridFS indexes cover lookup by `_id` and chunk fetch by `files_id` and
-   * nothing else. Replacing a previous photo and sweeping orphans both query by session, so
-   * without this they are collection scans that get slower exactly as storage fills.
-   */
-  private async ensureIndex(): Promise<void> {
-    this.indexReady ??= (async () => {
-      const db = this.connection.db;
-      if (!db) return;
-      await db
-        .collection(EVIDENCE_BUCKET + '.files')
-        .createIndex({ 'metadata.sessionId': 1 }, { name: 'evidence_by_session' });
-    })();
-    return this.indexReady;
+  /** Which backend is live. Surfaced so "where are the photos" is never a guess. */
+  get backend(): string {
+    return this.objects.kind;
   }
 
   /**
@@ -162,9 +134,6 @@ export class EvidenceService {
       throw new BadRequestException(`That file is not a valid ${type}`);
     }
 
-    await this.ensureIndex();
-    const bucket = this.bucket();
-
     /**
      * One photo per session: the previous one is DELETED, not orphaned.
      *
@@ -177,29 +146,14 @@ export class EvidenceService {
      */
     await this.deleteForSession(sessionId);
 
-    const upload = bucket.openUploadStream(
-      `${sessionId}-${Date.now()}-${randomUUID()}`,
-      {
-      // `contentType` was removed from the driver's write options, so it lives in metadata --
-      // alongside the tag that makes every later authorization decision derivable rather than
-      // asserted by the caller.
-      metadata: {
-        contentType: type,
-        sessionId,
-        participantId: session.participantId,
-        clientOrgId: session.clientOrgId,
-        uploadedAt: new Date(),
-        },
-      },
-    );
-
-    await new Promise<void>((resolve, reject) => {
-      upload.once('error', reject);
-      upload.once('finish', () => resolve());
-      upload.end(data);
+    const stored = await this.objects.put(data, {
+      contentType: type,
+      sessionId,
+      participantId: session.participantId,
+      clientOrgId: session.clientOrgId,
     });
 
-    return { evidenceKey: String(upload.id), bytes, contentType: type };
+    return { evidenceKey: stored.key, bytes: stored.bytes, contentType: type };
   }
 
   /**
@@ -212,18 +166,12 @@ export class EvidenceService {
    * API to be cleaned up properly -- which is also why a TTL index is the wrong tool here.
    */
   async deleteForSession(sessionId: string, keepKey?: string | null): Promise<number> {
-    await this.ensureIndex();
-    const bucket = this.bucket();
-    const files = await bucket.find({ 'metadata.sessionId': sessionId }).toArray();
+    const keys = await this.objects.listBySession(sessionId);
     let deleted = 0;
-    for (const f of files) {
-      if (keepKey && String(f._id) === keepKey) continue;
-      try {
-        await bucket.delete(f._id);
-        deleted++;
-      } catch {
-        // Already gone, or a concurrent delete won. Never worth failing a submit over.
-      }
+    for (const key of keys) {
+      if (keepKey && key === keepKey) continue;
+      await this.objects.delete(key);
+      deleted++;
     }
     return deleted;
   }
@@ -237,9 +185,9 @@ export class EvidenceService {
    * its id.
    */
   async assertBelongsTo(evidenceKey: string, sessionId: string): Promise<void> {
-    const file = await this.findFile(evidenceKey);
-    if (!file) throw new BadRequestException('That evidence does not exist');
-    if (file.metadata?.sessionId !== sessionId) {
+    const meta = await this.objects.head(evidenceKey);
+    if (!meta) throw new BadRequestException('That evidence does not exist');
+    if (meta.sessionId !== sessionId) {
       throw new ForbiddenException('That evidence belongs to another visit');
     }
   }
@@ -252,10 +200,9 @@ export class EvidenceService {
    * parameter, which is the same rule the console list obeys.
    */
   async read(evidenceKey: string, user: AuthUser): Promise<EvidenceStream> {
-    const file = await this.findFile(evidenceKey);
-    if (!file) throw new NotFoundException('Evidence not found');
-
-    const meta = file.metadata ?? {};
+    const found = await this.objects.get(evidenceKey);
+    if (!found) throw new NotFoundException('Evidence not found');
+    const meta = found.metadata;
 
     /**
      * Org membership alone is NOT sufficient for a business user.
@@ -272,35 +219,6 @@ export class EvidenceService {
     }
     if (!allowed) throw new ForbiddenException('You may not view this evidence');
 
-    return {
-      stream: this.bucket().openDownloadStream(file._id) as unknown as Readable,
-      contentType:
-        typeof file.metadata?.contentType === 'string'
-          ? file.metadata.contentType
-          : 'application/octet-stream',
-      bytes: file.length,
-    };
-  }
-
-  private async findFile(evidenceKey: string): Promise<
-    | {
-        _id: mongoose.Types.ObjectId;
-        length: number;
-        metadata?: {
-          contentType?: string;
-          sessionId?: string;
-          participantId?: string;
-          clientOrgId?: string;
-        };
-      }
-    | null
-  > {
-    // A malformed id is a 400-shaped problem, not a 500. GridFS keys are ObjectIds.
-    if (!mongoose.Types.ObjectId.isValid(evidenceKey)) return null;
-    const [file] = await this.bucket()
-      .find({ _id: new mongoose.Types.ObjectId(evidenceKey) })
-      .limit(1)
-      .toArray();
-    return (file as never) ?? null;
+    return { stream: found.stream, contentType: found.contentType, bytes: found.bytes };
   }
 }

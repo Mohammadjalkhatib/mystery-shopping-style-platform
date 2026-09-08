@@ -1212,3 +1212,94 @@ There is no date-range control yet, so 30 days is not adjustable from the UI. An
 hand-built, which means responsive behaviour and accessibility are ours to maintain rather than a
 library's — the legend, the direct labels and the full-slot hit targets are load-bearing, not
 decoration.
+
+---
+
+## D-028: An S3 object store, hand-signed, chosen at boot — with GridFS as the fallback
+
+**Date:** 2026-09-09
+**Status:** accepted, supersedes the storage choice in D-026 wherever a bucket is configured
+
+**Decision.** Evidence goes to an S3-compatible bucket when `S3_ENDPOINT`, `S3_BUCKET`,
+`S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` are all present, and to MongoDB GridFS otherwise.
+Both sit behind one four-verb `ObjectStore` interface. Requests are signed with a hand-written
+SigV4 implementation; MinIO is back in `docker-compose.yml`, pinned.
+
+**Context.** D-026 chose GridFS because no bucket existed and a feature that cannot be
+demonstrated is not delivered. That reasoning has not changed for the deployed demo, which still
+has no credentials — but locally there is nothing stopping MinIO, and the deployed answer should
+be a config change rather than a code change the day R2 keys appear.
+
+**Alternatives considered.**
+
+- *`@aws-sdk/client-s3`.* The normal answer, and it handles retries, multipart and endpoint
+  quirks that this does not. Rejected on CLAUDE.md §4, which says the code talks to the S3 API
+  and never to a vendor SDK — and the trade is real: several megabytes and a vendor coupling for
+  four verbs, against ~90 lines of signing that is pure and therefore testable without a bucket.
+- *Switching entirely to S3 and deleting the GridFS path.* One code path instead of two.
+  Rejected because it would break the live demo the moment it deployed: production has no
+  bucket, and a required dependency that is not provisioned is an outage, not a migration.
+- *Failing to boot when S3 is only partly configured.* Safer in the abstract. Rejected because
+  it takes the whole API down over an optional feature; instead a partial config logs an ERROR
+  and falls back. Falling back on ABSENCE is intended, falling back SILENTLY on a typo is how
+  photos end up in MongoDB while the dashboard says MinIO — so that case is loud.
+- *Keeping the S3 key in the URL as `sessions/<id>/<uuid>`.* Rejected after it actually broke:
+  a route parameter does not match `/`, so every read 404'd and the cause read as a missing
+  object rather than a routing rule. The bucket keeps its prefix — `listBySession` is a native
+  prefix list, and a flat namespace would make replace-and-sweep a full bucket scan — while
+  callers get a slash-free `<sessionId>.<uuid>`. The interface already promised the key was
+  opaque; this is the store keeping that promise instead of leaking its layout into a URL.
+
+**Consequences.** Two storage backends to keep behaviourally identical, and only one of them
+runs in production — so the S3 path is exercised by `docker compose up` and by nothing else
+until credentials exist. The signer is ours: SigV4 mistakes surface only as a bare `403
+SignatureDoesNotMatch`, which is why the canonical request and string-to-sign are tested
+directly rather than through a request. `listBySession` parses the list response with a regex,
+which is fine for a flat list of keys and must be revisited rather than extended if pagination
+is ever needed. MinIO adds two pinned images and a one-shot init container; there is
+deliberately no healthcheck on minio itself, because recent images ship neither `curl` nor
+`wget` and a healthcheck using either hangs `depends_on` for ever.
+
+---
+
+## D-029: Venue coordinates are picked on a map, with typing as the escape hatch
+
+**Date:** 2026-09-09
+**Status:** accepted
+
+**Decision.** The venue form shows an OpenStreetMap slippy map with a fixed centre pin; dragging
+the map sets the coordinate. Typing remains available behind a toggle. No mapping library —
+about thirty lines of Web Mercator maths in `slippy.ts`, separately tested.
+
+**Context.** Coordinates were typed, and D-020 exists because that went wrong in production:
+`31.98, 35.83` put a venue 4.8 km from where the participant actually stood, and the visit was
+correctly rejected while looking like an engine fault. The precision guard added there catches
+imprecision after the fact; a map removes the way in, because a coordinate derived from a pin
+cannot be imprecise or transposed.
+
+**Alternatives considered.**
+
+- *Link out to Google Maps and paste the numbers back.* What the user was already doing, and
+  what the form's help text told them to do. Rejected because it is the exact workflow that
+  produced the bad venue: the round trip through a clipboard is where precision is lost and
+  where lat and lng get swapped.
+- *Embed Google Maps.* The most familiar map, and the one the request named. Rejected on
+  three counts: the JS API needs an API key and a billing account, which is a deployment
+  dependency this project deliberately has none of; an `<iframe>` embed cannot report the
+  chosen point back to the page at all; and the key would have to ship in the client bundle.
+- *Leaflet or MapLibre.* Smoother inertia, pinch-zoom, markers. Rejected for now under the
+  ask-before-a-dependency rule: ~150 KB to replace thirty lines of arithmetic, for one form.
+  This is the honest place to change course — the moment this needs markers, layers or
+  clustering, hand-rolling stops being the cheaper option.
+- *A draggable pin instead of a fixed one.* Rejected on interaction, not effort: it needs
+  click-versus-drag disambiguation, and on a phone the target ends up under the thumb covering
+  it. Moving the map beneath a fixed pin has neither problem.
+
+**Consequences.** The app now depends on `tile.openstreetmap.org` being reachable — the
+attribution notice is required by their tile usage policy and is not decoration, and a
+production deployment at real volume should use a paid tile host rather than the community
+servers. Reported precision is capped by zoom (`decimalsForZoom`), so the form cannot claim a
+millimetre from a view where a pixel is forty metres. There is no address search: finding a
+venue means panning to it, which is fine for a demo and tedious for a hundred venues —
+geocoding is the obvious next step and is not built. Pinch-zoom is not implemented; the
++/− buttons are the only zoom control on a phone.

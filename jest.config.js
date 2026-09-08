@@ -19,6 +19,8 @@ module.exports = {
     '<rootDir>/apps/web/src/participant',
     // The i18n dictionary is data with an invariant that fails silently, not UI rendering.
     '<rootDir>/apps/web/src/i18n',
+    // Web Mercator maths: pure, and the one part of the map picker that fails silently.
+    '<rootDir>/apps/web/src/components',
   ],
   testMatch: ['**/*.spec.ts'],
   extensionsToTreatAsEsm: ['.ts'],

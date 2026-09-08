@@ -2,11 +2,12 @@ import { Module } from '@nestjs/common';
 import { DbModule } from '../db/db.module.js';
 import { EvidenceController } from './evidence.controller.js';
 import { EvidenceService } from './evidence.service.js';
+import { objectStoreProvider } from './storage/object-store.provider.js';
 
 @Module({
   imports: [DbModule],
   controllers: [EvidenceController],
-  providers: [EvidenceService],
+  providers: [objectStoreProvider, EvidenceService],
   exports: [EvidenceService],
 })
 export class EvidenceModule {}
