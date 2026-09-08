@@ -217,19 +217,50 @@ You need the M0 cluster and a connection string. In **Network Access**, add `0.0
 free Render services have no static outbound IP, so an allowlist cannot be narrower. The
 database is demo data behind its own credentials, which is the only reason that is acceptable.
 
-### 2. Seed the Atlas database
+### 2. Seed the Atlas database, at coordinates you can actually stand in
 
-Render's free plan has no one-off jobs, so seed from your machine. From the repository root,
-in PowerShell:
+Render's free plan has no one-off jobs, so seed from your machine.
+
+**Put the venues where you are.** A geofence is 75 m wide, and the deployed demo is worth
+nothing if nobody can walk into one — from Amman the Kuwait reference points are 1,188 km
+away, so every honest visit scores `proximity -25` and `presenceDwell -20` and is correctly
+rejected. It looks like a broken engine and is not.
+
+Faking it does not help, and that is the point of the system: a DevTools coordinate override
+emits identical consecutive fixes, trips `jitterFingerprint` at -45, and is also rejected.
+
+Get the coordinates of a spot you can reach: in Google Maps, right-click (or long-press on a
+phone) on the exact spot and it shows `31.963158, 35.930359` — copy both numbers. Then, from
+the repository root, in PowerShell:
 
 ```powershell
-$env:MONGO_URI = "mongodb+srv://USER:PASSWORD@CLUSTER.mongodb.net/mystery-shopping?retryWrites=true&w=majority"
+$env:MONGO_URI       = "mongodb+srv://USER:PASSWORD@CLUSTER.mongodb.net/mystery-shopping?retryWrites=true&w=majority"
+$env:SEED_VENUE_LAT  = "31.963158"   # <- replace with yours
+$env:SEED_VENUE_LNG  = "35.930359"   # <- replace with yours
 npm run build --workspace @msp/api
 npm run db:seed
 ```
 
-It prints `created / revived / preserved` counts. Re-running it is safe and never touches a
-session that has already started (D-015).
+Both variables must be set or the relocation is ignored and you get Kuwait. The seed confirms
+with `[seed] venues RELOCATED to ...`.
+
+That anchor becomes **Alfa Market (outdoor)**, a 75 m fence, assigned to `user1`-`user5`.
+**Alfa Store (indoor)** is placed ~440 m north-east of it with a 120 m fence and is assigned
+to `user6`-`user10` — walkable from the same spot, and far enough that the two fences do not
+overlap. Sign in as `user1` and stand at the anchor.
+
+The seed prints `created / revived / preserved` counts. Re-running is safe and never touches a
+session that has already started (D-015), so relocating later keeps your completed visits and
+their verdicts — each session pinned a `venueSnapshot` of the geofence as it was at the time.
+
+To put the demo back on the client's market before submitting, clear both variables and
+re-seed. The venues **move**; they are not duplicated, because the upsert is keyed on the
+venue name.
+
+```powershell
+Remove-Item Env:SEED_VENUE_LAT, Env:SEED_VENUE_LNG
+npm run db:seed
+```
 
 ### 3. Create the Render blueprint
 
@@ -284,11 +315,9 @@ and that fixes are being accepted. On iOS, background the tab for a minute and r
 capture should stop and resume, and `coverageRatio` should show the gap rather than pretending
 the time was observed.
 
-**If you are not standing in Kuwait,** the seeded venues are up to 1,188 km away and every
-honest visit is correctly rejected. Set `SEED_VENUE_LAT` / `SEED_VENUE_LNG` to where you
-actually are and re-seed — see *Testing away from the client's market* below. Completed visits
-survive a re-seed and keep their original verdicts, because each session pins a
-`venueSnapshot` of the geofence as it was when the visit started.
+Step 2 already placed the venues where you are, so `user1` should score a real verdict rather
+than being rejected for distance. If it is rejected, check the seed logged
+`venues RELOCATED to ...` and that you are standing within 75 m of the anchor.
 
 ---
 
