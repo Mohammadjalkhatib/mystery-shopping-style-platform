@@ -33,6 +33,7 @@ import { VerdictChip } from '../components/VerdictChip.js';
 import { useT } from '../i18n/LocaleContext.js';
 import { useVisitStream, type VisitEvent } from '../hooks/useVisitStream.js';
 import { Dashboard } from './Dashboard.js';
+import { People } from './People.js';
 import { TasksTab } from './TasksTab.js';
 
 type Filter = 'all' | Verdict;
@@ -48,7 +49,7 @@ const FILTERS: { key: Filter; label: TranslationKey }[] = [
 export function Console() {
   const { user, logout } = useAuth();
   const t = useT();
-  const [tab, setTab] = useState<'overview' | 'visits' | 'tasks'>('overview');
+  const [tab, setTab] = useState<'overview' | 'visits' | 'people' | 'tasks'>('overview');
   const [filter, setFilter] = useState<Filter>('all');
   const [rows, setRows] = useState<VisitRow[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -186,17 +187,19 @@ export function Console() {
         */}
         <Tabs
           value={tab}
-          onChange={(_e, v: 'overview' | 'visits' | 'tasks') => setTab(v)}
+          onChange={(_e, v: 'overview' | 'visits' | 'people' | 'tasks') => setTab(v)}
           variant="scrollable"
           allowScrollButtonsMobile
           sx={{ mb: 2 }}
         >
           <Tab value="overview" label={t('console.dashboard.tabOverview')} />
           <Tab value="visits" label={t('console.tabVisits')} />
+          <Tab value="people" label={t('console.people.tab')} />
           <Tab value="tasks" label={t('console.tabTasks')} />
         </Tabs>
 
         {tab === 'overview' && <Dashboard />}
+        {tab === 'people' && <People />}
         {tab === 'tasks' && <TasksTab />}
 
         {tab === 'visits' && (

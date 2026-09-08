@@ -8,6 +8,7 @@ import {
   ReviewAction,
   VerificationResultDoc,
 } from '../db/schemas/report-verification.schema.js';
+import { findDemoUserById } from '../auth/demo-users.js';
 import { Session } from '../db/schemas/task-session.schema.js';
 
 export interface VisitRow {
@@ -30,6 +31,21 @@ export interface ConsoleStats {
   byDay: { date: string; auto_verified: number; needs_review: number; rejected: number }[];
   /** Which signals actually cost visits their score, worst first. */
   topFailingSignals: { code: string; visits: number; totalPenalty: number; reason: string }[];
+}
+
+export interface ParticipantStats {
+  participantId: string;
+  displayName: string;
+  visits: number;
+  auto_verified: number;
+  needs_review: number;
+  rejected: number;
+  /** Share of their visits that cleared the auto threshold, 0..1. */
+  passRate: number;
+  medianScore: number | null;
+  /** Their most frequent penalty, which is what distinguishes the causes. */
+  topSignal: { code: string; visits: number } | null;
+  lastVisitAt: Date | null;
 }
 
 export interface VisitDetail extends VisitRow {
@@ -327,6 +343,124 @@ export class ConsoleService {
         reason: r.reason,
       })),
     };
+  }
+
+  /**
+   * Per-participant results.
+   *
+   * The question behind this is "who is working and who is not", and the honest answer is that
+   * THIS CANNOT IDENTIFY CHEATING and must not be presented as though it does (D-001). A
+   * participant whose visits keep being rejected may be inventing them; they may equally have
+   * been sent to a venue whose coordinate is wrong — which has happened in this very database
+   * (D-020) — or be using a phone whose GPS is poor indoors.
+   *
+   * What it can do is rank who needs looking at, and say WHY by naming each person's most
+   * frequent penalty. `proximity` failing every time means a different investigation from
+   * `coverage` failing every time: the first is about where they were, the second about
+   * whether the app was ever on screen.
+   */
+  async participantStats(user: AuthUser, days = 30): Promise<ParticipantStats[]> {
+    const orgId = this.orgFor(user);
+    const window = Math.min(Math.max(Math.trunc(days), 1), 365);
+    const since = new Date(Date.now() - window * 24 * 60 * 60 * 1000);
+
+    const match: Record<string, unknown> = { state: 'submitted', endedAt: { $gte: since } };
+    if (orgId) match.clientOrgId = orgId;
+
+    const sessions = await this.sessions
+      .find(match)
+      .select({ _id: 1, participantId: 1, endedAt: 1, latestVerdict: 1, latestScore: 1 })
+      .lean<
+        {
+          _id: unknown;
+          participantId: string;
+          endedAt: Date | null;
+          latestVerdict: Verdict | null;
+          latestScore: number | null;
+        }[]
+      >();
+    if (sessions.length === 0) return [];
+
+    /**
+     * Their most frequent NEGATIVE signal. A signal that awards points is not a problem.
+     *
+     * Grouped by SESSION and folded into participants here, because `verificationResults` has
+     * no `participantId` -- it carries `sessionId` and `clientOrgId` only. Grouping on a field
+     * that does not exist would not error; every row would collapse under `null` and the whole
+     * column would be one meaningless bucket.
+     */
+    const ownerOf = new Map(sessions.map((x) => [String(x._id), x.participantId]));
+    const penalties = await this.results.aggregate<{
+      _id: { session: string; code: string };
+      n: number;
+    }>([
+      { $match: { sessionId: { $in: [...ownerOf.keys()] } } },
+      { $unwind: '$signals' },
+      { $match: { 'signals.contribution': { $lt: 0 } } },
+      { $group: { _id: { session: '$sessionId', code: '$signals.code' }, n: { $sum: 1 } } },
+    ]);
+
+    const perPerson = new Map<string, Map<string, number>>();
+    for (const row of penalties) {
+      const owner = ownerOf.get(row._id.session);
+      if (!owner) continue;
+      const counts = perPerson.get(owner) ?? new Map<string, number>();
+      counts.set(row._id.code, (counts.get(row._id.code) ?? 0) + row.n);
+      perPerson.set(owner, counts);
+    }
+
+    const topByParticipant = new Map<string, { code: string; visits: number }>();
+    for (const [participant, counts] of perPerson) {
+      let best: { code: string; visits: number } | null = null;
+      for (const [code, n] of counts) {
+        if (!best || n > best.visits) best = { code, visits: n };
+      }
+      if (best) topByParticipant.set(participant, best);
+    }
+
+    const byParticipant = new Map<
+      string,
+      { scores: number[]; counts: Record<Verdict, number>; last: Date | null }
+    >();
+    for (const x of sessions) {
+      const row =
+        byParticipant.get(x.participantId) ??
+        {
+          scores: [],
+          counts: { auto_verified: 0, needs_review: 0, rejected: 0 },
+          last: null,
+        };
+      if (x.latestVerdict) row.counts[x.latestVerdict] += 1;
+      if (typeof x.latestScore === 'number') row.scores.push(x.latestScore);
+      if (x.endedAt && (!row.last || x.endedAt > row.last)) row.last = x.endedAt;
+      byParticipant.set(x.participantId, row);
+    }
+
+    const median = (xs: number[]): number | null => {
+      if (xs.length === 0) return null;
+      const s2 = [...xs].sort((a, b) => a - b);
+      const mid = Math.floor(s2.length / 2);
+      return s2.length % 2 ? s2[mid]! : (s2[mid - 1]! + s2[mid]!) / 2;
+    };
+
+    const out: ParticipantStats[] = [];
+    for (const [participantId, row] of byParticipant) {
+      const visits = row.counts.auto_verified + row.counts.needs_review + row.counts.rejected;
+      out.push({
+        participantId,
+        displayName: findDemoUserById(participantId)?.displayName ?? participantId,
+        visits,
+        ...row.counts,
+        passRate: visits === 0 ? 0 : row.counts.auto_verified / visits,
+        medianScore: median(row.scores),
+        topSignal: topByParticipant.get(participantId) ?? null,
+        lastVisitAt: row.last,
+      });
+    }
+
+    // Worst pass rate first: this list exists to be read from the top.
+    out.sort((a, b) => a.passRate - b.passRate || b.visits - a.visits);
+    return out;
   }
 
   /** Counts for the filter chips. */

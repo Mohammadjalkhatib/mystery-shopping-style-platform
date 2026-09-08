@@ -51,6 +51,7 @@ Built and working end to end:
 - [x] Responsive layouts: the visit list becomes cards on a phone, toolbars and forms adapt
 - [x] One evidence photo per visit: uploaded by the participant, shown on the console's evidence trail
 - [x] Console Overview: stat tiles, verdicts per day, and a ranking of the signals that fail most
+- [x] Console People: per-participant results, ranked by what needs attention (D-031)
 - [x] S3-compatible evidence storage (MinIO in compose), hand-signed, with a GridFS fallback
 - [x] Venue coordinates picked on a map, with address search, rather than typed
 - [x] Capture watchdog: a silent `watchPosition` is re-attached, and restarts are shown
@@ -317,6 +318,63 @@ plural rule and Arabic has six, and there is deliberately no plural engine (D-02
 business user reads on the evidence trail — are composed on the API in English and are not
 translated. That is a known limit, not an oversight: doing it properly means every signal
 returning a code and parameters instead of a sentence.
+
+---
+
+## Where the data actually lives, and how to look at it
+
+### Evidence photos
+
+Which backend is in use is decided at boot from config and **printed in the log**, so it is
+never a guess:
+
+```
+[ObjectStore] Evidence -> S3 at http://minio:9000/visit-evidence
+[ObjectStore] Evidence -> MongoDB GridFS (no S3 configured)
+```
+
+| Where you are | Backend | How to look at the files |
+|---|---|---|
+| `docker compose up` | MinIO | Browser console at http://localhost:9001, login `minioadmin` / `minioadmin`, bucket `visit-evidence` |
+| Deployed (Render + Atlas) | **MongoDB GridFS** | Atlas UI → Collections → `evidence.files`. The bytes are in `evidence.chunks` |
+
+The deployed demo has no S3 credentials, so it falls back to GridFS. Setting all four of
+`S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` on the API service
+switches it to a real bucket with no code change (D-028).
+
+**In the product**, a photo is on the visit's evidence trail: Console → Visits → click a visit.
+It is fetched with your token, not a public URL — the read route is role-guarded and a business
+user only sees a photo once the participant has submitted the report that references it.
+
+From the command line:
+
+```bash
+# The key is on the report; the route enforces who may read it.
+curl -H "Authorization: Bearer $TOKEN" https://msp-api-ijht.onrender.com/evidence/<key> -o photo.png
+```
+
+### The database
+
+```bash
+# Locally, against the compose stack
+docker compose exec mongo mongosh "mongodb://localhost:27017/mystery-shopping?replicaSet=rs0"
+
+# Deployed: MongoDB Atlas UI -> Browse Collections, or
+mongosh "<your MONGO_URI>"
+```
+
+Useful once you are in:
+
+```javascript
+db.sessions.find({ state: 'submitted' }).sort({ endedAt: -1 }).limit(5)
+db.verificationResults.find().sort({ createdAt: -1 }).limit(1)   // score, verdict, signals
+db.pings.find({ sessionId: '<id>' }).sort({ receivedAt: 1 })     // the raw trace
+db['evidence.files'].find()                                      // photo metadata
+db.venues.find({}, { name: 1, location: 1, radiusM: 1 })         // check a geofence
+```
+
+`pings` is the only collection with a TTL — raw location expires after `PING_RETENTION_DAYS`
+(rule 10). Everything else, photos included, is kept.
 
 ---
 

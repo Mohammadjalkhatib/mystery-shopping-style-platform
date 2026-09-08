@@ -1542,3 +1542,54 @@ Cache measured — 837 ms cold, 64 ms warm for the same query.
   request budget, since it would fire on every pan.
 - Nominatim's coverage of small businesses in Jordan and the Gulf is thinner than Google's, so
   some venues still have to be found by dragging. Community servers are not for production volume.
+
+### 2026-09-09 - fix/submit-confirmation
+
+**What.** Submitting a report now confirms itself, the report form goes away, and the console
+has a People tab showing results per participant.
+
+**Why.** Three reports from a live test: no confirmation on submit, pressing it again said
+"already submitted", and there was no way to see results per person. D-031 for the last one.
+
+**Files.**
+
+- `apps/api/src/session/sessions.service.ts`: `mine()` returns `submitted` visits from the last
+  24 h as well as reaped ones.
+- `apps/web/src/participant/VisitPage.tsx`: success Snackbar, and the local state advances
+  immediately rather than waiting for the reload.
+- `apps/api/src/console/console.service.ts`: `participantStats()`. `.controller.ts`:
+  `GET /console/participants`. `apps/web/src/pages/People.tsx`, `Console.tsx`, i18n, client.
+
+**Now true.**
+
+1. **THE SUBMIT BUG WAS A SERVER FILTER, not a UI one.** `/sessions/mine` excluded `submitted`,
+   so after a successful submit the list came back WITHOUT that visit, `setCurrent` fell back to
+   the stale `ended` session it already held, the report form stayed up as though nothing had
+   happened, and a second press produced "already submitted". The participant got an error for
+   the successful path and no acknowledgement for the success. Anything that changes which
+   states `mine()` returns has to be checked against what the participant screen renders for
+   each one.
+2. **The local state is advanced optimistically as well as reloaded.** The reload is
+   authoritative but it is a round trip, and that round trip is exactly long enough to press
+   submit twice.
+3. **`verificationResults` has NO `participantId`.** It carries `sessionId` and `clientOrgId`.
+   Grouping a pipeline by `$participantId` there does not error — every row collapses under a
+   `null` key and the whole column becomes one meaningless bucket. The People aggregation joins
+   through `sessionId` in the service. Check the schema before grouping on a field.
+4. **The People tab ranks attention, not guilt** (D-031). It will not produce a trust score, and
+   the banner names the alternative explanations specifically — a wrong venue coordinate and a
+   poor indoor GPS — rather than carrying a generic disclaimer.
+
+**Verified rather than assumed.** 517 tests pass. Against the compose stack: a full
+consent → start → end → submit produced 201, and `/sessions/mine` then returned the visit as
+`submitted` rather than dropping it. `/console/participants` returned five participants ranked
+worst-first with `noUsableEvidence` and `presenceDwell` as their top issues; participant 403,
+no token 401.
+
+**Open.**
+
+- **The People view has no per-venue breakdown**, which is the cut that most limits it: a
+  participant failing only at one venue is the clearest possible sign the venue is the problem.
+- Pass rate is unweighted, so one visit at 100% sorts with twenty at 100%. Visit count is shown
+  beside it for that reason.
+- Window fixed at 30 days, no control.
