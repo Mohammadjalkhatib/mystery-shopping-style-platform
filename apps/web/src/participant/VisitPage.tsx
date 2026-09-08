@@ -284,6 +284,12 @@ function ActiveVisit({
               ` · ${tx('lastAccurate', { metres: Math.round(t.lastAccuracyM) })}`}
             {t.pending > 0 && ` · ${tx('waitingToSend', { count: t.pending })}`}
             {t.wakeLock && ` · ${tx('screenAwake')}`}
+            {/*
+              Shown rather than hidden. A restart is the only evidence that capture had died
+              rather than that the screen was simply off, and after the visit the two are
+              otherwise indistinguishable.
+            */}
+            {t.restarts > 0 && ` · ${tx('captureRestarted', { count: t.restarts })}`}
           </Typography>
           {t.captured === 0 && t.permission === 'granted' && (
             <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>

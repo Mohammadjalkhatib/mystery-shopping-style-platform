@@ -1242,3 +1242,77 @@ visit screen and the report, plus a language toggle on both screens a participan
   an oversight.
 - Unchanged: the capture watchdog is still blocked on the lock/unlock test, and
   `accuracyRealism` still has the false positive from user2's visit.
+
+### 2026-09-08 - feat/capture-watchdog
+
+**What.** A silent `watchPosition` is detected and re-attached while the page is visible.
+Restarts are counted and shown to the participant.
+
+**Why.** D-023, from the 50 minute drive: four fixes at a perfect cadence, then two isolated
+fixes in 48 minutes, and no way to tell a dead watch from a dark screen.
+
+**Files.**
+
+- `apps/web/src/participant/watchdog.ts`: new, pure. `isCaptureStale`, `shouldRestart`.
+- `apps/web/src/participant/watchdog.spec.ts`: 12 tests.
+- `apps/web/src/participant/useVisitTracker.ts`: liveness refs, the 15 s watchdog interval,
+  `restarts` on TrackerState.
+- `apps/web/src/i18n/strings.ts`, `VisitPage.tsx`: the restart count in the status line.
+
+**Now true.**
+
+1. **Liveness is recorded on ANY callback, including errors, and BEFORE the throttle.** Both
+   halves matter. A fix dropped for arriving too soon still proves the watch is alive, and a
+   receiver that cannot get a lock still fires its error callback — so only total silence trips
+   the watchdog. Restarting on a missing *fix* instead would throw away a warm watch every time
+   someone walked into a basement.
+2. **It never runs while the page is hidden.** A silent watch on a locked screen is correct, the
+   OS would refuse the restart anyway, and acting there would claim observation that did not
+   happen. This is the line the whole system is built around; do not move it.
+3. **`STALE_AFTER_MS` is 90 s because that is `SAMPLE_MS * 3`**, the same `maxGap` the engine
+   uses for coverage. The client gives up on a watch at exactly the point the server stops
+   crediting it. A test asserts the relationship so the two cannot drift apart.
+4. **A 30 s floor between restarts stops it spinning** when the device genuinely has no signal.
+5. **`restarts` is deliberately visible.** It is the only evidence that capture died rather than
+   the screen being off — the ambiguity the drive could not resolve now reports itself.
+
+**Verified rather than assumed.** 437 tests pass. The decision logic is pure and table-tested.
+
+**Open.**
+
+- **Still not run on an iPhone**, which is the device the failure was observed on. The watchdog
+  is written against a described failure, not a reproduced one.
+- It cannot help while the screen is off, which is probably where most of the drive's 48 minute
+  hole came from. This narrows the ambiguity; it does not remove it.
+
+### 2026-09-08 - chore/submission
+
+**What.** Final deliverables pass. The README's self-addressed TODO banner is gone, the
+out-of-scope section reflects what was actually built, and a "what I would build next" section
+names the four things that would most change what the system can claim.
+
+**Why.** README is a graded deliverable (CLAUDE.md section 8) and was still carrying a note
+written to myself, plus an out-of-scope line saying there was no task authoring UI when there is.
+
+**Files.**
+
+- `README.md`: banner removed; out-of-scope corrected on authoring; "What I would build next"
+  added; the documentation table now lists `docs/REQUIREMENTS.md` and `.claude/`.
+- `docs/AI-NOTES.md`: fourth entry — I described venue editing as "safe" before checking whether
+  ingest used the snapshot, which it did not.
+
+**Now true.**
+
+1. **Zero TODOs in the README**, 16 sections, code fences balanced, and every file the
+   documentation table names exists.
+2. **`.claude/` is listed as a deliverable**, which it is: the brief asks how the work was done,
+   and the agents and skills are the answer. They are submitted as they evolved (CLAUDE.md
+   section 1) and must not be tidied.
+3. **The AI-NOTES entry is the honest one.** All 420 tests passed either side of that bug; it
+   was reachable only through a feature that did not exist yet, and nothing in the tooling could
+   have surfaced it. That is the argument the file exists to make.
+
+**Open.** Nothing in the docs. Outstanding in the product: no delete anywhere, the watchdog is
+unverified on an iPhone, RTL has not been looked at on a real screen, and `accuracyRealism`
+still has the false positive from user2's visit — penalising an honest 4 m fix at an indoor
+venue. That last one needs a spoof-adversary pass before anyone touches it.

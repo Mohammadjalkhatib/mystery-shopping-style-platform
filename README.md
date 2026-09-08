@@ -5,9 +5,6 @@ venue and assigns it to a participant. The participant opens the web app, consen
 visit, keeps the tab open while on site, ends the visit and submits a report. The business
 console shows the completed visit appear on its own, with a verification verdict, no refresh.
 
-> Fill the TODOs in this file as features land. Do not leave them for the end. A reviewer
-> should be able to clone, run and understand this without asking a question.
-
 ---
 
 ## What "verified" means here, and what it does not
@@ -49,11 +46,11 @@ Built and working end to end:
 - [x] Authoring: create venues, tasks and assignments from the console's Tasks tab
 - [x] Abandoned and expired sessions, reaped lazily on read, with the reason shown to the participant
 - [x] Arabic pass on the participant screens, with RTL layout and a language toggle
+- [x] Capture watchdog: a silent `watchPosition` is re-attached, and restarts are shown
 
 Not built:
 
 - [ ] Evidence upload to object storage — deliberately cut, see "Deliberately out of scope"
-- [ ] Capture watchdog — nothing notices if `watchPosition` stops delivering silently
 
 ---
 
@@ -550,12 +547,41 @@ both are walkable from one spot without their geofences overlapping.
 
 ---
 
+## What I would build next, in order
+
+Not a wish list — the four things that would most change what this system can claim.
+
+1. **Participant reputation.** The strongest verification signal available and the one this
+   build cannot use, because it needs history and there is none. A participant with forty
+   consistent visits and one odd trace is a different problem from a new account with one odd
+   trace, and today the engine treats them identically.
+2. **Labelled data, then tuned thresholds.** Every weight and band in the engine is a
+   considered guess. `VERIFY_AUTO_THRESHOLD`, the signal contributions, the half-radius
+   coordinate rule in D-020 — all of them are defensible and none are derived. A few hundred
+   reviewed visits would turn the review queue into training data and make the numbers
+   answerable rather than arguable.
+3. **Server-side localisation of the signal reasons.** The participant screens are bilingual;
+   the evidence trail is not. Doing it properly means every signal returning a code and
+   parameters instead of a sentence, which is a better shape anyway — a reason a client can
+   render is a reason a client can also filter, group and chart.
+4. **A real scheduler for the reaper.** Lazy-on-read is the right answer for a free tier that
+   sleeps (D-016, D-019) and the wrong one for anything that pays people. A session nobody looks
+   at stays `active` indefinitely, which is fine for a demo and unacceptable the moment a
+   verdict triggers a payment.
+
+The thing I would *not* do next is add signals. The engine already produces more evidence than
+there is data to calibrate it against, and another signal without labels is another guess
+wearing a number.
+
+---
+
 ## Deliberately out of scope
 
 Named so it is clear these are cuts, not omissions:
 
 - Payments and reward disbursement
-- A full task authoring UI beyond the minimum admin form
+- A full task authoring UI. Venues, tasks and assignments can be created, and a venue can be
+  corrected; nothing can be deleted and tasks cannot be edited
 - Participant reputation scoring, which is the strongest long-run verification signal but
   useless with no history. Top of the "what I would build next" list
 - Native mobile apps, which are the correct answer for background tracking and mock-location
@@ -573,3 +599,5 @@ Named so it is clear these are cuts, not omissions:
 | `docs/DECISIONS.md` | Engineering decisions with alternatives and why they lost |
 | `docs/MEMORY.md` | Running record of what exists and why, one entry per merged branch |
 | `docs/AI-NOTES.md` | Where the AI got things wrong and where it was overridden |
+| `docs/REQUIREMENTS.md` | Runtime versions and the reason for each |
+| `.claude/` | The agents, skills and settings this was actually built with. Submitted as they evolved, not tidied |

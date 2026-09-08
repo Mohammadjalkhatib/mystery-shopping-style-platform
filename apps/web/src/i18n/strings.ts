@@ -75,6 +75,7 @@ export const en = {
   lastAccurate: 'last accurate to ~{metres} m',
   waitingToSend: '{count} waiting to send',
   screenAwake: 'screen kept awake while this page is open',
+  captureRestarted: 'capture restarted {count}×',
   waitingFirstFix:
     'Waiting for a first fix. This can take a few seconds outdoors and longer inside.',
   endingNotice: 'Ending the visit stops location capture. You will write your report next.',
@@ -171,6 +172,7 @@ export const ar: Strings = {
   lastAccurate: 'آخر قراءة بدقة ~{metres} متر',
   waitingToSend: '{count} بانتظار الإرسال',
   screenAwake: 'تبقى الشاشة مضاءة أثناء فتح هذه الصفحة',
+  captureRestarted: 'أُعيد تشغيل التسجيل {count}×',
   waitingFirstFix:
     'بانتظار أول قراءة. قد يستغرق ذلك ثوانٍ في الخارج ووقتًا أطول في الداخل.',
   endingNotice: 'إنهاء الزيارة يوقف تسجيل الموقع. ستكتب تقريرك بعد ذلك.',
