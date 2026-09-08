@@ -96,7 +96,7 @@ export interface VisitDetail extends VisitRow {
     medianAccuracyM: number | null;
     unusableFixCount: number;
   } | null;
-  report: { notes: string; rating: number; submittedAt: string } | null;
+  report: { notes: string; rating: number; submittedAt: string; evidenceKey: string | null } | null;
   review: { decision: string; note: string; reviewerId: string; at: string } | null;
   venue: { name: string; radiusM: number; indoor: boolean } | null;
 }
@@ -140,6 +140,15 @@ export interface ParticipantRow {
   displayName: string;
 }
 
+export interface ConsoleStats {
+  days: number;
+  totals: { visits: number; auto_verified: number; needs_review: number; rejected: number };
+  medianCoverageRatio: number | null;
+  medianScore: number | null;
+  byDay: { date: string; auto_verified: number; needs_review: number; rejected: number }[];
+  topFailingSignals: { code: string; visits: number; totalPenalty: number; reason: string }[];
+}
+
 /* ------------------------------------------------------------------- calls */
 
 export const api = {
@@ -164,14 +173,58 @@ export const api = {
   endVisit: (id: string) => req<SessionView>(`/sessions/${id}/end`, { method: 'POST' }),
   postPings: (id: string, fixes: unknown[]) =>
     req<IngestResult>(`/sessions/${id}/pings`, { method: 'POST', body: JSON.stringify({ fixes }) }),
-  submitReport: (id: string, notes: string, rating: number) =>
+  submitReport: (id: string, notes: string, rating: number, evidenceKey?: string) =>
     req<{ sessionId: string; submittedAt: string }>(`/sessions/${id}/report`, {
       method: 'POST',
-      body: JSON.stringify({ notes, rating }),
+      body: JSON.stringify({ notes, rating, ...(evidenceKey ? { evidenceKey } : {}) }),
     }),
+
+  /**
+   * Upload one photo as a raw body, not multipart.
+   *
+   * `req()` is not reused: it sets a JSON content-type and stringifies, and both are wrong
+   * here. The browser must NOT set a boundary or re-encode — the server reads the bytes and
+   * checks them against the declared type.
+   */
+  uploadEvidence: async (
+    sessionId: string,
+    file: File,
+  ): Promise<{ evidenceKey: string; bytes: number; contentType: string }> => {
+    const token = tokenStore.get();
+    const res = await fetch(`${BASE}/sessions/${sessionId}/evidence`, {
+      method: 'POST',
+      headers: {
+        'content-type': file.type,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: file,
+    });
+    if (!res.ok) {
+      const body: unknown = await res.json().catch(() => ({}));
+      const m = (body as { message?: string | string[] }).message;
+      throw new ApiError(res.status, Array.isArray(m) ? (m[0] ?? res.statusText) : (m ?? res.statusText), body);
+    }
+    return (await res.json()) as { evidenceKey: string; bytes: number; contentType: string };
+  },
+
+  /**
+   * Fetch a stored photo as an object URL.
+   *
+   * The read route is token-guarded, so `<img src>` cannot be pointed at it directly — a plain
+   * URL carries no Authorization header. The caller must revoke the URL when done.
+   */
+  evidenceObjectUrl: async (evidenceKey: string): Promise<string> => {
+    const token = tokenStore.get();
+    const res = await fetch(`${BASE}/evidence/${evidenceKey}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new ApiError(res.status, 'Could not load the photo');
+    return URL.createObjectURL(await res.blob());
+  },
   visits: (verdict?: Verdict) =>
     req<VisitRow[]>(`/console/visits${verdict ? `?verdict=${verdict}` : ''}`),
   counts: () => req<Record<string, number>>('/console/visits/counts'),
+  stats: (days = 30) => req<ConsoleStats>(`/console/stats?days=${days}`),
   visit: (id: string) => req<VisitDetail>(`/console/visits/${id}`),
   review: (id: string, decision: 'approve' | 'reject', note: string) =>
     req<{ ok: true }>(`/console/visits/${id}/review`, {

@@ -1123,3 +1123,92 @@ about but not observed on a real phone in a real shop, which is the only test th
 has not been run. And it slightly weakens the honesty of the visit screen: the participant now
 has a supported way to make the app look like it is not running, which is defensible only
 because the line saying it IS running never leaves the screen.
+
+---
+
+## D-026: Evidence photos live in GridFS, not S3, and are replaced rather than accumulated
+
+**Date:** 2026-09-09
+**Status:** accepted, reverses the storage half of the plan in CLAUDE.md §4
+
+**Decision.** The single report photo is stored in MongoDB GridFS, one object per session, behind
+a narrow service interface. Uploading again deletes the previous object; submitting a report
+deletes anything that session uploaded and did not reference. Nothing in the repo speaks S3.
+
+**Context.** CLAUDE.md §4 said object storage would be S3-compatible — MinIO locally, R2 in
+production — and evidence upload was then cut entirely and recorded as out of scope. Reversing
+that cut needs storage that works *now*: R2 credentials do not exist, and a feature that cannot
+be demonstrated on the deployed URL is not delivered. Atlas is already provisioned, already a
+replica set, and already the thing being backed up.
+
+**Alternatives considered.**
+
+- *S3 via presigned PUT to R2.* The documented plan, and the right answer at any real volume:
+  object storage is cheaper per byte, scales past a database, and keeps large blobs out of the
+  working set. Rejected for now purely on availability — it cannot be built, tested or deployed
+  without a bucket and keys. The service interface is deliberately narrow (`store`, `read`,
+  `deleteForSession`, `assertBelongsTo`) so an S3 adapter replaces this file without touching a
+  caller.
+- *Base64 in the report document.* No new collections and no GridFS. Rejected outright: MongoDB
+  documents cap at 16 MB, base64 inflates by a third, and it would put a multi-megabyte blob
+  inside a document the console reads on every detail view.
+- *Keep every uploaded photo.* Simplest, and an audit trail of attempts. Rejected because the
+  schema-reviewer traced the exhaustion path: Atlas M0 is 512 MB for the whole database, images
+  do not compress, and roughly 120 photos fills it. Evidence never expires while pings do, so the
+  floor only ratchets up. What breaks first is not uploads — Atlas refuses writes database-wide,
+  so the first symptom is ping ingest failing, three layers from the cause.
+
+**Consequences.** Photos consume the same 512 MB as everything else, so the demo has a real
+ceiling — one object per session keeps it in the low hundreds of visits rather than dozens, and
+that is a demo-grade answer, not a production one. **Photos do not expire, while location pings
+do** (rule 10), which is an asymmetry worth naming: a photo taken inside a venue is at least as
+identifying as a coordinate. A TTL index is specifically the wrong fix — it would delete the
+file document without cascading to `evidence.chunks`, leaving the bytes in the database for ever
+and no longer reachable through the GridFS API to be removed. A retention sweep calling
+`bucket.delete()` is the correct shape and is not built. The consent screen now says the photo
+is kept with the report rather than leaving the participant to infer it from the sentence about
+location data.
+
+---
+
+## D-027: The dashboard answers "which checks keep failing", not "how many visits"
+
+**Date:** 2026-09-09
+**Status:** accepted
+
+**Decision.** The console's Overview tab is five stat tiles, a stacked bar of verdicts per day,
+and a ranked bar chart of the signals that most often cost visits their score. Rendered as
+inline SVG with no charting dependency, on a three-colour status palette re-stepped for charts.
+
+**Context.** "Graphs in the admin dashboard" had no prior specification — none existed and none
+had been discussed. The reference the user pointed at frames its reporting around *recurring
+failures* and *smart scores* rather than volume, and that maps exactly onto something this system
+already has and does not surface: every verdict carries an array of signals with reasons, and
+nothing anywhere aggregates them.
+
+**Alternatives considered.**
+
+- *A pie chart of the verdict mix.* The obvious dashboard chart. Rejected because three slices
+  is a table with extra steps — the tiles already carry the percentages, and a pie makes them
+  harder to compare, not easier.
+- *Visits over time as the headline chart.* Standard, and what most dashboards lead with.
+  Kept, but demoted below the failure ranking: volume is a number a business user already knows
+  from their own operations, whereas *which check is failing* is knowledge only this system has.
+- *A charting library (Recharts, visx, Chart.js).* Faster to write and free tooltips. Rejected:
+  every dependency here needs a reason, and a library is a large one for two static forms whose
+  mark details — the 2px gap between stacked segments, rounded data-ends, recessive axes — are
+  easier to control directly than to talk a library out of.
+- *Reusing the brand green for the "auto-verified" series.* Rejected on measurement, not taste:
+  at chroma 0.082 it FAILS the palette validator's chroma floor and reads as gray in a chart. The
+  chart palette is re-stepped (`#0F7A55`) and passes all six checks. Chrome and data have
+  different jobs; one value for both would mean one of them is wrong.
+
+**Consequences.** The failure ranking counts only negative contributions, so a signal that
+*awards* points never appears — correct for the question, but it means the chart is not a
+complete picture of the engine's behaviour and should not be read as one. Aggregation runs on
+every Overview load with no caching, bounded by the 30-day window and the existing
+`{ clientOrgId, state, endedAt }` index; it will need caching before it needs a bigger index.
+There is no date-range control yet, so 30 days is not adjustable from the UI. And the charts are
+hand-built, which means responsive behaviour and accessibility are ours to maintain rather than a
+library's — the legend, the direct labels and the full-slot hit targets are load-bearing, not
+decoration.

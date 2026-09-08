@@ -1366,3 +1366,64 @@ responsive work and RTL are reasoned, not observed.
   It is a documented cut (README, "Deliberately out of scope"), and reversing it needs S3/R2
   credentials plus a decision entry.
 - Discreet mode and the responsive layouts are unobserved on a real device.
+
+### 2026-09-09 - feat/evidence-upload (evidence + dashboard)
+
+**What.** The single report photo now uploads, stores, and is shown to the business user. The
+console gains an Overview tab with stat tiles and two charts.
+
+**Why.** D-026 and D-027, both direct user requests. D-026 reverses the "evidence upload is out
+of scope" cut and the S3 half of CLAUDE.md §4.
+
+**Files.**
+
+- `apps/api/src/evidence/`: `evidence.service.ts` (GridFS store/read/delete), `.controller.ts`
+  (raw-body POST, guarded GET), `.constants.ts` (allowlist, cap, magic bytes), `.spec.ts` (17).
+- `apps/api/src/reports/`: `create-report.dto.ts` optional `evidenceKey`; `reports.service.ts`
+  verifies ownership before the transaction and sweeps orphans after it commits.
+- `apps/api/src/console/console.service.ts`: `stats()` aggregation; `.controller.ts`:
+  `GET /console/stats`. `console.service.ts` also now projects `report.evidenceKey`.
+- `apps/web/src/participant/EvidencePicker.tsx`, `pages/Dashboard.tsx`, `theme/theme.ts`
+  (`verdictChartPalette`), `Console.tsx` (Overview tab + `EvidenceImage`).
+
+**Now true.**
+
+1. **THE SCHEMA-REVIEWER PASS EARNED ITS KEEP AGAIN — two blocking finds.** (a) Nothing capped
+   storage: each upload wrote a new object and "Replace photo" orphaned the last. On a 512 MB
+   Atlas M0, ~120 photos fills the WHOLE database, and Atlas then refuses writes database-wide —
+   so the first symptom would be ping ingest failing, three layers from the cause. (b) Nothing
+   deleted unreferenced objects, so an abandoned upload was a photo taken inside a venue, kept
+   for ever, that no product surface could reach. Both fixed; both have tests.
+2. **One photo per session, enforced at upload.** `Report.evidenceKey` is a single scalar, so
+   that is what the data model always described. Re-uploading deletes the previous object.
+3. **Deletion MUST go through `bucket.delete()`.** A TTL index or a raw delete on
+   `evidence.files` removes the file document without cascading to `evidence.chunks`, leaving
+   the bytes in the database permanently AND unreachable through the GridFS API. This is why
+   evidence has a sweep-shaped retention story and not a TTL one. Retention itself is not built.
+4. **A business user may only read a photo a SUBMITTED report references.** Org membership alone
+   was not enough: it would have exposed photos from visits the participant abandoned.
+5. **`metadata.sessionId` carries an index** (`evidence_by_session`). Replace and sweep both
+   query by it; without the index they are collection scans that slow down as storage fills.
+6. **Content-Type is a claim, so bytes are checked against it.** SVG is refused deliberately —
+   an image to a human, a script host to a browser. Reads also send `nosniff` and
+   `Content-Disposition: attachment`.
+7. **The chart palette is NOT the brand palette.** Brand green is chroma 0.082 and FAILS the
+   dataviz validator's chroma floor — it reads gray in a chart. `verdictChartPalette` is
+   re-stepped to `#0F7A55` and passes all six checks. Verified by running the validator, not by
+   eye. Do not "unify" these two palettes; they have different jobs.
+8. **The dashboard's headline chart is the failure ranking, not volume.** Which check keeps
+   failing is knowledge only this system has. It counts negative contributions only, so it is
+   not a complete picture of the engine and should not be read as one.
+
+**Verified rather than assumed.** 460 tests pass. Not verified: nothing has been exercised
+against a browser or the live deployment yet — no photo has actually been taken on a phone and
+no chart has been looked at.
+
+**Open.**
+
+- **Evidence has no retention policy** while pings expire in 30 days. Named in D-026 and in the
+  consent copy; the sweep is not built.
+- **Sessions that never submit still leak one photo each** — the post-submit sweep only fires on
+  submit. A reaper-triggered sweep for terminal sessions is the missing piece.
+- Storage is a hard ceiling on M0. The S3 adapter is the real answer and needs credentials.
+- No date-range control on the dashboard; 30 days is fixed. No caching on the aggregation.

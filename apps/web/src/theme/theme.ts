@@ -57,6 +57,21 @@ export const verdictPalette = {
   rejected: { main: '#9B2C2C', contrastText: '#FFFFFF' },
 } as const;
 
+/**
+ * The same three states, re-stepped for charts.
+ *
+ * The brand green is deliberately low-chroma for UI chrome, and at that chroma it reads as GRAY
+ * in a chart -- it failed the palette validator's chroma floor outright. These values pass all
+ * six checks against the chart surface (lightness band, chroma floor, CVD separation, normal
+ * vision floor, contrast). Chrome and data have different jobs; sharing one value would mean one
+ * of them is wrong. Verified with the dataviz validator, not by eye.
+ */
+export const verdictChartPalette = {
+  auto_verified: '#0F7A55',
+  needs_review: '#B7791F',
+  rejected: '#9B2C2C',
+} as const;
+
 const options: ThemeOptions = {
   direction: 'ltr', // flipped to 'rtl' by the locale provider on the Arabic pass
 
