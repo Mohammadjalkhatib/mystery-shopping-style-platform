@@ -40,6 +40,7 @@ module.exports = {
           experimentalDecorators: true,
           emitDecoratorMetadata: true,
           verbatimModuleSyntax: false,
+          resolveJsonModule: true,
         },
       },
     ],

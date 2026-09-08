@@ -4,6 +4,8 @@ import {
   Badge,
   Box,
   Button,
+  Card,
+  CardContent,
   Chip,
   CircularProgress,
   Container,
@@ -23,24 +25,28 @@ import {
   Typography,
 } from '@mui/material';
 import type { Verdict } from '@msp/shared';
+import type { TranslationKey } from '../i18n/strings.js';
 import { useCallback, useEffect, useState } from 'react';
 import { api, type VisitDetail, type VisitRow } from '../api/client.js';
 import { useAuth } from '../auth/AuthContext.js';
 import { VerdictChip } from '../components/VerdictChip.js';
+import { useT } from '../i18n/LocaleContext.js';
 import { useVisitStream, type VisitEvent } from '../hooks/useVisitStream.js';
 import { TasksTab } from './TasksTab.js';
 
 type Filter = 'all' | Verdict;
 
-const FILTERS: { key: Filter; label: string }[] = [
-  { key: 'all', label: 'All visits' },
-  { key: 'needs_review', label: 'Needs review' },
-  { key: 'auto_verified', label: 'Consistent' },
-  { key: 'rejected', label: 'Not supported' },
+/** Labels come from the dictionary at render time, so the key is what is stable here. */
+const FILTERS: { key: Filter; label: TranslationKey }[] = [
+  { key: 'all', label: 'console.filters.all' },
+  { key: 'needs_review', label: 'console.filters.needsReview' },
+  { key: 'auto_verified', label: 'console.filters.autoVerified' },
+  { key: 'rejected', label: 'console.filters.rejected' },
 ];
 
 export function Console() {
   const { user, logout } = useAuth();
+  const t = useT();
   const [tab, setTab] = useState<'visits' | 'tasks'>('visits');
   const [filter, setFilter] = useState<Filter>('all');
   const [rows, setRows] = useState<VisitRow[]>([]);
@@ -107,34 +113,79 @@ export function Console() {
   return (
     <Box sx={{ minHeight: '100dvh', bgcolor: 'background.default' }}>
       <AppBar position="sticky">
-        <Toolbar sx={{ gap: 2 }}>
-          <Typography variant="h3" sx={{ fontSize: '1.1rem', flexGrow: 1 }}>
-            Visit console
+        {/*
+          The toolbar had five items competing for a 360 px phone: title, status, name and two
+          buttons. The name is the one a signed-in user least needs to be told, so it is the
+          first thing to go, and the status chip keeps its colour while losing its word.
+        */}
+        <Toolbar sx={{ gap: { xs: 1, sm: 2 }, minHeight: { xs: 56, sm: 64 } }}>
+          <Typography
+            variant="h3"
+            sx={{ fontSize: { xs: '1rem', sm: '1.1rem' }, flexGrow: 1, minWidth: 0 }}
+            noWrap
+          >
+            {t('console.title')}
           </Typography>
           <Chip
             size="small"
             variant="outlined"
             color={status === 'live' ? 'success' : status === 'stopped' ? 'default' : 'warning'}
-            label={status === 'live' ? 'Live' : status === 'reconnecting' ? 'Reconnecting…' : status}
+            label={
+              status === 'live'
+                ? t('console.live')
+                : status === 'reconnecting'
+                  ? t('console.reconnecting')
+                  : t('console.stopped')
+            }
+            sx={{ display: { xs: 'none', sm: 'inline-flex' } }}
           />
-          <Typography variant="body2" color="text.secondary">
+          {/* On a phone the status survives as a dot rather than disappearing entirely. */}
+          <Box
+            aria-label={status}
+            sx={{
+              display: { xs: 'block', sm: 'none' },
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              flexShrink: 0,
+              bgcolor:
+                status === 'live'
+                  ? 'success.main'
+                  : status === 'stopped'
+                    ? 'text.disabled'
+                    : 'warning.main',
+            }}
+          />
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ display: { xs: 'none', md: 'block' } }}
+            noWrap
+          >
             {user?.displayName}
           </Typography>
-          <Button size="small" onClick={logout}>
-            Sign out
+          <Button size="small" onClick={logout} sx={{ flexShrink: 0 }}>
+            {t('common.signOut')}
           </Button>
         </Toolbar>
       </AppBar>
 
-      <Container maxWidth="lg" sx={{ py: 3 }}>
+      <Container
+        maxWidth="lg"
+        sx={{
+          px: { xs: 1.5, sm: 3 },
+          py: { xs: 2, sm: 3 },
+          pb: 'calc(env(safe-area-inset-bottom, 0px) + 24px)',
+        }}
+      >
         {/*
           Two surfaces for the same user: reading verdicts, and authoring the work that
           produces them. Tabs rather than routes, because App.tsx routes by role and there is
           no URL worth sharing -- every screen is scoped to the signed-in account anyway.
         */}
         <Tabs value={tab} onChange={(_e, v: 'visits' | 'tasks') => setTab(v)} sx={{ mb: 2 }}>
-          <Tab value="visits" label="Visits" />
-          <Tab value="tasks" label="Tasks" />
+          <Tab value="visits" label={t('console.tabVisits')} />
+          <Tab value="tasks" label={t('console.tabTasks')} />
         </Tabs>
 
         {tab === 'tasks' && <TasksTab />}
@@ -142,11 +193,27 @@ export function Console() {
         {tab === 'visits' && (
         <>
         <Alert severity="info" sx={{ mb: 2 }}>
-          Verdicts describe how much the evidence supports a visit. They are not proof of
-          presence — see the reasons on each visit.
+          {t('console.disclaimer')}
         </Alert>
 
-        <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: 'wrap' }} useFlexGap>
+        {/*
+          A horizontal scroller on a phone rather than a three-line wrap. Four filter chips with
+          badges wrapped to three rows at 360 px and pushed the table below the fold.
+        */}
+        <Stack
+          direction="row"
+          spacing={1}
+          useFlexGap
+          sx={{
+            mb: 2,
+            flexWrap: { xs: 'nowrap', sm: 'wrap' },
+            overflowX: { xs: 'auto', sm: 'visible' },
+            pb: { xs: 1, sm: 0 },
+            alignItems: 'center',
+            '&::-webkit-scrollbar': { display: 'none' },
+            scrollbarWidth: 'none',
+          }}
+        >
           {FILTERS.map((f) => (
             <Badge
               key={f.key}
@@ -155,29 +222,36 @@ export function Console() {
               showZero
             >
               <Chip
-                label={f.label}
+                label={t(f.label)}
                 onClick={() => setFilter(f.key)}
                 variant={filter === f.key ? 'filled' : 'outlined'}
                 color={filter === f.key ? 'primary' : 'default'}
+                sx={{ whiteSpace: 'nowrap' }}
               />
             </Badge>
           ))}
           <Box sx={{ flexGrow: 1 }} />
           <Button size="small" onClick={() => void load()}>
-            Refresh
+            {t('common.refresh')}
           </Button>
         </Stack>
 
         {loading && <LinearProgress sx={{ mb: 1 }} />}
 
-        <Box sx={{ overflowX: 'auto' }}>
+        {/*
+          Two presentations of one list. A four-column table is right on a laptop and unusable
+          on a 360 px phone -- the venue name and the verdict, the only two columns anyone scans
+          for, end up squeezed to a few characters each or pushed off a horizontal scroll nobody
+          discovers. Below `sm` the same rows render as cards.
+        */}
+        <Box sx={{ display: { xs: 'none', sm: 'block' }, overflowX: 'auto' }}>
           <Table size="small">
             <TableHead>
               <TableRow>
-                <TableCell>Venue</TableCell>
-                <TableCell>Participant</TableCell>
-                <TableCell>Ended</TableCell>
-                <TableCell>Verdict</TableCell>
+                <TableCell>{t('console.table.venue')}</TableCell>
+                <TableCell>{t('console.table.participant')}</TableCell>
+                <TableCell>{t('console.table.ended')}</TableCell>
+                <TableCell>{t('console.table.verdict')}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -188,33 +262,54 @@ export function Console() {
                   onClick={() => setSelected(r.sessionId)}
                   sx={{
                     cursor: 'pointer',
-                    // A visit that arrived live is marked, so a reviewer can see that the
-                    // list changed without them doing anything.
                     bgcolor: fresh.has(r.sessionId) ? 'action.hover' : undefined,
                   }}
                 >
                   <TableCell>{r.venueName}</TableCell>
                   <TableCell>{r.participantId}</TableCell>
-                  <TableCell>
-                    {r.endedAt ? new Date(r.endedAt).toLocaleString() : '—'}
-                  </TableCell>
+                  <TableCell>{r.endedAt ? new Date(r.endedAt).toLocaleString() : '—'}</TableCell>
                   <TableCell>
                     <VerdictChip verdict={r.verdict} score={r.score} />
                   </TableCell>
                 </TableRow>
               ))}
-              {!loading && rows.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={4}>
-                    <Typography color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>
-                      No visits yet. Completed visits appear here on their own.
-                    </Typography>
-                  </TableCell>
-                </TableRow>
-              )}
             </TableBody>
           </Table>
         </Box>
+
+        <Stack spacing={1} sx={{ display: { xs: 'flex', sm: 'none' } }}>
+          {rows.map((r) => (
+            <Card
+              key={r.sessionId}
+              onClick={() => setSelected(r.sessionId)}
+              sx={{
+                cursor: 'pointer',
+                borderColor: fresh.has(r.sessionId) ? 'primary.main' : undefined,
+                bgcolor: fresh.has(r.sessionId) ? 'action.hover' : undefined,
+              }}
+            >
+              <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
+                <Typography variant="h3" sx={{ fontSize: '0.95rem', mb: 0.75 }}>
+                  {r.venueName}
+                </Typography>
+                <Box sx={{ mb: 1 }}>
+                  <VerdictChip verdict={r.verdict} score={r.score} />
+                </Box>
+                <Typography variant="caption" color="text.secondary">
+                  {r.participantId}
+                  {r.endedAt && ` · ${new Date(r.endedAt).toLocaleString()}`}
+                </Typography>
+              </CardContent>
+            </Card>
+          ))}
+        </Stack>
+
+        {!loading && rows.length === 0 && (
+          <Typography color="text.secondary" sx={{ py: 5, textAlign: 'center' }}>
+            {t('console.table.empty')}
+          </Typography>
+        )}
+
         </>
         )}
       </Container>
@@ -224,7 +319,16 @@ export function Console() {
         open={selected !== null}
         onClose={() => setSelected(null)}
         // MUI v9 replaced PaperProps with slotProps.paper.
-        slotProps={{ paper: { sx: { width: { xs: '100%', sm: 520 } } } }}
+        // Full-bleed on a phone with room for the notch; a panel on anything wider.
+        slotProps={{
+          paper: {
+            sx: {
+              width: { xs: '100%', sm: 520 },
+              pt: 'env(safe-area-inset-top, 0px)',
+              pb: 'env(safe-area-inset-bottom, 0px)',
+            },
+          },
+        }}
       >
         {selected && <VisitDetailPanel sessionId={selected} onDone={() => void load()} />}
       </Drawer>
@@ -238,12 +342,13 @@ function VisitDetailPanel({ sessionId, onDone }: { sessionId: string; onDone: ()
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const t = useT();
 
   const load = useCallback(() => {
     api
       .visit(sessionId)
       .then(setD)
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Failed to load'));
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : t('common.failedToLoad')));
   }, [sessionId]);
 
   useEffect(load, [load]);
@@ -257,7 +362,7 @@ function VisitDetailPanel({ sessionId, onDone }: { sessionId: string; onDone: ()
       load();
       onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Review failed');
+      setError(e instanceof Error ? e.message : t('console.review.failed'));
     } finally {
       setBusy(false);
     }
@@ -267,13 +372,19 @@ function VisitDetailPanel({ sessionId, onDone }: { sessionId: string; onDone: ()
   if (!d) return <Box sx={{ p: 4, textAlign: 'center' }}><CircularProgress /></Box>;
 
   return (
-    <Box sx={{ p: 3 }}>
-      <Typography variant="h3" gutterBottom>
+    <Box sx={{ p: { xs: 2, sm: 3 } }}>
+      <Typography variant="h3" sx={{ fontSize: { xs: '1.15rem', sm: '1.25rem' } }} gutterBottom>
         {d.venueName}
       </Typography>
       <Stack direction="row" spacing={1} sx={{ mb: 2 }} useFlexGap>
         <VerdictChip verdict={d.verdict} score={d.score} />
-        {d.engineVersion && <Chip size="small" variant="outlined" label={`engine ${d.engineVersion}`} />}
+        {d.engineVersion && (
+          <Chip
+            size="small"
+            variant="outlined"
+            label={t('console.detail.engine', { version: d.engineVersion })}
+          />
+        )}
       </Stack>
 
       <Typography variant="body2" color="text.secondary">
@@ -284,7 +395,7 @@ function VisitDetailPanel({ sessionId, onDone }: { sessionId: string; onDone: ()
       <Divider sx={{ my: 2 }} />
 
       <Typography variant="h3" sx={{ fontSize: '1rem', mb: 1 }}>
-        Why this verdict
+        {t('console.detail.whyTitle')}
       </Typography>
       <Stack spacing={1}>
         {d.signals.map((s) => (
@@ -301,7 +412,7 @@ function VisitDetailPanel({ sessionId, onDone }: { sessionId: string; onDone: ()
         ))}
         {d.signals.length === 0 && (
           <Typography color="text.secondary" variant="body2">
-            Not verified yet.
+            {t('console.detail.notVerifiedYet')}
           </Typography>
         )}
       </Stack>
@@ -310,14 +421,20 @@ function VisitDetailPanel({ sessionId, onDone }: { sessionId: string; onDone: ()
         <>
           <Divider sx={{ my: 2 }} />
           <Typography variant="h3" sx={{ fontSize: '1rem', mb: 1 }}>
-            What was observed
+            {t('console.detail.observedTitle')}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            {d.rollups.fixCount} fixes · {Math.round(d.rollups.dwellSeconds / 60)} min inside ·{' '}
-            {Math.round(d.rollups.coverageRatio * 100)}% of the session observed
-            {d.rollups.minDistanceM !== null && ` · closest ${Math.round(d.rollups.minDistanceM)} m`}
+            {t('console.detail.fixes', { count: d.rollups.fixCount })} ·{' '}
+            {t('console.detail.minutesInside', {
+              minutes: Math.round(d.rollups.dwellSeconds / 60),
+            })}{' '}
+            · {t('console.detail.observedPercent', {
+              percent: Math.round(d.rollups.coverageRatio * 100),
+            })}
+            {d.rollups.minDistanceM !== null &&
+              ` · ${t('console.detail.closest', { metres: Math.round(d.rollups.minDistanceM) })}`}
             {d.rollups.unusableFixCount > 0 &&
-              ` · ${d.rollups.unusableFixCount} fixes too imprecise to use`}
+              ` · ${t('console.detail.unusable', { count: d.rollups.unusableFixCount })}`}
           </Typography>
         </>
       )}
@@ -326,7 +443,7 @@ function VisitDetailPanel({ sessionId, onDone }: { sessionId: string; onDone: ()
         <>
           <Divider sx={{ my: 2 }} />
           <Typography variant="h3" sx={{ fontSize: '1rem', mb: 1 }}>
-            Participant report · {d.report.rating}/5
+            {t('console.detail.reportTitle', { rating: d.report.rating })}
           </Typography>
           <Typography variant="body2">{d.report.notes}</Typography>
         </>
@@ -335,20 +452,22 @@ function VisitDetailPanel({ sessionId, onDone }: { sessionId: string; onDone: ()
       <Divider sx={{ my: 2 }} />
       {d.review ? (
         <Alert severity="info">
-          <strong>{d.review.decision}</strong> by {d.review.reviewerId} —{' '}
-          {d.review.note}
+          {t('console.review.recorded', {
+            decision: d.review.decision,
+            reviewer: d.review.reviewerId,
+            note: d.review.note,
+          })}
         </Alert>
       ) : (
         <>
           <Typography variant="h3" sx={{ fontSize: '1rem', mb: 1 }}>
-            Override
+            {t('console.review.title')}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-            A decision here is recorded alongside the engine&apos;s verdict, never instead of
-            it.
+            {t('console.review.explain')}
           </Typography>
           <TextField
-            label="Why (required)"
+            label={t('console.review.note')}
             value={note}
             onChange={(e) => setNote(e.target.value)}
             multiline
@@ -356,13 +475,13 @@ function VisitDetailPanel({ sessionId, onDone }: { sessionId: string; onDone: ()
             fullWidth
             sx={{ mb: 1.5 }}
           />
-          <Stack direction="row" spacing={1}>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
             <Button
               variant="contained"
               disabled={busy || note.trim().length < 10}
               onClick={() => void review('approve')}
             >
-              Approve
+              {t('console.review.approve')}
             </Button>
             <Button
               variant="outlined"
@@ -370,7 +489,7 @@ function VisitDetailPanel({ sessionId, onDone }: { sessionId: string; onDone: ()
               disabled={busy || note.trim().length < 10}
               onClick={() => void review('reject')}
             >
-              Reject
+              {t('console.review.reject')}
             </Button>
           </Stack>
         </>

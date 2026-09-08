@@ -27,9 +27,9 @@ export function Consent({
   const t = useT();
 
   return (
-    <Box sx={{ p: 2, maxWidth: 560, mx: 'auto' }}>
+    <Box sx={{ p: { xs: 1.5, sm: 2 }, maxWidth: 560, mx: 'auto' }}>
       <Typography variant="h1" sx={{ fontSize: '1.4rem', mb: 0.5 }}>
-        {t('consentTitle')}
+        {t('participant.consent.title')}
       </Typography>
       <Typography color="text.secondary" sx={{ mb: 2 }}>
         {venueName}
@@ -40,37 +40,37 @@ export function Consent({
           <Stack spacing={2}>
             <Box>
               <Typography variant="h3" sx={{ fontSize: '1rem', mb: 0.5 }}>
-                {t('consentCollectedTitle')}
+                {t('participant.consent.collectedTitle')}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                {t('consentCollectedBody')}
+                {t('participant.consent.collectedBody')}
               </Typography>
             </Box>
 
             <Box>
               <Typography variant="h3" sx={{ fontSize: '1rem', mb: 0.5 }}>
-                {t('consentUsedTitle')}
+                {t('participant.consent.usedTitle')}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                {t('consentUsedBody')}
+                {t('participant.consent.usedBody')}
               </Typography>
             </Box>
 
             <Box>
               <Typography variant="h3" sx={{ fontSize: '1rem', mb: 0.5 }}>
-                {t('consentKeptTitle')}
+                {t('participant.consent.keptTitle')}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                {t('consentKeptBody')}
+                {t('participant.consent.keptBody')}
               </Typography>
             </Box>
 
             <Box>
               <Typography variant="h3" sx={{ fontSize: '1rem', mb: 0.5 }}>
-                {t('consentCannotTitle')}
+                {t('participant.consent.cannotTitle')}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                {t('consentCannotBody')}
+                {t('participant.consent.cannotBody')}
               </Typography>
             </Box>
           </Stack>
@@ -79,13 +79,13 @@ export function Consent({
 
       {!read && (
         <Alert severity="info" sx={{ mb: 2 }}>
-          {t('consentReadPrompt')}
+          {t('participant.consent.readPrompt')}
         </Alert>
       )}
 
       <Stack spacing={1.5}>
         <Button variant="outlined" onClick={() => setRead(true)} disabled={read}>
-          {read ? t('consentHasRead') : t('consentMarkRead')}
+          {read ? t('participant.consent.hasRead') : t('participant.consent.markRead')}
         </Button>
         <Button
           variant="contained"
@@ -94,12 +94,12 @@ export function Consent({
           onClick={onAgree}
           fullWidth
         >
-          {busy ? t('consentRecording') : t('consentAgree')}
+          {busy ? t('participant.consent.recording') : t('participant.consent.agree')}
         </Button>
       </Stack>
 
       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
-        {t('consentVersionNote', { version: CONSENT_VERSION })}
+        {t('participant.consent.versionNote', { version: CONSENT_VERSION })}
       </Typography>
     </Box>
   );

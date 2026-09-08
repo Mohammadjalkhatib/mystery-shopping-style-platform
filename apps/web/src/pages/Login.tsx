@@ -67,7 +67,7 @@ export function Login() {
               poor place to discover the language exists.
             */}
             <Button size="small" onClick={toggle}>
-              {t('language')}
+              {t('common.language')}
             </Button>
           </Stack>
           <Typography color="text.secondary" sx={{ mb: 3 }}>
@@ -78,14 +78,14 @@ export function Login() {
             <Stack spacing={2}>
               {error && <Alert severity="error">{error}</Alert>}
               <TextField
-                label={t('username')}
+                label={t('auth.username')}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 autoComplete="username"
                 fullWidth
               />
               <TextField
-                label={t('password')}
+                label={t('auth.password')}
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -93,16 +93,16 @@ export function Login() {
                 fullWidth
               />
               <Button type="submit" variant="contained" size="large" disabled={busy}>
-                {busy ? t('signingIn') : t('signIn')}
+                {busy ? t('auth.signingIn') : t('auth.signIn')}
               </Button>
             </Stack>
           </form>
 
           {accounts.length > 0 && (
             <>
-              <Divider sx={{ my: 3 }}>{t('demoAccounts')}</Divider>
+              <Divider sx={{ my: 3 }}>{t('auth.demoAccounts')}</Divider>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                {t('demoPasswordFor')} <code>demo1234</code>
+                {t('auth.demoPasswordFor')} <code>demo1234</code>
               </Typography>
               <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
                 {accounts.map((a) => (

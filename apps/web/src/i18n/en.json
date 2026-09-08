@@ -1,0 +1,216 @@
+{
+  "_readme": "Every user-facing string in the web app. Edit ar.json (or copy it to a dialect) against THIS file: en.json is the source of truth and its key set is enforced at build time and by strings.spec.ts. Placeholders in {braces} are substituted at render time and must survive translation exactly.",
+  "common": {
+    "signOut": "Sign out",
+    "language": "العربية",
+    "cancel": "Cancel",
+    "refresh": "Refresh",
+    "loading": "Loading…",
+    "somethingWentWrong": "Something went wrong",
+    "failedToLoad": "Failed to load",
+    "minutesShort": "min",
+    "metresShort": "m"
+  },
+  "auth": {
+    "appName": "theQA Visits",
+    "tagline": "Location-verified field visits.",
+    "signIn": "Sign in",
+    "signingIn": "Signing in…",
+    "username": "Username",
+    "password": "Password",
+    "signInFailed": "Sign in failed",
+    "demoAccounts": "Demo accounts",
+    "demoPasswordFor": "Password for all:"
+  },
+  "participant": {
+    "yourVisit": "Your visit",
+    "noVisits": "You have no visits assigned right now.",
+    "couldNotLoad": "Could not load your visits",
+    "consent": {
+      "title": "Before you start",
+      "collectedTitle": "What is collected",
+      "collectedBody": "Your device's location, sampled while this page is open and in front of you, from the moment you start the visit until you end it. Nothing is collected before you start or after you end.",
+      "usedTitle": "What it is used for",
+      "usedBody": "To judge how well the evidence supports the visit having happened. It produces a score and a list of reasons — never a simple yes or no, and never proof that you were somewhere. A human reviews anything uncertain.",
+      "keptTitle": "How long it is kept",
+      "keptBody": "The raw location trail is deleted automatically after the retention window, by the database itself rather than by a job someone has to remember to run. The summary of the visit is kept.",
+      "cannotTitle": "What this app cannot do",
+      "cannotBody": "It cannot follow you in the background. If you lock your phone or switch apps, it stops receiving your location, and the gap is recorded as a gap. You can end the visit at any time.",
+      "readPrompt": "Please read the four sections above before agreeing.",
+      "markRead": "I have read this",
+      "hasRead": "Read ✓",
+      "agree": "I agree — continue",
+      "recording": "Recording…",
+      "versionNote": "Consent version {version}. Your agreement is recorded with a server timestamp."
+    },
+    "ready": {
+      "venueIndoor": "Indoor venue",
+      "venueOutdoor": "Outdoor venue",
+      "geofence": "{radius} m geofence",
+      "advice": "Start the visit as you arrive, and keep this page open and in front of you while you are inside. Your phone can go back in your pocket between interactions — the gaps are expected.",
+      "start": "Start visit",
+      "starting": "Starting…"
+    },
+    "visit": {
+      "capturing": "Capturing",
+      "paused": "Paused",
+      "onSite": "on site",
+      "permDenied": "Location permission is off, so nothing is being recorded. Turn it on in your browser settings — without it this visit cannot be verified.",
+      "permUnsupported": "This browser does not provide location. Try Chrome or Safari.",
+      "backgroundNotice": "This page is in the background, so your location is not being recorded right now. That is normal and the gap is expected — bring the page back when you can.",
+      "offlineNotice": "You are offline. Fixes are being saved on your phone and will send themselves when you reconnect.",
+      "offlineWaiting": "{count} waiting.",
+      "locationsRecorded": "Locations recorded: {count}",
+      "lastAccurate": "last accurate to ~{metres} m",
+      "waitingToSend": "{count} waiting to send",
+      "screenAwake": "screen kept awake while this page is open",
+      "captureRestarted": "capture restarted {count}×",
+      "waitingFirstFix": "Waiting for a first fix. This can take a few seconds outdoors and longer inside.",
+      "endingNotice": "Ending the visit stops location capture. You will write your report next.",
+      "endingConfirm": "Yes, end the visit",
+      "ending": "Ending…",
+      "notYet": "Not yet",
+      "end": "End visit"
+    },
+    "discreet": {
+      "button": "Discreet mode",
+      "explain": "Dims the screen to a plain clock so the page is not obviously open. The visit keeps running and location keeps recording.",
+      "stillRecording": "Visit still running",
+      "tapToReturn": "Press and hold to return",
+      "holdProgress": "Keep holding…",
+      "returning": "Returning…"
+    },
+    "report": {
+      "title": "Your report",
+      "rating": "Overall experience",
+      "notes": "What did you observe?",
+      "notesHint": "Greeting time, staff helpfulness, queue length, cleanliness…",
+      "notesCounter": "{count}/10 characters minimum",
+      "submit": "Submit report",
+      "submitting": "Submitting…",
+      "couldNotSubmit": "Could not submit",
+      "submitted": "Report submitted. It is being reviewed — you do not need to do anything else."
+    },
+    "ended": {
+      "neverStarted": "This visit was never started, and was closed automatically after {mins} minutes.",
+      "wentQuiet": "No location update arrived for {mins} minutes, so this visit was closed automatically. Capture stops when the screen locks or the tab is backgrounded.",
+      "noReport": "This visit was ended but no report was filed within {mins} minutes, so it was closed automatically.",
+      "expired": "This visit reached the {hours}-hour limit for a single session and was closed automatically. Location was no longer being recorded.",
+      "generic": "This visit has ended and can no longer be continued."
+    }
+  },
+  "console": {
+    "title": "Visit console",
+    "tabVisits": "Visits",
+    "tabTasks": "Tasks",
+    "live": "Live",
+    "reconnecting": "Reconnecting…",
+    "stopped": "Stopped",
+    "disclaimer": "Verdicts describe how much the evidence supports a visit. They are not proof of presence — see the reasons on each visit.",
+    "filters": {
+      "all": "All visits",
+      "needsReview": "Needs review",
+      "autoVerified": "Consistent",
+      "rejected": "Not supported"
+    },
+    "table": {
+      "venue": "Venue",
+      "participant": "Participant",
+      "ended": "Ended",
+      "verdict": "Verdict",
+      "empty": "No visits yet. Completed visits appear here on their own."
+    },
+    "detail": {
+      "engine": "engine {version}",
+      "whyTitle": "Why this verdict",
+      "notVerifiedYet": "Not verified yet.",
+      "observedTitle": "What was observed",
+      "fixes": "{count} fixes",
+      "minutesInside": "{minutes} min inside",
+      "observedPercent": "{percent}% of the session observed",
+      "closest": "closest {metres} m",
+      "unusable": "{count} fixes too imprecise to use",
+      "reportTitle": "Participant report · {rating}/5"
+    },
+    "review": {
+      "title": "Override",
+      "explain": "A decision here is recorded alongside the engine's verdict, never instead of it.",
+      "note": "Why (required)",
+      "approve": "Approve",
+      "reject": "Reject",
+      "failed": "Review failed",
+      "recorded": "{decision} by {reviewer} — {note}"
+    }
+  },
+  "admin": {
+    "venueForm": {
+      "stepTitle": "1 · New venue",
+      "editTitle": "Correcting \"{name}\"",
+      "explain": "The geofence radius is per venue, never a global constant — a kiosk and a hypermarket cannot share one. 25 to 500 m.",
+      "name": "Name",
+      "address": "Address",
+      "coordinates": "Coordinates",
+      "coordinatesPlaceholder": "31.9399, 35.8486",
+      "coordinatesHelp": "Right-click the spot in Google Maps and paste",
+      "coordinatesExpected": "Expected \"lat, lng\"",
+      "coordinatesLink": "That is a share link, not a coordinate. Open it, right-click the pin, and copy the two numbers.",
+      "coordinatesCoarse": "Only {count} decimal places — that locates the venue to within hundreds of metres. Use at least 4.",
+      "radius": "Radius (m)",
+      "clientOrgId": "Client org id",
+      "clientOrgIdHelp": "Admins have no organisation of their own, so this is required",
+      "indoor": "Indoor",
+      "indoorExplain": "Indoor venues legitimately report far worse accuracy, and the engine is told not to punish it.",
+      "create": "Create venue",
+      "save": "Save correction",
+      "created": "Venue \"{name}\" created with a {radius} m geofence.",
+      "updated": "\"{name}\" corrected to {lat}, {lng} with a {radius} m geofence. Visits already started keep the geofence they began with."
+    },
+    "venueList": {
+      "title": "Venues",
+      "explain": "Correcting a venue is safe: a visit that has already started is judged against the geofence it began with, so a fix here never changes a verdict already reached.",
+      "name": "Name",
+      "coordinates": "Coordinates",
+      "fence": "Fence",
+      "edit": "Edit",
+      "empty": "No venues yet."
+    },
+    "taskForm": {
+      "stepTitle": "2 · New task",
+      "explain": "A task belongs to the venue it is defined against, and inherits its organisation from it.",
+      "venue": "Venue",
+      "venueFirst": "Create a venue first",
+      "dwell": "Expected dwell (min)",
+      "title": "Title",
+      "brief": "Brief",
+      "briefHelp": "What the participant should actually do. They read this before starting.",
+      "create": "Create task",
+      "created": "Task \"{title}\" created at {venue}."
+    },
+    "assignForm": {
+      "stepTitle": "3 · Assign",
+      "explain": "This opens a pending visit for that participant straight away. The same participant cannot be given the same task twice.",
+      "task": "Task",
+      "taskFirst": "Create a task first",
+      "participant": "Participant",
+      "assign": "Assign",
+      "assigned": "Assigned to {who}. Their visit is now waiting in the participant app."
+    },
+    "taskList": {
+      "title": "Tasks",
+      "titleCol": "Title",
+      "venue": "Venue",
+      "dwell": "Expected dwell",
+      "assigned": "Assigned",
+      "empty": "No tasks yet. Create a venue, then a task against it."
+    }
+  },
+  "verdict": {
+    "auto_verified": "Consistent with a genuine visit",
+    "needs_review": "Needs review",
+    "rejected": "Not supported by the evidence",
+    "pending": "Awaiting verification",
+    "explainAuto": "The evidence is consistent with a real visit. This is not proof of presence.",
+    "explainReview": "The evidence is ambiguous. A human decides.",
+    "explainRejected": "The evidence does not support this visit having taken place as described."
+  }
+}
