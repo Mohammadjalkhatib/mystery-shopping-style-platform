@@ -1242,3 +1242,45 @@ visit screen and the report, plus a language toggle on both screens a participan
   an oversight.
 - Unchanged: the capture watchdog is still blocked on the lock/unlock test, and
   `accuracyRealism` still has the false positive from user2's visit.
+
+### 2026-09-08 - feat/capture-watchdog
+
+**What.** A silent `watchPosition` is detected and re-attached while the page is visible.
+Restarts are counted and shown to the participant.
+
+**Why.** D-023, from the 50 minute drive: four fixes at a perfect cadence, then two isolated
+fixes in 48 minutes, and no way to tell a dead watch from a dark screen.
+
+**Files.**
+
+- `apps/web/src/participant/watchdog.ts`: new, pure. `isCaptureStale`, `shouldRestart`.
+- `apps/web/src/participant/watchdog.spec.ts`: 12 tests.
+- `apps/web/src/participant/useVisitTracker.ts`: liveness refs, the 15 s watchdog interval,
+  `restarts` on TrackerState.
+- `apps/web/src/i18n/strings.ts`, `VisitPage.tsx`: the restart count in the status line.
+
+**Now true.**
+
+1. **Liveness is recorded on ANY callback, including errors, and BEFORE the throttle.** Both
+   halves matter. A fix dropped for arriving too soon still proves the watch is alive, and a
+   receiver that cannot get a lock still fires its error callback — so only total silence trips
+   the watchdog. Restarting on a missing *fix* instead would throw away a warm watch every time
+   someone walked into a basement.
+2. **It never runs while the page is hidden.** A silent watch on a locked screen is correct, the
+   OS would refuse the restart anyway, and acting there would claim observation that did not
+   happen. This is the line the whole system is built around; do not move it.
+3. **`STALE_AFTER_MS` is 90 s because that is `SAMPLE_MS * 3`**, the same `maxGap` the engine
+   uses for coverage. The client gives up on a watch at exactly the point the server stops
+   crediting it. A test asserts the relationship so the two cannot drift apart.
+4. **A 30 s floor between restarts stops it spinning** when the device genuinely has no signal.
+5. **`restarts` is deliberately visible.** It is the only evidence that capture died rather than
+   the screen being off — the ambiguity the drive could not resolve now reports itself.
+
+**Verified rather than assumed.** 437 tests pass. The decision logic is pure and table-tested.
+
+**Open.**
+
+- **Still not run on an iPhone**, which is the device the failure was observed on. The watchdog
+  is written against a described failure, not a reproduced one.
+- It cannot help while the screen is off, which is probably where most of the drive's 48 minute
+  hole came from. This narrows the ambiguity; it does not remove it.

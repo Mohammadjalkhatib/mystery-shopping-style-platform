@@ -49,11 +49,11 @@ Built and working end to end:
 - [x] Authoring: create venues, tasks and assignments from the console's Tasks tab
 - [x] Abandoned and expired sessions, reaped lazily on read, with the reason shown to the participant
 - [x] Arabic pass on the participant screens, with RTL layout and a language toggle
+- [x] Capture watchdog: a silent `watchPosition` is re-attached, and restarts are shown
 
 Not built:
 
 - [ ] Evidence upload to object storage — deliberately cut, see "Deliberately out of scope"
-- [ ] Capture watchdog — nothing notices if `watchPosition` stops delivering silently
 
 ---
 

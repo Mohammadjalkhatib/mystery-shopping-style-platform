@@ -991,3 +991,48 @@ an Arabic participant's visit reads English evidence. Numerals are Western digit
 Eastern Arabic — correct for Jordan and the Gulf, wrong if this ever ships to a market that
 expects ٠١٢. And the RTL claim rests on inspection rather than a plugin: a future component
 using `marginLeft` directly will not mirror, and nothing will fail to warn about it.
+
+---
+
+## D-023: A capture watchdog that only ever re-attaches a watch
+
+**Date:** 2026-09-08
+**Status:** accepted
+
+**Decision.** While the page is visible, if `watchPosition` has not called back at all — no fix
+and no error — for three sampling intervals, the watch is presumed dead and re-attached. It
+never runs while the page is hidden, never invents a fix, and never back-fills a gap. Restarts
+are counted and shown to the participant.
+
+**Context.** On a 50 minute drive the capture layer produced four fixes at a perfect 30 s cadence
+and then two isolated fixes in the remaining 48 minutes. Whether the watch died or the screen was
+simply off is not answerable from the trace, and that is the actual defect: the design treats a
+missing fix as a gap rather than an error, which is correct for scoring and blind for diagnosis.
+A stuck watch and an honest dark screen are indistinguishable from the inside.
+
+**Alternatives considered.**
+
+- *Fix nothing until a deliberate lock/unlock test says whether the watch really dies.* The
+  disciplined answer, and the test is five minutes. Rejected because the design is the same
+  either way — a watch that has said nothing while visible should be re-attached whether that
+  happens often or never — and the test would only tell us how often it fires, which the restart
+  counter now reports from real use instead.
+- *Restart on a missing FIX rather than a missing callback.* Simpler, and it needs no extra
+  bookkeeping. Rejected because a receiver that cannot get a lock still fires the error callback
+  on its 20 s timeout: it is alive and struggling, and restarting it would throw away a warm
+  watch every time someone walked into a basement.
+- *Poll `getCurrentPosition` on a timer instead of watching.* Removes the failure mode entirely
+  by never holding a long-lived watch. Rejected because it is worse on battery, ignores movement,
+  and would replace a bug that shows up as missing evidence with one that shows up as a flat
+  battery mid-visit.
+- *Restart while hidden too.* Rejected outright. A silent watch on a locked screen is correct
+  behaviour, the OS would refuse anyway, and recording anything there would claim observation
+  that did not happen — which is the one thing this whole system is built not to do.
+
+**Consequences.** The watchdog cannot distinguish "the watch died" from "this device genuinely
+cannot see a satellite for ninety seconds", so a participant in a basement will accumulate
+restarts that fixed nothing; the 30 s floor bounds the cost but the count will read as alarming
+when it is merely honest. It also cannot help while the screen is off, which is where most of
+that 48 minute hole probably came from — this narrows the ambiguity rather than removing it.
+And it is still unverified against the failure it was written for: nothing here has been run on
+an iPhone.
