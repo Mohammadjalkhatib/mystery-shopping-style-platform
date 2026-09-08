@@ -95,6 +95,45 @@ export interface VisitDetail extends VisitRow {
   venue: { name: string; radiusM: number; indoor: boolean } | null;
 }
 
+export interface VenueRow {
+  id: string;
+  name: string;
+  address: string;
+  lat: number;
+  lng: number;
+  radiusM: number;
+  nearBufferM: number;
+  indoor: boolean;
+}
+
+export interface NewVenue {
+  name: string;
+  address: string;
+  lat: number;
+  lng: number;
+  radiusM: number;
+  nearBufferM?: number;
+  indoor?: boolean;
+  /** Admins only. A business user's org comes from their token and this is refused. */
+  clientOrgId?: string;
+}
+
+export interface TaskRow {
+  id: string;
+  title: string;
+  brief: string;
+  venueId: string;
+  venueName: string;
+  expectedDwellSeconds: number;
+  active: boolean;
+  assignmentCount: number;
+}
+
+export interface ParticipantRow {
+  id: string;
+  displayName: string;
+}
+
 /* ------------------------------------------------------------------- calls */
 
 export const api = {
@@ -133,6 +172,24 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ decision, note }),
     }),
+
+  /* authoring -- venues, tasks, assignments */
+  venues: () => req<VenueRow[]>('/venues'),
+  createVenue: (body: NewVenue) =>
+    req<VenueRow>('/venues', { method: 'POST', body: JSON.stringify(body) }),
+  tasks: () => req<TaskRow[]>('/tasks'),
+  createTask: (body: {
+    venueId: string;
+    title: string;
+    brief: string;
+    expectedDwellSeconds?: number;
+  }) => req<TaskRow>('/tasks', { method: 'POST', body: JSON.stringify(body) }),
+  createAssignment: (taskId: string, participantId: string) =>
+    req<{ assignmentId: string; sessionId: string; participantId: string }>('/assignments', {
+      method: 'POST',
+      body: JSON.stringify({ taskId, participantId }),
+    }),
+  participants: () => req<ParticipantRow[]>('/participants'),
 };
 
 export { BASE as API_BASE };

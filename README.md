@@ -46,10 +46,10 @@ Built and working end to end:
 - [x] Business console live visit feed over SSE, no refresh, replay across reconnects
 - [x] Review queue as a filter on the feed, with a recorded human override
 - [x] Seeded demo data, relocatable for testing outside the client's market
+- [x] Authoring: create venues, tasks and assignments from the console's Tasks tab
 
 Not built:
 
-- [ ] Admin UI for creating venues, tasks and assignments (seed only — see "What is missing")
 - [ ] Abandoned session reaper and hard session cap (the logic exists; nothing schedules it)
 - [ ] Evidence upload to object storage — deliberately cut, see "Deliberately out of scope"
 - [ ] Arabic pass on participant screens
@@ -252,6 +252,38 @@ source to log in.
 
 ---
 
+## Authoring work
+
+Sign in as `business` (or `admin`) and open the **Tasks** tab. Three forms in dependency order:
+a venue, a task against that venue, then an assignment to a participant.
+
+**Assigning is what creates a visit.** The server opens a `pending` session in the same
+transaction as the assignment (D-018), so the participant sees it the next time they open the
+app — `/sessions/mine` reads sessions, and an assignment written without one would be invisible
+to the person it was created for.
+
+| Endpoint | Role | Notes |
+|---|---|---|
+| `POST /venues` | admin, business | `lat`/`lng` in, `[lng, lat]` stored. `radiusM` 25–500 |
+| `GET /venues` | admin, business | Scoped to your org |
+| `POST /tasks` | admin, business | Inherits its org from the venue |
+| `GET /tasks` | admin, business | With a live assignment count |
+| `POST /assignments` | admin, business | Creates the pending session too |
+| `GET /participants` | admin, business | The demo roster, for the assign form |
+
+The tenancy rule is the same one the console reads under, applied to writes: a business user's
+organisation comes from their token and naming a different one is a 403. An admin has no
+organisation of their own, so `POST /venues` requires `clientOrgId` and it must exist. Tasks and
+assignments have no such field at all — the parent document is the authority. See D-017.
+
+**This is also the honest way to test away from the client's market.** Rather than re-seeding
+with `SEED_VENUE_LAT`/`LNG`, create a venue at coordinates you can actually stand in, define a
+task against it, and assign it to yourself. The seed relocation still works and is still the
+quickest path for a fresh database, but it moves the demo venues for everybody; a new venue
+does not.
+
+---
+
 ## Deployed URLs
 
 | Surface | URL | Notes |
@@ -432,12 +464,14 @@ See `.env.example`. Every value is documented there. The ones worth knowing abou
 
 Stated plainly rather than left to be discovered.
 
-**There is no admin UI.** Venues, tasks and assignments exist only via `npm run db:seed`.
-The data model, the tenancy boundary and the `admin` role are all in place, and the console
-already reads through them — but there are no `POST /venues`, `POST /tasks` or
-`POST /assignments` endpoints and no form. So a business or admin user cannot create a new
-assignment from the app. The seed creates one org, two venues, two tasks and ten assignments,
-which is enough to demonstrate the whole flow but not to author new work.
+**Authoring exists, but nothing can be edited or deleted.** `POST /venues`, `/tasks` and
+`/assignments` are built, role-guarded and driven from the console's Tasks tab, so the seed is
+no longer the only way work enters the system. What is missing is the rest of CRUD: a venue's
+geofence cannot be corrected after a typo, a task cannot be deactivated, and an assignment
+cannot be moved to a different participant — the unique index refuses the duplicate and there
+is no delete. Editing a `radiusM` in particular is deliberately absent rather than merely
+unbuilt: every started session pins a `venueSnapshot`, so an edit is safe for visits that have
+not begun and needs a decision about the ones that have.
 
 **Nothing schedules the reaper.** `dueEvent()` and `SessionsService.apply()` both exist and
 are tested, so `abandoned` and `expired` are reachable in principle and unreachable in
