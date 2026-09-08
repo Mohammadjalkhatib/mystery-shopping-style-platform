@@ -1,0 +1,172 @@
+import { Logger } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
+import type {
+  FetchedObject,
+  ObjectMetadata,
+  ObjectStore,
+  StoredObject,
+} from './object-store.js';
+import { sha256Hex, signRequest } from './sigv4.js';
+
+export interface S3Config {
+  endpoint: string;
+  region: string;
+  bucket: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  /** MinIO needs path style (`host/bucket/key`); R2 and AWS accept it too. */
+  forcePathStyle: boolean;
+}
+
+/**
+ * Evidence in an S3-compatible bucket. MinIO locally, R2 or anything else in production.
+ *
+ * Uses `fetch` and the hand-rolled signer, never a vendor SDK (CLAUDE.md section 4). The bucket
+ * is expected to already exist -- creating it is a deployment concern, and a service that
+ * silently creates its own bucket hides a misconfigured endpoint until the day you look for the
+ * data and it is somewhere else.
+ *
+ * Ownership metadata rides as `x-amz-meta-*`. It is the same model as the GridFS store: the
+ * object carries who it belongs to, and authorization is re-derived from the object rather than
+ * asserted by the caller.
+ */
+export class S3ObjectStore implements ObjectStore {
+  readonly kind = 's3' as const;
+  private readonly logger = new Logger('S3ObjectStore');
+
+  constructor(private readonly config: S3Config) {}
+
+  /**
+   * Two representations of the same object, and the difference matters.
+   *
+   * IN THE BUCKET the path is `sessions/<sessionId>/<uuid>`. That prefix is load-bearing:
+   * `listBySession` is a prefix list, which S3 does natively and cheaply, where a flat
+   * namespace would make replace-and-sweep a full bucket scan.
+   *
+   * OUTSIDE, the key handed to callers is `<sessionId>.<uuid>` — the same identity with no
+   * slashes. A slash-bearing key cannot travel through `/evidence/:evidenceKey`, because a
+   * route parameter does not match `/`; the read 404s and the cause looks like a missing
+   * object rather than a routing rule. The `ObjectStore` contract already says the key is
+   * opaque to every caller, so this is the store keeping that promise rather than leaking its
+   * own layout into a URL. It also keeps keys shaped the same as the GridFS store's ObjectIds,
+   * so evidence stored before this change still resolves.
+   */
+  private objectPath(externalKey: string): string {
+    const dot = externalKey.indexOf('.');
+    if (dot < 0) return externalKey;
+    return `sessions/${externalKey.slice(0, dot)}/${externalKey.slice(dot + 1)}`;
+  }
+
+  private externalKey(objectPath: string): string {
+    const m = /^sessions\/([^/]+)\/(.+)$/.exec(objectPath);
+    return m ? `${m[1]}.${m[2]}` : objectPath;
+  }
+
+  private url(key = ''): string {
+    const base = this.config.endpoint.replace(/\/+$/, '');
+    return this.config.forcePathStyle
+      ? `${base}/${this.config.bucket}${key ? `/${key}` : ''}`
+      : `${base.replace('://', `://${this.config.bucket}.`)}${key ? `/${key}` : ''}`;
+  }
+
+  private sign(
+    method: 'GET' | 'PUT' | 'DELETE' | 'HEAD',
+    url: string,
+    payloadSha256: string,
+    headers: Record<string, string> = {},
+  ): Record<string, string> {
+    return signRequest({
+      method,
+      url,
+      region: this.config.region,
+      accessKeyId: this.config.accessKeyId,
+      secretAccessKey: this.config.secretAccessKey,
+      payloadSha256,
+      headers,
+      now: new Date(),
+    });
+  }
+
+  async put(data: Buffer, metadata: ObjectMetadata): Promise<StoredObject> {
+    const externalKey = `${metadata.sessionId}.${randomUUID()}`;
+    const url = this.url(this.objectPath(externalKey));
+    const headers = this.sign('PUT', url, sha256Hex(data), {
+      'content-type': metadata.contentType,
+      'content-length': String(data.length),
+      'x-amz-meta-sessionid': metadata.sessionId,
+      'x-amz-meta-participantid': metadata.participantId,
+      'x-amz-meta-clientorgid': metadata.clientOrgId,
+    });
+
+    const res = await fetch(url, { method: 'PUT', headers, body: new Uint8Array(data) });
+    if (!res.ok) {
+      throw new Error(`S3 PUT failed: ${res.status} ${await res.text().catch(() => '')}`);
+    }
+    return { key: externalKey, bytes: data.length };
+  }
+
+  async get(key: string): Promise<FetchedObject | null> {
+    const url = this.url(this.objectPath(key));
+    const headers = this.sign('GET', url, sha256Hex(''));
+    const res = await fetch(url, { method: 'GET', headers });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`S3 GET failed: ${res.status}`);
+
+    const buf = Buffer.from(await res.arrayBuffer());
+    return {
+      // Buffered rather than piped: the object is capped at 6 MB and Readable.from keeps the
+      // controller identical across both backends.
+      stream: Readable.from(buf),
+      contentType: res.headers.get('content-type') ?? 'application/octet-stream',
+      bytes: buf.length,
+      metadata: this.metaFromHeaders(res.headers),
+    };
+  }
+
+  async head(key: string): Promise<(Partial<ObjectMetadata> & { key: string }) | null> {
+    const url = this.url(this.objectPath(key));
+    const headers = this.sign('HEAD', url, sha256Hex(''));
+    const res = await fetch(url, { method: 'HEAD', headers });
+    if (res.status === 404 || res.status === 403) return null;
+    if (!res.ok) throw new Error(`S3 HEAD failed: ${res.status}`);
+    return { key, ...this.metaFromHeaders(res.headers) };
+  }
+
+  async listBySession(sessionId: string): Promise<string[]> {
+    const prefix = `sessions/${sessionId}/`;
+    const url = `${this.url()}?list-type=2&prefix=${encodeURIComponent(prefix)}`;
+    const headers = this.sign('GET', url, sha256Hex(''));
+    const res = await fetch(url, { method: 'GET', headers });
+    if (!res.ok) throw new Error(`S3 LIST failed: ${res.status}`);
+
+    /**
+     * Parsed with a regex, not an XML library.
+     *
+     * The response shape here is a flat list of `<Key>` elements and nothing else is read from
+     * it, so a parser dependency would be carried for one tag. If this ever needs pagination or
+     * attributes, that trade stops being worth it -- revisit rather than extend the regex.
+     */
+    const xml = await res.text();
+    return [...xml.matchAll(/<Key>([^<]+)<\/Key>/g)].map((m) => this.externalKey(m[1]!));
+  }
+
+  async delete(key: string): Promise<void> {
+    const url = this.url(this.objectPath(key));
+    const headers = this.sign('DELETE', url, sha256Hex(''));
+    const res = await fetch(url, { method: 'DELETE', headers });
+    // S3 returns 204 for a delete of something that was never there. That is a success.
+    if (!res.ok && res.status !== 404) {
+      this.logger.warn(`S3 DELETE ${key} returned ${res.status}`);
+    }
+  }
+
+  private metaFromHeaders(h: Headers): Partial<ObjectMetadata> {
+    return {
+      contentType: h.get('content-type') ?? undefined,
+      sessionId: h.get('x-amz-meta-sessionid') ?? undefined,
+      participantId: h.get('x-amz-meta-participantid') ?? undefined,
+      clientOrgId: h.get('x-amz-meta-clientorgid') ?? undefined,
+    };
+  }
+}

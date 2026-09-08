@@ -1427,3 +1427,66 @@ no chart has been looked at.
   submit. A reaper-triggered sweep for terminal sessions is the missing piece.
 - Storage is a hard ceiling on M0. The S3 adapter is the real answer and needs credentials.
 - No date-range control on the dashboard; 30 days is fixed. No caching on the aggregation.
+
+### 2026-09-09 - feat/s3-object-store
+
+**What.** Evidence can live in an S3-compatible bucket (MinIO locally, R2 or anything else in
+production), chosen at boot from config, with GridFS as the fallback. Venue coordinates are
+picked on a map instead of typed.
+
+**Why.** D-028 and D-029, both direct user requests: "we have minio correct?" (no, and now yes)
+and "link to google maps to make the admin choose the location from the map".
+
+**Files.**
+
+- `apps/api/src/evidence/storage/`: `object-store.ts` (the four-verb interface), `sigv4.ts`
+  (hand-written signing, pure), `s3.store.ts`, `gridfs.store.ts`, `object-store.provider.ts`
+  (the boot-time choice), `sigv4.spec.ts` (21 tests).
+- `apps/api/src/evidence/evidence.service.ts`: refactored onto the interface; knows nothing
+  about MongoDB or S3 now.
+- `docker-compose.yml`: pinned `minio` + one-shot `minio-init`; the api gets `S3_*` and waits on
+  `service_completed_successfully`.
+- `apps/web/src/components/slippy.ts` + `.spec.ts` (20 tests), `MapPicker.tsx`; `TasksTab.tsx`
+  uses the map with typing behind a toggle.
+
+**Now true.**
+
+1. **Where the photos are is a boot-time log line, never a guess.** `Evidence -> S3 at ...` or
+   `Evidence -> MongoDB GridFS (no S3 configured)`. A PARTIAL S3 config logs an ERROR and falls
+   back rather than half-working — silent fallback on a typo is how production photos end up in
+   MongoDB while everyone believes they are in a bucket.
+2. **S3 keys are opaque and slash-free OUTSIDE the store, prefixed INSIDE it.** The bucket path
+   is `sessions/<id>/<uuid>` because `listBySession` is a native prefix list; the key handed out
+   is `<sessionId>.<uuid>`. This was not theoretical — the first version leaked the slashes into
+   `/evidence/:evidenceKey`, a route param does not match `/`, and every read 404'd while
+   looking like a missing object.
+3. **No AWS SDK, per CLAUDE.md §4.** SigV4 is ours and is pure, which is the only reason it can
+   be tested without a bucket. Every mistake in it surfaces as a bare `403
+   SignatureDoesNotMatch`, so the canonical request and string-to-sign are asserted directly.
+4. **MinIO has NO healthcheck, deliberately.** Recent images ship neither `curl` nor `wget`, so
+   a healthcheck using either never passes and `depends_on: service_healthy` hangs for ever —
+   which looks like a broken build. `minio-init` retrying with `mc` is the readiness signal.
+5. **The map picker is the structural fix for D-020.** A coordinate from a pin cannot be
+   imprecise or transposed. The precision guard stays as the backstop.
+6. **`decimalsForZoom` caps reported precision by zoom**, so the form cannot claim a millimetre
+   from a view where a pixel is forty metres — while never dropping below the four decimals
+   D-020 requires.
+7. **A test caught me asserting a tile index I had not actually computed.** The Amman reference
+   value was wrong. There are now two independent reference points at different latitudes and
+   zooms, because one known value can be a coincidence of a consistently-wrong formula.
+
+**Verified rather than assumed.** 501 tests pass. Against a real MinIO in compose: the boot log
+chose S3, a PUT landed a 4.1 KiB object at `sessions/<id>/<uuid>` (confirmed with `mc ls`), a
+second upload REPLACED it (one object, not two), and a read returned bytes identical to the
+file uploaded. Venue creation accepts a map-derived coordinate.
+
+**Open.**
+
+- **The deployed demo still runs on GridFS**, because it has no bucket. The S3 path is exercised
+  only by `docker compose up` until R2 credentials exist — then it is four env vars, no code.
+- **Nothing has been looked at in a browser.** The map picker's drag, zoom and RTL behaviour are
+  reasoned and unit-tested, not observed.
+- No address search on the map: finding a venue means panning to it. Geocoding is the obvious
+  next step. No pinch-zoom either; the +/− buttons are the only zoom control on a phone.
+- Tiles come from `tile.openstreetmap.org`. Fine for a demo, wrong for production volume — a
+  paid tile host is needed, and the attribution notice is required by their policy.

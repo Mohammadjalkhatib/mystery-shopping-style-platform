@@ -198,7 +198,10 @@
       "create": "Create venue",
       "save": "Save correction",
       "created": "Venue \"{name}\" created with a {radius} m geofence.",
-      "updated": "\"{name}\" corrected to {lat}, {lng} with a {radius} m geofence. Visits already started keep the geofence they began with."
+      "updated": "\"{name}\" corrected to {lat}, {lng} with a {radius} m geofence. Visits already started keep the geofence they began with.",
+      "mapHint": "Drag the map to put the pin on the venue.",
+      "useMap": "Pick on map",
+      "useTyping": "Type coordinates"
     },
     "venueList": {
       "title": "Venues",

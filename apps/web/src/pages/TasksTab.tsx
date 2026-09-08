@@ -25,6 +25,7 @@ import {
   type TaskRow,
   type VenueRow,
 } from '../api/client.js';
+import { MapPicker } from '../components/MapPicker.js';
 import { useAuth } from '../auth/AuthContext.js';
 import { useT } from '../i18n/LocaleContext.js';
 
@@ -274,6 +275,14 @@ function VenueForm({
   const [indoor, setIndoor] = useState(false);
   const [clientOrgId, setClientOrgId] = useState('');
   const [busy, setBusy] = useState(false);
+  /**
+   * The map is the default way in, and typing is the escape hatch.
+   *
+   * A coordinate taken from a pin cannot be imprecise or transposed, which is the entire class
+   * of failure behind D-020. Typing stays available because pasting a known-good pair is still
+   * the fastest path when you already have one.
+   */
+  const [mode, setMode] = useState<'map' | 'type'>('map');
 
   /**
    * Load the venue being corrected into the form.
@@ -407,7 +416,33 @@ function VenueForm({
             size="small"
           />
         </Stack>
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+        <Box>
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{ mb: 1, alignItems: 'center', justifyContent: 'space-between' }}
+          >
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+              {t('admin.venueForm.coordinates')}
+            </Typography>
+            <Button size="small" onClick={() => setMode(mode === 'map' ? 'type' : 'map')}>
+              {mode === 'map' ? t('admin.venueForm.useTyping') : t('admin.venueForm.useMap')}
+            </Button>
+          </Stack>
+          {mode === 'map' && (
+            <MapPicker
+              lat={parsed?.lat ?? null}
+              lng={parsed?.lng ?? null}
+              onPick={(la, ln) => setCoords(`${la}, ${ln}`)}
+            />
+          )}
+        </Box>
+
+        <Stack
+          direction={{ xs: 'column', sm: 'row' }}
+          spacing={2}
+          sx={{ display: mode === 'type' ? 'flex' : 'none' }}
+        >
           <TextField
             label={t('admin.venueForm.coordinates')}
             placeholder={t('admin.venueForm.coordinatesPlaceholder')}
@@ -426,15 +461,20 @@ function VenueForm({
             fullWidth
             size="small"
           />
-          <TextField
-            label={t('admin.venueForm.radius')}
-            type="number"
-            value={radiusM}
-            onChange={(e) => setRadiusM(e.target.value)}
-            size="small"
-            sx={{ width: { xs: '100%', sm: 160 } }}
-          />
         </Stack>
+
+        {/*
+          Radius lives OUTSIDE the coordinates row: it applies in both modes, and leaving it
+          inside meant switching to the map hid the geofence field entirely.
+        */}
+        <TextField
+          label={t('admin.venueForm.radius')}
+          type="number"
+          value={radiusM}
+          onChange={(e) => setRadiusM(e.target.value)}
+          size="small"
+          sx={{ width: { xs: '100%', sm: 200 } }}
+        />
         {isAdmin && (
           <TextField
             label={t('admin.venueForm.clientOrgId')}
