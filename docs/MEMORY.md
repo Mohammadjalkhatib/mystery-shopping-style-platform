@@ -929,3 +929,57 @@ so this is shipped user-facing copy on the surface a client is meant to trust, n
    none was done. 359 tests pass, unchanged.
 
 **Open.** Nothing. Standalone fix.
+
+### 2026-09-08 - docs/readme-urls-and-phone-run
+
+**What.** The README's two outstanding TODOs are filled — the deployed URLs and the
+architecture diagram — and the "never run on a phone" paragraph is replaced with what the
+first real handset run actually established.
+
+**Why.** README is a graded deliverable (CLAUDE.md §8) and was carrying three TODO markers
+plus, after the phone run and the verified compose stack, two statements that were simply
+false.
+
+**Files.**
+
+- `README.md`: deployed URLs table filled with the live hosts, plus the cold-start warning —
+  a sleeping free instance is indistinguishable from a broken deploy, so `/health` first.
+  Architecture section replaced with two ASCII diagrams (data flow, session state machine) and
+  a paragraph on the outbox seam. Removed the "Key structural points" bullets, all three of
+  which the new diagrams now state with more detail twenty lines above. Removed
+  "`docker compose up` is not verified end to end", untrue since `fix/seed-preserves-completed-sessions`.
+  Replaced the phone paragraph. Added the capture watchdog to "Not built".
+- `docs/MEMORY.md`: this entry.
+
+**Now true.**
+
+1. **The participant flow has run on a phone. Capture is the weak half, not the engine.**
+   50 minutes, 6 fixes. The first 102 s are correct — four fixes at 30/32/33 s, which is
+   `SAMPLE_MS` holding against a `watchPosition` firing continuously in a moving car, with
+   accuracy converging 36→6→5→4.5 m. The remaining 48 minutes produced two isolated fixes.
+2. **The engine was verified against real-world evidence for the first time and was right.**
+   `rejected` at score 0. `coverageRatio` 9.4% is arithmetically exact: 9+30+32+32+90+90+0 =
+   283 s over 3011 s, with a 323 s and a 2584 s gap each truncated to the 3×interval cap. It
+   refused to credit 43 unobserved minutes. `minDistanceM` 7083 m matches the real route.
+   `jitterFingerprint` scored **+2** on honest driving GPS rather than crying spoof.
+3. **The offline queue has still never run.** Every fix carried 1-2 s of skew, so nothing was
+   ever buffered. The 43-minute hole is a capture gap, not a network gap. Do not read this run
+   as evidence the queue works — it was not exercised.
+4. **`receivedAt` is what the rollups integrate over, so an offline flush costs coverage** by
+   design. Ingest stamps per fix (D-010), which keeps intervals non-zero and keeps the teleport
+   check alive, but a flushed batch still arrives milliseconds apart and buys almost no
+   coverage credit. `batchFlushedHonestVisit` pins this: it asserts only "not rejected", not
+   "not penalised". Known and accepted, worth re-reading before anyone tunes coverage.
+5. **The diagrams are ASCII, not Mermaid**, so they survive being read in an editor or a diff
+   rather than only on GitHub. Not decision-logged: presentation, not architecture.
+
+**Open.**
+
+- **Whether capture resumes a cadence after a resume is unresolved.** Two isolated fixes look
+  like "re-attached, delivered one cached position, went quiet", but a screen that was on for
+  twenty seconds twice is indistinguishable in the trace. A deliberate lock/unlock test settles
+  it in five minutes and needs no code: lock 2 min, unlock, hold visible 3 min, end.
+- **No capture watchdog.** A silently stuck `watchPosition` is indistinguishable from an honest
+  dark screen. This is the seam this run exposed: the honest-gap design makes the capture
+  layer's own failure invisible. Undecided, so not in DECISIONS yet.
+- Unchanged: no admin surface, no reaper, no Arabic pass.
