@@ -46,6 +46,13 @@ EXPOSE 3000
 CMD ["npm", "run", "dev", "--workspace", "@msp/api"]
 
 # ----------------------------------------------------------------- production
+#
+# THIS STAGE MUST STAY LAST IN THE FILE.
+#
+# Render builds the final stage of the Dockerfile and its blueprint schema has no
+# `dockerTarget` field, so there is no way to name the stage we want -- position IS the
+# selection. A stage appended below this one becomes the deployed API silently, with a
+# successful build and a green deploy.
 FROM node:24-alpine AS production
 WORKDIR /app
 ENV NODE_ENV=production
