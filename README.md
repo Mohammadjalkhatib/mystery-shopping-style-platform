@@ -193,16 +193,102 @@ source to log in.
 
 | Surface | URL | Notes |
 |---|---|---|
-| Participant app | TODO | |
-| Business console | TODO | |
-| API | TODO | |
-
-**Cold start warning.** The API is on a free tier that spins down after about 15 minutes of
-inactivity. The first request after an idle period can take up to a minute while the service
-wakes. Subsequent requests are normal. Load the API URL once before demoing.
+| Participant app | TODO | Same URL as the console; the app routes by role |
+| Business console | TODO | Sign in as `business` |
+| API | TODO | `/health` should answer `{"status":"ok","mongo":"up"}` |
 
 Location features require HTTPS, which all the deployed URLs have. `localhost` is also treated
-as a secure origin, so local development works. An IP address on your LAN will not.
+as a secure origin, so local development works. **An IP address on your LAN will not** — this
+is why the participant flow cannot be tested on a phone without deploying.
+
+---
+
+## Deploying
+
+Render's free tier, Atlas M0 for the database, and a free cron to stop the API sleeping.
+Why this and not Fly, Railway, Koyeb or Cloud Run is D-016. Everything below is free and none
+of it needs a credit card.
+
+The repository already contains `render.yaml`, so Render configures both services itself.
+
+### 1. MongoDB Atlas
+
+You need the M0 cluster and a connection string. In **Network Access**, add `0.0.0.0/0` —
+free Render services have no static outbound IP, so an allowlist cannot be narrower. The
+database is demo data behind its own credentials, which is the only reason that is acceptable.
+
+### 2. Seed the Atlas database
+
+Render's free plan has no one-off jobs, so seed from your machine. From the repository root,
+in PowerShell:
+
+```powershell
+$env:MONGO_URI = "mongodb+srv://USER:PASSWORD@CLUSTER.mongodb.net/mystery-shopping?retryWrites=true&w=majority"
+npm run build --workspace @msp/api
+npm run db:seed
+```
+
+It prints `created / revived / preserved` counts. Re-running it is safe and never touches a
+session that has already started (D-015).
+
+### 3. Create the Render blueprint
+
+New → **Blueprint** → pick this repository. Render reads `render.yaml` and creates both
+services. It will prompt for the values marked `sync: false`:
+
+| Prompt | Value |
+|---|---|
+| `MONGO_URI` | the Atlas string from step 2 |
+| `JWT_SECRET` | any long random string. Generate one with `[guid]::NewGuid().ToString()` twice, concatenated |
+| `WEB_PUBLIC_URL` | leave blank for now — you do not know the web URL yet |
+| `VITE_API_BASE_URL` | leave blank for now — you do not know the API URL yet |
+
+Both will fail their first build. That is expected: each needs the other's URL.
+
+### 4. Give each service the other's URL
+
+Once Render has assigned the hostnames (something like `msp-api-a1b2.onrender.com`):
+
+- **msp-api** → Environment → `WEB_PUBLIC_URL` = `https://<the msp-web host>`
+  Comma-separate it if you also want to run the web app locally against the deployed API:
+  `https://msp-web-xxxx.onrender.com,http://localhost:5173`
+- **msp-web** → Environment → `VITE_API_BASE_URL` = `https://<the msp-api host>`
+  No trailing slash. Vite inlines this at **build** time, so this needs a redeploy, not a
+  restart — "Clear build cache & deploy".
+
+Redeploy both. Then check `https://<api host>/health`.
+
+### 5. Stop the API sleeping
+
+A free Render web service spins down after 15 minutes idle and takes 30-60 seconds to wake,
+which reads as a broken deployment rather than a free tier. Render grants 750 instance-hours
+a month and a 31-day month is 744, so **one** service can stay awake permanently and still be
+free.
+
+Create a free job at [cron-job.org](https://cron-job.org) or UptimeRobot:
+
+- URL: `https://<api host>/health`
+- Every **10** minutes
+
+Point it at `/health` and nothing else. While the service is asleep Render answers
+`/robots.txt` itself, so a pinger aimed there never reaches the app and never wakes it.
+
+This is why the web app is a **static site** rather than a second web service: static sites
+are free and consume none of those 750 hours, so the whole allowance goes to the API.
+
+### 6. Verify on an actual phone
+
+This is the point of deploying, so do not skip it. Open the participant app on a real handset,
+sign in as `user1`, and confirm the geolocation prompt appears, that consent gates the visit,
+and that fixes are being accepted. On iOS, background the tab for a minute and return — the
+capture should stop and resume, and `coverageRatio` should show the gap rather than pretending
+the time was observed.
+
+**If you are not standing in Kuwait,** the seeded venues are up to 1,188 km away and every
+honest visit is correctly rejected. Set `SEED_VENUE_LAT` / `SEED_VENUE_LNG` to where you
+actually are and re-seed — see *Testing away from the client's market* below. Completed visits
+survive a re-seed and keep their original verdicts, because each session pins a
+`venueSnapshot` of the geofence as it was when the visit started.
 
 ---
 

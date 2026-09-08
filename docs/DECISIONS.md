@@ -672,3 +672,66 @@ idle clock never started, so it is still revived.
 The narrower rule is `startedAt === null` rather than a list of states, because that is the
 property that matters — a session with a `startedAt` has evidence attached, whatever state it
 now reports.
+
+---
+
+## D-016: Deploy to Render's free tier, and keep the API awake with an external pinger
+
+**Date:** 2026-09-08
+**Status:** accepted
+
+**Decision.** The API deploys to Render as a free Docker web service, the web app as a Render
+static site, and MongoDB stays on the Atlas M0 that already exists. A free external cron
+(cron-job.org or UptimeRobot) hits `/health` every 10 minutes so the service never sleeps.
+
+**Context.** Deployment is not cosmetic here, it is the only way to test the largest unknown
+in the project. `navigator.geolocation` and the Screen Wake Lock API are both refused on an
+insecure origin, so **the participant flow has never run on a phone** — the permission prompt,
+the wake lock and iOS Safari's tab suspension are all unverified, and no amount of local work
+changes that. It must be HTTPS, and it should be free.
+
+The free tier landscape in 2026 is much thinner than it was: Fly.io removed free allowances in
+2024, Koyeb's free tier is now a Postgres database with no standing free compute, and Railway
+is credits-only. That leaves Render and Google Cloud Run.
+
+The other hard requirement is SSE. `GET /console/stream` holds a connection open for the life
+of the console (D-004, D-013), which rules out anything whose free tier is a short-lived
+serverless function — Vercel Hobby caps a function at 60 s, so the stream would drop and
+reconnect every minute for the whole demo.
+
+**Alternatives considered.**
+
+- *Google Cloud Run.* Technically the better platform: a genuine always-free allowance
+  (2M requests/month), far faster cold starts than Render, and request timeouts up to 60
+  minutes, which suits SSE well. Rejected because it **requires a credit card on file** to
+  create the billing account. It stays free, but asking a reviewer to attach a card to open a
+  demo is a worse first impression than a slow first load, and this is an assessment
+  submission rather than a product.
+- *Two services on Render, API and web both as web services.* Rejected on arithmetic. Render
+  grants 750 instance-hours per month per workspace and a 31-day month is 744 of them, so the
+  allowance covers exactly ONE permanently-awake service. A static site is free and consumes
+  none of it, so the web app is always instant and the whole allowance goes to the API.
+- *Accept the 15-minute sleep and document the cold start.* The honest minimal option, and it
+  costs nothing. Rejected because a reviewer's first click would sit for 30-60 seconds against
+  a blank screen, which reads as a broken deployment rather than a free tier — and the same
+  first impression is what D-014's org-id bug would have produced.
+- *Serve the static bundle from the Nest API, one service and no CORS.* Genuinely simpler, and
+  it removes the second URL. Rejected because it puts the web app behind the sleeping service:
+  the cold start would then block the page loading at all, instead of only the first API call,
+  and there would be nothing on screen to explain the wait.
+
+**Consequences.** The demo depends on an external pinger that is not part of this repository,
+and if it stops the service sleeps again — a dependency worth naming rather than hiding. One
+awake service consumes essentially the whole monthly allowance, so a second always-on free
+service is not available on this workspace. Render free instances are 512 MB and 0.1 CPU, so
+this would not survive load; it is sized for a demo and nothing more. Atlas M0 must allow
+`0.0.0.0/0` because free Render services have no static outbound IP, which is acceptable only
+because the database holds seeded demo data behind its own credentials.
+
+**This also decides the reaper**, which was the open question in the backlog. On a free tier
+that sleeps — or that stays up only while a third-party cron keeps pinging it — an in-process
+cron is not a mechanism you can assert anything with: a missed ping, an exhausted allowance or
+a redeploy stops it silently, and `SESSION_ABANDON_AFTER_SECONDS` is 900, the same order as
+the idle window. Lazy-on-read reaping is deterministic, costs nothing while idle, and cannot
+drift out of sync with the hosting. Recorded here rather than in the reaper's own entry
+because the hosting is what settles it.

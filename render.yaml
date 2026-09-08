@@ -1,0 +1,104 @@
+# Render blueprint. Deploys the whole thing: the API as a Docker web service, the participant
+# app and console as a static site, both on HTTPS.
+#
+#   Render dashboard -> New -> Blueprint -> pick this repo -> it reads this file.
+#
+# Why Render, and what it costs us, is D-016. The short version: Fly and Koyeb no longer have
+# a free compute tier and Railway is credits-only, Cloud Run needs a card on file, and Render
+# does not. The catch is that a free web service sleeps after 15 minutes idle and takes
+# 30-60 s to wake, which is why the README sets up an external pinger.
+#
+# HTTPS is the point of deploying at all: `navigator.geolocation` and the Screen Wake Lock API
+# are both refused on an insecure origin, so the participant flow cannot be tested on a phone
+# over plain HTTP at all.
+
+services:
+  # ------------------------------------------------------------------------ api
+  - name: msp-api
+    type: web
+    runtime: docker
+    plan: free
+    # Closest region to Kuwait, Bahrain and Jordan. Oregon would put ~200 ms on every ping
+    # in a system whose whole subject is timing.
+    region: frankfurt
+
+    # Built from the REPOSITORY ROOT, not from apps/api: npm workspaces hoists to the root
+    # and @msp/api links @msp/shared. Same reason the local docker build uses `-f`.
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    # The multi-stage Dockerfile's last stage is `production` already, but naming it means a
+    # stage added later cannot silently become the deployed one.
+    dockerTarget: production
+
+    # Render restarts the service if this stops answering. It is also the URL the keep-alive
+    # pinger hits -- do NOT point a pinger at /robots.txt, which Render answers itself while
+    # the service is asleep, so the ping never reaches the app and never wakes it.
+    healthCheckPath: /health
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # `sync: false` means Render prompts for the value when the blueprint is created and
+      # never stores it in this file. These three are the ones that must not be in git.
+      - key: MONGO_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      # The deployed static site's origin, for CORS. Comma-separated if you also want to run
+      # the web app locally against this API:
+      #   https://msp-web.onrender.com,http://localhost:5173
+      - key: WEB_PUBLIC_URL
+        sync: false
+
+      # Verification thresholds are config rather than constants on purpose (D-001): they are
+      # placeholders until there is labelled data to tune them against, and a reviewer should
+      # be able to see the verdict move without a redeploy.
+      - key: VERIFY_AUTO_THRESHOLD
+        value: "75"
+      - key: VERIFY_REJECT_THRESHOLD
+        value: "30"
+      - key: VERIFY_ENGINE_VERSION
+        value: v1
+
+      # Privacy control, not a tuning knob (rule 10). The TTL index is reconciled to this on
+      # boot, so lowering it takes effect on the next deploy.
+      - key: PING_RETENTION_DAYS
+        value: "30"
+
+      - key: SESSION_HARD_CAP_SECONDS
+        value: "10800"
+      - key: SESSION_ABANDON_AFTER_SECONDS
+        value: "900"
+
+    # PORT is injected by Render and main.ts reads it before API_PORT. It is deliberately not
+    # listed here: setting it by hand is how you end up with the app on 3000 and the health
+    # check on something else, which fails as a timeout rather than as an error.
+
+  # ------------------------------------------------------------------------ web
+  #
+  # A static site, not a second web service. Static sites are free AND do not consume the
+  # 750 monthly instance-hours, which matters because a 31-day month is 744 of them -- the
+  # allowance covers exactly one always-awake service, and that has to be the API.
+  - name: msp-web
+    type: web
+    runtime: static
+    buildCommand: npm ci && npm run build --workspace @msp/shared && npm run build --workspace @msp/web
+    staticPublishPath: apps/web/dist
+
+    envVars:
+      # Vite inlines env at BUILD time, so this is baked into the bundle and changing it
+      # requires a rebuild, not a restart. Full origin including https://, no trailing slash.
+      - key: VITE_API_BASE_URL
+        sync: false
+      # Match the Docker images, which are node:24-alpine. Left to drift, the static build
+      # runs on a different major than every other build in the project.
+      - key: NODE_VERSION
+        value: "24"
+
+    routes:
+      # The app routes by ROLE in the client, not by URL -- every screen lives at `/`. This
+      # rewrite exists so a refresh or a deep link cannot 404 if that ever changes.
+      - type: rewrite
+        source: /*
+        destination: /index.html
