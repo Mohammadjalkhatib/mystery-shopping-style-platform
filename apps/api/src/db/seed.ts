@@ -16,33 +16,90 @@ import { AssignmentSchema, SessionSchema, TaskSchema } from './schemas/task-sess
 
 export const SEED_ORG_SLUG = 'alfa-retail';
 
-const VENUES = [
-  {
-    name: 'Alfa Market — Kuwait City',
-    address: 'Al Soor Street, Kuwait City',
-    // KUWAIT_CITY_CENTRE. Outdoor: tight radius, good accuracy expected.
-    lng: 47.9774,
-    lat: 29.3759,
-    radiusM: 75,
-    nearBufferM: 50,
-    indoor: false,
-  },
-  {
-    name: 'Alfa Store — The Avenues',
-    address: 'The Avenues Mall, Al Rai',
-    // AVENUES_MALL. Indoor: wider radius because the fix degrades and the building is big.
-    lng: 47.9383,
-    lat: 29.3028,
-    radiusM: 120,
-    nearBufferM: 80,
-    indoor: true,
-  },
-];
+/**
+ * Where the demo venues are.
+ *
+ * Defaults to the real Kuwait reference points, because that is the client's market and the
+ * data should look like the product. But **whoever is testing is usually not standing in the
+ * client's market**, and a geofence is 75 m wide: from Amman the seeded venues are 1,188 km
+ * away, so every honest visit scores `proximity -25` and `presenceDwell -20` and is
+ * rejected. The demo becomes untestable, and worse, it looks like the engine is broken when
+ * it is working perfectly.
+ *
+ * Faking it is not an option either, and that is the point of the system: a DevTools
+ * coordinate override produces identical consecutive fixes, which trips `jitterFingerprint`
+ * at -45 and is also rejected.
+ *
+ * So the venue location is configurable. Set these to wherever you actually are:
+ *
+ *   SEED_VENUE_LAT=31.9539
+ *   SEED_VENUE_LNG=35.9106
+ *
+ * The offset keeps the second venue a short walk from the first, so both are reachable on
+ * foot from one spot while still being distinguishable to the engine.
+ */
+const envNum = (key: string): number | null => {
+  const v = Number(process.env[key]);
+  return Number.isFinite(v) && v !== 0 ? v : null;
+};
+
+/** ~350 m north-east of the anchor, so the two venues do not overlap. */
+const SECOND_VENUE_OFFSET = { lat: 0.0031, lng: 0.0031 };
+
+/**
+ * Resolved when `seed()` RUNS, not when this module loads.
+ *
+ * Module-scope `process.env` reads require the caller to set the variables before the
+ * import, which is a rule nobody knows and nothing enforces -- it silently did nothing in
+ * the first test of this feature. Reading at call time removes the ordering trap.
+ */
+function resolveVenues() {
+  const lat = envNum('SEED_VENUE_LAT');
+  const lng = envNum('SEED_VENUE_LNG');
+  const relocated = lat !== null && lng !== null;
+  return {
+    relocated,
+    /**
+     * NAMES ARE STABLE across relocation, and that is load-bearing.
+     *
+     * The venue upsert is keyed on (clientOrgId, name), so renaming on relocation created a
+     * SECOND venue instead of moving the first -- leaving four venues and assignments still
+     * pointing at the original coordinates, which is precisely the silent failure the `$set`
+     * on this upsert was added to prevent. The address carries the location instead.
+     */
+    venues: [
+      {
+        name: 'Alfa Market (outdoor)',
+        address: relocated
+          ? `Test site — relocated to ${lat}, ${lng}`
+          : 'Al Soor Street, Kuwait City',
+        lat: lat ?? 29.3759,
+        lng: lng ?? 47.9774,
+        radiusM: 75,
+        nearBufferM: 50,
+        indoor: false,
+      },
+      {
+        name: 'Alfa Store (indoor)',
+        address: relocated
+          ? 'Test site — relocated, a short walk from the outdoor venue'
+          : 'The Avenues Mall, Al Rai',
+        lat: (lat ?? 29.3028) + (relocated ? SECOND_VENUE_OFFSET.lat : 0),
+        lng: (lng ?? 47.9383) + (relocated ? SECOND_VENUE_OFFSET.lng : 0),
+        radiusM: 120,
+        nearBufferM: 80,
+        indoor: true,
+      },
+    ],
+  };
+}
+
 
 /** Matches the demo accounts in apps/api/src/auth/demo-users.ts (D-008). */
 const PARTICIPANT_IDS = Array.from({ length: 10 }, (_, i) => `u-participant-${i + 1}`);
 
 export async function seed(uri: string): Promise<void> {
+  const { relocated, venues: VENUES } = resolveVenues();
   const conn = await mongoose.createConnection(uri).asPromise();
 
   const Org = conn.model('ClientOrg', ClientOrgSchema);
@@ -73,9 +130,11 @@ export async function seed(uri: string): Promise<void> {
     const venue = await Venue.findOneAndUpdate(
       { clientOrgId, name: v.name },
       {
-        $setOnInsert: {
-          clientOrgId,
-          name: v.name,
+        $setOnInsert: { clientOrgId, name: v.name },
+        // `$set`, not `$setOnInsert`: re-seeding with new SEED_VENUE_* coordinates must MOVE
+        // the existing venue. Otherwise relocating silently does nothing and the demo keeps
+        // rejecting every visit for a reason nobody can see.
+        $set: {
           address: v.address,
           location: { type: 'Point', coordinates: [v.lng, v.lat] },
           radiusM: v.radiusM,
@@ -152,6 +211,13 @@ export async function seed(uri: string): Promise<void> {
   // eslint-disable-next-line no-console
   console.log(
     `[seed] org=${SEED_ORG_SLUG} venues=${venueCount} tasks=${taskCount} assignments=${assignmentCount} (idempotent)`,
+  );
+  // eslint-disable-next-line no-console
+  console.log(
+    relocated
+      ? `[seed] venues RELOCATED to ${VENUES[0]!.lat}, ${VENUES[0]!.lng} via SEED_VENUE_LAT/LNG.`
+      : '[seed] venues at the Kuwait reference points. Set SEED_VENUE_LAT / SEED_VENUE_LNG ' +
+        'to test from somewhere else -- a 75 m geofence rejects everything otherwise.',
   );
   await conn.close();
 }
