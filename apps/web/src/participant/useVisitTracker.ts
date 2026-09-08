@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api/client.js';
 import { drainQueue, enqueue, queueSize, type QueuedFix } from './offlineQueue.js';
+import { shouldRestart } from './watchdog.js';
 
 export type PermissionState = 'prompt' | 'granted' | 'denied' | 'unsupported';
 
@@ -16,6 +17,14 @@ export interface TrackerState {
   online: boolean;
   wakeLock: boolean;
   error: string | null;
+  /**
+   * How many times the watchdog has had to re-attach a silent watch.
+   *
+   * Surfaced rather than hidden: it is the only evidence that capture was failing rather than
+   * that the screen was simply off, and without it the two are indistinguishable after the
+   * fact -- which is exactly the ambiguity the 50 minute drive could not resolve.
+   */
+  restarts: number;
 }
 
 const SAMPLE_MS = 30_000;
@@ -42,10 +51,15 @@ export function useVisitTracker(sessionId: string, active: boolean): TrackerStat
     online: typeof navigator === 'undefined' ? true : navigator.onLine,
     wakeLock: false,
     error: null,
+    restarts: 0,
   });
 
   const watchId = useRef<number | null>(null);
   const lastSent = useRef(0);
+  /** When the current watch was attached, and the last time it called back AT ALL. */
+  const attachedAt = useRef(0);
+  const lastSignalAt = useRef<number | null>(null);
+  const lastRestartAt = useRef<number | null>(null);
   const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
   const flushing = useRef(false);
 
@@ -115,12 +129,21 @@ export function useVisitTracker(sessionId: string, active: boolean): TrackerStat
 
     const start = (): void => {
       if (watchId.current !== null) return;
+      attachedAt.current = Date.now();
+      lastSignalAt.current = null;
       watchId.current = navigator.geolocation.watchPosition(
         (pos) => {
+          // Liveness is recorded BEFORE the throttle. A fix that is dropped for arriving too
+          // soon still proves the watch is alive, and the watchdog must not mistake a working
+          // receiver being throttled for a dead one.
+          lastSignalAt.current = Date.now();
           setState((s) => (s.permission === 'granted' ? s : { ...s, permission: 'granted', error: null }));
           record(pos);
         },
         (err) => {
+          // An error is also a signal. A receiver that cannot get a lock still calls back on
+          // its timeout, and that is the difference between struggling and dead.
+          lastSignalAt.current = Date.now();
           setState((s) => ({
             ...s,
             permission: err.code === err.PERMISSION_DENIED ? 'denied' : s.permission,
@@ -200,9 +223,41 @@ export function useVisitTracker(sessionId: string, active: boolean): TrackerStat
     window.addEventListener('offline', onOffline);
     const flushTimer = setInterval(() => void flush(), 20_000);
 
+    /**
+     * The watchdog.
+     *
+     * `watchPosition` can stop delivering with no error and no warning -- iOS suspends a
+     * backgrounded tab and does not always resume the watch when it returns. The capture layer
+     * treats a missing fix as a gap rather than a failure, which is right for scoring and means
+     * nothing here notices. This is what notices.
+     *
+     * It only ever re-attaches a watch. It never invents a fix, never back-fills a gap, and
+     * never runs while the page is hidden -- a silent watch on a locked screen is correct
+     * behaviour, and the gap it produces is honest evidence the engine is entitled to score.
+     */
+    const watchdog = setInterval(() => {
+      if (document.hidden) return;
+      const now = Date.now();
+      const liveness = {
+        attachedAt: attachedAt.current,
+        lastSignalAt: lastSignalAt.current,
+        visible: !document.hidden,
+      };
+      if (!shouldRestart(liveness, lastRestartAt.current, now)) return;
+
+      lastRestartAt.current = now;
+      stop();
+      start();
+      // The wake lock is released by the OS on background and is not automatically restored,
+      // so a restart is also the right moment to ask for it again.
+      void requestWakeLock();
+      setState((s) => ({ ...s, restarts: s.restarts + 1 }));
+    }, 15_000);
+
     return () => {
       stop();
       clearInterval(flushTimer);
+      clearInterval(watchdog);
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
