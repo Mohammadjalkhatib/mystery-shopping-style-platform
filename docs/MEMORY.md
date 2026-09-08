@@ -983,3 +983,64 @@ false.
   dark screen. This is the seam this run exposed: the honest-gap design makes the capture
   layer's own failure invisible. Undecided, so not in DECISIONS yet.
 - Unchanged: no admin surface, no reaper, no Arabic pass.
+
+### 2026-09-08 - feat/admin-surface
+
+**What.** Venues, tasks and assignments can be created from the app. `POST /venues`, `/tasks`,
+`/assignments` plus `GET /venues`, `/tasks`, `/participants`, and a Tasks tab in the console
+that drives them. The seed is no longer the only way work enters the system.
+
+**Why.** D-017 and D-018. This was the largest remaining functional gap: the data model, the
+tenancy boundary and the `admin` role all existed and nothing could reach them.
+
+**Files.**
+
+- `apps/api/src/admin/admin.controller.ts`: no controller prefix — the paths are `/venues`,
+  `/tasks`, `/assignments`, because these are the resources, not an admin view of them. The
+  ROLE restricts them, not the URL.
+- `apps/api/src/admin/admin.service.ts`: authoring plus the tenancy resolution. `createAssignment`
+  writes the assignment and its pending session in one `withTransaction`.
+- `apps/api/src/admin/dto/*.ts`: only `CreateVenueDto` carries `clientOrgId`; task and assignment
+  derive it from the parent.
+- `apps/api/src/admin/admin.spec.ts`: 23 tests, one per authorization boundary plus the
+  round-trip and transaction guarantees.
+- `apps/api/src/app.module.ts`: registers `AdminModule`.
+- `apps/web/src/pages/TasksTab.tsx`: the three forms, in dependency order.
+- `apps/web/src/pages/Console.tsx`: Tabs — Visits and Tasks. `apps/web/src/api/client.ts`: calls.
+- `README.md`: an Authoring section, Features updated, "no admin UI" replaced with what is
+  actually missing now. `docs/DECISIONS.md`: D-017, D-018.
+
+**Now true.**
+
+1. **A business user can author, not just read.** Their org comes from the token; naming a
+   different one is a 403. An admin has `clientOrgId: null` so `POST /venues` requires it and
+   checks it exists. Tasks and assignments have no org field — the parent is the authority, so
+   a task cannot disagree with its venue about which tenant it belongs to (D-017).
+2. **Creating an assignment creates its pending session, transactionally** (D-018). This is the
+   invariant to preserve: `/sessions/mine` reads sessions, so an assignment without one is
+   invisible to the participant. Authoring therefore needs a replica set, exactly like report
+   submission already does.
+3. **`MUI v9 Stack` does not take `alignItems` as a prop.** It goes in `sx`. The build catches
+   it; worth knowing before writing the next form.
+4. **`npx jest` fails on the specs with "Cannot find name 'expect'".** Use `npm test` — the
+   script passes `--experimental-vm-modules`, and without it ts-jest resolves types differently.
+   That is a tooling trap, not a broken test.
+5. **The venue form takes one "lat, lng" field, not two boxes.** It is what Google Maps puts on
+   the clipboard, so the common case is a paste with nothing to transpose — the axis swap the
+   GeoPoint validator exists to catch is best prevented by not asking twice.
+
+**Verified rather than assumed.** Ran the whole chain against the compose stack over real HTTP:
+created a venue, a task and an assignment as `business`, then signed in as `user9` and confirmed
+the new visit appeared in `/sessions/mine` as `pending` with the venue at 31.957, 35.9137 — not
+transposed. In the running app a participant gets 403 on `POST /venues`, no token gets 401, and
+`radiusM: 5000` gets 400. Test data was deleted from the local volume afterwards. 382 tests pass.
+
+**Open.**
+
+- **No edit and no delete.** A venue's geofence cannot be corrected, a task cannot be
+  deactivated, an assignment cannot be moved. Editing `radiusM` specifically needs a decision
+  first: started sessions pin a `venueSnapshot`, so an edit is safe for visits that have not
+  begun and ambiguous for the ones that have.
+- Not exercised against the LIVE deployment, because Render tracks `main` and this is on a
+  branch. That check is still owed.
+- Unchanged: no reaper, no Arabic pass, and the two open capture questions from the phone run.

@@ -735,3 +735,77 @@ a redeploy stops it silently, and `SESSION_ABANDON_AFTER_SECONDS` is 900, the sa
 the idle window. Lazy-on-read reaping is deterministic, costs nothing while idle, and cannot
 drift out of sync with the hosting. Recorded here rather than in the reaper's own entry
 because the hosting is what settles it.
+
+---
+
+## D-017: A business user authors their own work; admin is not the only author
+
+**Date:** 2026-09-08
+**Status:** accepted
+
+**Decision.** `POST /venues`, `/tasks` and `/assignments` admit both `admin` and `business`.
+Only `/venues` takes a `clientOrgId` at all: a business user's comes from the verified token
+and naming a different one is a 403, while an admin, who has `clientOrgId: null`, must name one
+and it must exist. A task inherits its org from its venue and an assignment from its task, so
+neither DTO has the field — the parent document is the authority, and a task whose org
+disagreed with its venue's would be readable by one tenant and geofenced against another's.
+
+**Context.** CLAUDE.md §1 describes the flow as "an admin creates a task", so admin-only was
+the obvious reading. But the tenancy model already says a business user owns exactly one org
+and the console is theirs, and they are the party who actually knows their own venues,
+addresses and geofence radii. A platform admin authoring every venue for every client is an
+operational bottleneck invented by the permission check rather than by the product.
+
+**Alternatives considered.**
+
+- *Admin only.* Matches the sentence in the brief literally and needs no per-role branching on
+  `clientOrgId`. Rejected because it makes the demo worse in the way that matters: the reviewer
+  signs in as `business`, sees a console, and still cannot create anything — which is exactly
+  the gap this work exists to close. It also leaves `business` a strictly read-only role, which
+  makes the tenancy boundary untestable on any write path.
+- *Let the caller name `clientOrgId` in every case and check it against the token.* One code
+  path instead of two. Rejected because it puts a tenancy-deciding field in the request body
+  for a role that has no business setting it, which is rule 2 read backwards — the safe shape
+  is a field the business user cannot express at all, not one that is validated after the fact.
+
+**Consequences.** Two authorization shapes to test rather than one, and the DTO for an admin
+is not the same DTO as for a business user — `clientOrgId` is conditionally required, which
+`class-validator` expresses awkwardly and which the service therefore resolves rather than the
+DTO. An admin can still write into any org, so admin remains the role worth protecting; there
+is no approval step or audit trail on authoring, which a real deployment would want.
+
+---
+
+## D-018: Creating an assignment creates its pending session, in one transaction
+
+**Date:** 2026-09-08
+**Status:** accepted
+
+**Decision.** `POST /assignments` writes the assignment and a `pending` session for it inside
+a single `withTransaction`, the same pairing the seed already performs.
+
+**Context.** `/sessions/mine` reads the session collection, not assignments. An assignment
+with no session is therefore invisible to the participant it was created for — the work exists
+in the database and nothing in the product can reach it. The seed has always created the pair
+together; an admin surface that created only half would produce a state the seed cannot and
+that no screen explains.
+
+**Alternatives considered.**
+
+- *Create the session lazily, when `/sessions/mine` first reads it.* Removes the transaction
+  and self-heals a half-written assignment. Rejected because it puts a write — and the entry
+  point of the state machine — inside a read path taken on every participant page load, and it
+  gives a session a `createdAtServer` that depends on when somebody happened to open the app,
+  which is the clock the abandon timer runs off.
+- *Two sequential writes, no transaction, relying on the unique indexes to make a retry safe.*
+  Cheaper, and `(taskId, participantId)` and `sessions.assignmentId` are both unique so a retry
+  is genuinely idempotent. Rejected because nothing retries: a failure between the two writes
+  leaves an assignment that is permanently invisible, with no error anyone would see and no
+  screen that lists assignments without sessions to notice it from.
+
+**Consequences.** Authoring now requires a replica set, like report submission already does
+(rule 9) — fine on Atlas M0, in the compose stack and under `MongoMemoryReplSet`, but it means
+a standalone `mongod` can no longer run the admin surface, and that failure is invisible until
+someone tries. Re-assigning the same task to the same participant is refused by the unique
+index rather than being treated as an update, so there is no way to move an assignment between
+participants; deleting and recreating is the only path, and neither is built.
