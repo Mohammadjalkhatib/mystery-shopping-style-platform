@@ -566,3 +566,62 @@ that they agree with each other.
   is the largest remaining unknown and needs an HTTPS deployment to check at all.
 - Nothing is deployed, and `docker compose up` still cannot work: no Dockerfiles, and the
   `mongo` container is standalone so rule 9's transaction would fail against it.
+
+---
+
+### 2026-09-08 - chore/dockerize
+
+**What.** Dockerfiles for the API and web app, a rewritten compose file, `.dockerignore`, and
+an nginx config for the production web target.
+
+**Why.** `docker compose up` is a stated deliverable (CLAUDE.md §7) and could not work at all:
+both Dockerfiles were missing, and three separate things in the compose file would have failed.
+
+**Files.**
+
+- `apps/api/Dockerfile`: four stages — deps, build, development, production. Built from the
+  REPOSITORY ROOT because npm workspaces hoists to the root and `@msp/api` links `@msp/shared`
+- `apps/web/Dockerfile` + `apps/web/nginx.conf`: dev target runs Vite with `--host`, prod
+  target serves the static build
+- `docker-compose.yml`: rewritten
+- `.dockerignore`: keeps host `node_modules`, `dist` and every `.env` out of the build context
+- `README.md`: docker section rewritten to match
+
+**Now true.**
+
+1. **Mongo runs as a single-node REPLICA SET.** Rule 9 needs multi-document transactions and
+   Mongo refuses them on a standalone, so `submit` would have failed locally while working
+   against Atlas. The healthcheck self-initiates the set; clients must connect with
+   `?replicaSet=rs0`, and from the HOST with `?directConnection=true` because the set
+   advertises `mongo:27017`.
+2. **MinIO is gone.** It served `feat/evidence-upload`, which is cut and unbuilt; nothing here
+   speaks S3. Keeping it meant two `:latest` images, a bucket-init container, and a healthcheck
+   using `curl` — which recent minio images no longer ship, so `service_healthy` would hang
+   forever and look like a broken build rather than a missing binary.
+3. **A `seed` one-shot runs on every `up`.** The seed is idempotent and re-clocks the demo
+   sessions, so re-running compose is the supported way to reset a stale demo.
+4. **Only `src` is bind-mounted, not whole app directories**, with anonymous volumes over
+   `node_modules`. Mounting the app directory would shadow the image's installed dependencies.
+5. **The web image bakes `VITE_API_BASE_URL` at BUILD time.** Vite inlines env into the bundle;
+   changing the API URL means rebuilding the image, which matters for deployment.
+
+**What was actually verified, and what was not.** Be precise about this rather than claiming a
+green run:
+
+- ✅ `docker compose config` valid; **all four image targets build** (api dev, api production,
+  web dev, web production).
+- ✅ `docker compose up -d` reached: **mongo healthy** — so the self-initiating replica-set
+  healthcheck works — then `seed` started and `api` started.
+- ❌ `web` failed to bind host port 5173, which was still held by a `npm run dev:web` left
+  running from an earlier session. Not a compose fault.
+- ❌ **The run was never completed.** While freeing that port I killed a process on :3000 that
+  turned out to be Docker's own port proxy, which took down the Docker Linux engine. It did not
+  recover, so seed completion, `/health` from inside compose, a transaction against the
+  containerised replica set, and the web app serving are all **UNVERIFIED**.
+
+**Open.**
+
+- **Re-run `docker compose up --build` from a clean clone once Docker Desktop is restarted.**
+  That is the one thing standing between this and a verified deliverable.
+- No production compose file or deploy target. Nothing is deployed.
+- Still no reaper, no admin surface, and the participant flow is untested on a real phone.
