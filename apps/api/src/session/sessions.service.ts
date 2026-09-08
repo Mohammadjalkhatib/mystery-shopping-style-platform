@@ -1,4 +1,5 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import type { AuthUser, SessionEvent, SessionState } from '@msp/shared';
 import type { ClientSession, Model } from 'mongoose';
@@ -20,6 +21,14 @@ export interface SessionView {
   startedAt: Date | null;
   endedAt: Date | null;
   pingCount: number;
+  /**
+   * Why a terminal session ended, in words, or null while it is still live.
+   *
+   * The state alone says `abandoned` and leaves the participant to guess which of three
+   * different things happened to them. D-019: the engine already distinguishes them, so the
+   * screen should too.
+   */
+  terminalReason: string | null;
 }
 
 /**
@@ -36,6 +45,7 @@ export class SessionsService {
     @InjectModel(SessionEventDoc.name) private readonly events: Model<SessionEventDoc>,
     @InjectModel(Venue.name) private readonly venues: Model<Venue>,
     @InjectModel(Assignment.name) private readonly assignments: Model<Assignment>,
+    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -147,8 +157,23 @@ export class SessionsService {
 
   /** The visits belonging to the signed-in participant. Never takes an id from the caller. */
   async mine(user: AuthUser): Promise<SessionView[]> {
+    /**
+     * Live visits, plus anything the reaper closed in the last day.
+     *
+     * Without the second half a reaped visit simply VANISHES from the participant's list, and
+     * the one person entitled to know why never finds out. A day is long enough to cover
+     * "I came back the next morning" and short enough that the list does not become a history
+     * screen, which is not what this is (D-019).
+     */
+    const reapedSince = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const rows = await this.sessions
-      .find({ participantId: user.id, state: { $in: ['pending', 'active', 'ended'] } })
+      .find({
+        participantId: user.id,
+        $or: [
+          { state: { $in: ['pending', 'active', 'ended'] } },
+          { state: { $in: ['abandoned', 'expired'] }, lastSeenAt: { $gte: reapedSince } },
+        ],
+      })
       .sort({ createdAtServer: -1 })
       .limit(20)
       .lean<{ _id: unknown }[]>();
@@ -253,7 +278,46 @@ export class SessionsService {
       startedAt: s.startedAt,
       endedAt: s.endedAt,
       pingCount: s.pingCount,
+      terminalReason: this.terminalReason(s.state, s.startedAt, s.endedAt),
     };
+  }
+
+  /**
+   * Plain English for a terminal state.
+   *
+   * Which of the three abandonment cases applies is derived from the document rather than read
+   * back out of `sessionEvents`: a session with no `startedAt` never began, one with a
+   * `startedAt` and no `endedAt` went quiet mid-visit, and one with both finished but never
+   * filed a report. That is the same information without a second query per row.
+   *
+   * The numbers come from config so this text cannot drift away from the timers that produced
+   * it.
+   */
+  private terminalReason(
+    state: SessionState,
+    startedAt: Date | null,
+    endedAt: Date | null,
+  ): string | null {
+    const mins = Math.round(
+      Number(this.config.get('SESSION_ABANDON_AFTER_SECONDS') ?? 900) / 60,
+    );
+    const hours = Math.round(
+      Number(this.config.get('SESSION_HARD_CAP_SECONDS') ?? 10800) / 3600,
+    );
+
+    if (state === 'expired') {
+      return `This visit reached the ${hours}-hour limit for a single session and was closed automatically. Location was no longer being recorded.`;
+    }
+    if (state === 'abandoned') {
+      if (startedAt === null) {
+        return `This visit was never started, and was closed automatically after ${mins} minutes.`;
+      }
+      if (endedAt === null) {
+        return `No location update arrived for ${mins} minutes, so this visit was closed automatically. Capture stops when the screen locks or the tab is backgrounded.`;
+      }
+      return `This visit was ended but no report was filed within ${mins} minutes, so it was closed automatically.`;
+    }
+    return null;
   }
 
   /** A participant may only act on their own session. Read from the token, never the body. */

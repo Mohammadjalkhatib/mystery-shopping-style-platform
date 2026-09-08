@@ -9,11 +9,13 @@ import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import type { AuthUser } from '@msp/shared';
 import type { Connection, Model } from 'mongoose';
 import { DEMO_USERS } from '../auth/demo-users.js';
+import { checkCoordinatePrecision } from '../geo/precision.js';
 import { ClientOrg, Venue } from '../db/schemas/org-venue.schema.js';
 import { Assignment, Session, Task } from '../db/schemas/task-session.schema.js';
 import type { CreateAssignmentDto } from './dto/create-assignment.dto.js';
 import type { CreateTaskDto } from './dto/create-task.dto.js';
 import type { CreateVenueDto } from './dto/create-venue.dto.js';
+import type { UpdateVenueDto } from './dto/update-venue.dto.js';
 
 export interface VenueRow {
   id: string;
@@ -71,6 +73,27 @@ export class AdminService {
   async createVenue(user: AuthUser, dto: CreateVenueDto): Promise<VenueRow> {
     const clientOrgId = await this.resolveOrgForCreate(user, dto.clientOrgId);
 
+    /**
+     * A geofence is only as good as the centre it is measured from.
+     *
+     * `31.98, 35.83` with a 25 m radius was accepted once and produced a venue 4.8 km from
+     * where the participant actually stood: two decimals locate a point to within ~557 m, so
+     * that fence could not be entered from anywhere on earth. Every layer behaved correctly
+     * and the visit was still, correctly, rejected -- which is the worst kind of failure,
+     * because it looks like a broken engine. See D-020.
+     */
+    const precision = checkCoordinatePrecision(dto.lat, dto.lng, dto.radiusM);
+    if (!precision.ok) {
+      throw new BadRequestException(
+        `Those coordinates give ${precision.decimals} decimal places, which locates the venue ` +
+          `to about ${Math.round(precision.impliedM)} m. A ${dto.radiusM} m geofence needs the ` +
+          `centre known to about ${Math.round(precision.requiredM)} m, so this fence could not ` +
+          `be entered from anywhere. Use at least 4 decimal places, like 31.9399, 35.8486 — ` +
+          `right-click the exact spot in Google Maps and copy the numbers it shows. A share ` +
+          `link is not a coordinate.`,
+      );
+    }
+
     try {
       const venue = await this.venues.create({
         clientOrgId,
@@ -97,6 +120,83 @@ export class AdminService {
   async listVenues(user: AuthUser): Promise<VenueRow[]> {
     const rows = await this.venues.find(this.orgScope(user)).sort({ name: 1 }).lean();
     return rows.map((v) => this.venueRow(v as unknown as Venue & { _id: unknown }));
+  }
+
+  /**
+   * Correct a venue.
+   *
+   * This exists because a venue was created at `31.98, 35.83` and there was no way to fix it
+   * (D-020). Without an edit path a bad geofence is permanent, and the only workaround is a
+   * second venue plus a second task plus new assignments -- which leaves the wrong one in the
+   * list for ever.
+   *
+   * **Editing cannot change a verdict that has already been reached, and cannot corrupt a
+   * visit in progress.** Both hold because of `venueSnapshot`: it is pinned at `start`, the
+   * evaluator reads it (D-012), and as of D-021 ping ingest measures against it too. A visit
+   * that has begun is therefore judged against the geofence as it was when it began, whatever
+   * happens here afterwards. A `pending` session has no snapshot yet and will pick up the
+   * corrected venue when it starts, which is the entire point.
+   */
+  async updateVenue(user: AuthUser, venueId: string, dto: UpdateVenueDto): Promise<VenueRow> {
+    const venue = await this.venues
+      .findById(venueId)
+      .lean<
+        | {
+            _id: unknown;
+            clientOrgId: string;
+            location: { coordinates: [number, number] };
+            radiusM: number;
+          }
+        | null
+      >();
+    if (!venue) throw new NotFoundException('Venue not found');
+    this.assertCanWrite(user, venue.clientOrgId);
+
+    // Half a coordinate is not a location, and the precision rule needs both halves.
+    if ((dto.lat === undefined) !== (dto.lng === undefined)) {
+      throw new BadRequestException('Send lat and lng together, or neither');
+    }
+
+    // The precision rule is checked against the RESULTING pair, because either half can move
+    // independently of the other: widening a radius can rescue a coarse coordinate, and
+    // tightening one can invalidate a coordinate that was previously fine.
+    const nextLat = dto.lat ?? venue.location.coordinates[1];
+    const nextLng = dto.lng ?? venue.location.coordinates[0];
+    const nextRadius = dto.radiusM ?? venue.radiusM;
+    const precision = checkCoordinatePrecision(nextLat, nextLng, nextRadius);
+    if (!precision.ok) {
+      throw new BadRequestException(
+        `Those coordinates give ${precision.decimals} decimal places, which locates the venue ` +
+          `to about ${Math.round(precision.impliedM)} m. A ${nextRadius} m geofence needs the ` +
+          `centre known to about ${Math.round(precision.requiredM)} m, so this fence could not ` +
+          `be entered from anywhere. Use at least 4 decimal places, like 31.9399, 35.8486.`,
+      );
+    }
+
+    const $set: Record<string, unknown> = {};
+    if (dto.name !== undefined) $set.name = dto.name;
+    if (dto.address !== undefined) $set.address = dto.address;
+    if (dto.lat !== undefined) $set.location = { type: 'Point', coordinates: [nextLng, nextLat] };
+    if (dto.radiusM !== undefined) $set.radiusM = dto.radiusM;
+    if (dto.nearBufferM !== undefined) $set.nearBufferM = dto.nearBufferM;
+    if (dto.indoor !== undefined) $set.indoor = dto.indoor;
+    if (Object.keys($set).length === 0) throw new BadRequestException('Nothing to update');
+
+    try {
+      const updated = await this.venues.findOneAndUpdate(
+        { _id: venueId },
+        { $set },
+        { returnDocument: 'after' },
+      );
+      return this.venueRow(updated as unknown as Venue & { _id: unknown });
+    } catch (e) {
+      if (isDuplicateKey(e)) {
+        throw new ConflictException(
+          `A venue named "${dto.name}" already exists for this organisation`,
+        );
+      }
+      throw e;
+    }
   }
 
   /* ----------------------------------------------------------------- tasks */

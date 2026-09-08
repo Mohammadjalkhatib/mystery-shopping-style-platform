@@ -13,6 +13,7 @@ import {
 import type { AuthUser, Verdict } from '@msp/shared';
 import { Observable, concat, from, interval, map, merge } from 'rxjs';
 import { CurrentUser, Roles } from '../auth/auth.decorators.js';
+import { ReaperService } from '../session/reaper.service.js';
 import { ConsoleService, type VisitDetail, type VisitRow } from './console.service.js';
 import { ReviewDto } from './dto/review.dto.js';
 import { VisitEventsService } from './visit-events.service.js';
@@ -36,15 +37,28 @@ export class ConsoleController {
   constructor(
     private readonly console: ConsoleService,
     private readonly events: VisitEventsService,
+    private readonly reaper: ReaperService,
   ) {}
 
+  /**
+   * The visit feed.
+   *
+   * Reaps the org's overdue sessions first (D-019). This is the trigger that carries the
+   * feature: abandonment IS the participant not coming back, so a participant-only sweep
+   * never fires for the sessions that most need it, and the console would show an `active`
+   * visit that has been dead for hours.
+   *
+   * Note this does not violate rule 6. The reaper writes to `sessions`, which the console
+   * already reads; it never touches the ping collection.
+   */
   @Roles('business', 'admin')
   @Get('visits')
-  list(
+  async list(
     @CurrentUser() user: AuthUser,
     @Query('verdict') verdict?: Verdict,
     @Query('limit') limit?: string,
   ): Promise<VisitRow[]> {
+    await this.reaper.reapForOrg(user.clientOrgId);
     return this.console.listVisits(user, {
       verdict,
       limit: limit ? Number(limit) : undefined,
@@ -53,7 +67,8 @@ export class ConsoleController {
 
   @Roles('business', 'admin')
   @Get('visits/counts')
-  counts(@CurrentUser() user: AuthUser): Promise<Record<string, number>> {
+  async counts(@CurrentUser() user: AuthUser): Promise<Record<string, number>> {
+    await this.reaper.reapForOrg(user.clientOrgId);
     return this.console.counts(user);
   }
 

@@ -1044,3 +1044,153 @@ transposed. In the running app a participant gets 403 on `POST /venues`, no toke
 - Not exercised against the LIVE deployment, because Render tracks `main` and this is on a
   branch. That check is still owed.
 - Unchanged: no reaper, no Arabic pass, and the two open capture questions from the phone run.
+
+### 2026-09-08 - feat/lazy-reaper
+
+**What.** `abandoned` and `expired` are reachable. Sessions are reaped lazily when a participant
+reads their visits or the console reads its feed, and a reaped participant is told which timer
+fired and why.
+
+**Why.** D-016 decided the mechanism; D-019 decides the trigger surfaces and the UX. `dueEvent()`
+and `apply()` had been written and tested since the state machine landed with nothing calling
+them.
+
+**Files.**
+
+- `apps/api/src/session/reaper.service.ts`: new. `reapForParticipant` and `reapForOrg`, both
+  bounded at 100 sessions per sweep.
+- `apps/api/src/session/sessions.controller.ts`: `/sessions/mine` sweeps first, awaited.
+- `apps/api/src/console/console.controller.ts`: `/console/visits` and `/visits/counts` sweep the
+  org first. `console.module.ts` imports `SessionsModule` to reach the reaper.
+- `apps/api/src/session/sessions.service.ts`: `SessionView.terminalReason`, and `mine()` now also
+  returns sessions reaped in the last 24 h.
+- `apps/api/src/session/reaper.spec.ts`: 15 tests. `apps/web`: the terminal-state alert shows
+  the reason. `docs/DECISIONS.md`: D-019. `README.md`: features, env table, what is missing.
+
+**Now true.**
+
+1. **The candidate query is deliberately wider than the rule.** It selects anything plausibly
+   due and lets `dueEvent()` decide per document. Do not "optimise" the timer logic into the
+   Mongo filter — that would be a second copy of the rule, free to disagree with the pure
+   function that is actually tested.
+2. **The reaper must never break the read it hangs off.** Every failure inside `sweep()` is
+   swallowed and logged. A stale row is a smaller problem than a broken page, and that
+   asymmetry is the only reason this is safe in a read path.
+3. **`endedAt` is NOT set when reaping.** The participant did not end the visit; writing a time
+   would assert something that never happened. `lastSeenAt` moves, because `apply()` moves it.
+4. **The console read now performs writes.** It does not break rule 6 — the write is to
+   `sessions`, which the console already reads, and the ping collection is untouched.
+5. **`sessionEvents` refuses `deleteMany` at the model level.** A test that clears collections
+   between cases cannot clear that one; scope assertions by `sessionId` instead. Rule 8 is
+   enforced by a pre-hook, not by convention, and it caught this suite.
+6. **`visit-lifecycle.spec` wires the REAL reaper, on purpose.** It is the only suite that walks
+   a whole visit through `/sessions/mine`, so it is the only place that proves a sweep does not
+   reap a session that is legitimately in progress. `console.spec` stubs it, because that suite
+   is about what the console reads.
+7. **Mongoose 9 does not export `FilterQuery` as a named type** under this module resolution.
+   Use `Record<string, unknown>`, which is what `console.service.ts` already does.
+
+**Verified rather than assumed.** 397 tests pass, 15 of them new: both timers, expiry preferred
+over abandonment, `ended` never expiring, terminal sessions untouched, org and participant scope
+boundaries, the append-only event written with `actor: 'system:reaper'`, `endedAt` left null,
+and idempotency across two sweeps.
+
+**Open.**
+
+- **Not yet exercised against the live deployment**, and not yet merged.
+- A session nobody reads stays `active` for ever. Correct for a demo, wrong for anything that
+  pays people — that needs a real scheduler on a tier that does not sleep.
+- The 24-hour terminal window on `/sessions/mine` is a step towards a history screen this is
+  deliberately not. If it grows, it needs its own endpoint.
+- Unchanged: no edit or delete on the admin surface, no Arabic pass, and the two open capture
+  questions from the phone run.
+
+### 2026-09-08 - fix/venue-coordinate-precision
+
+**What.** `POST /venues` refuses a coordinate too coarse for the geofence it defines, and the
+venue form says so before you submit and recognises a pasted Google Maps share link.
+
+**Why.** D-020. A real visit was rejected while the participant was standing in the right shop.
+
+**Files.**
+
+- `apps/api/src/geo/precision.ts`: new, pure. `decimalPlaces`, `impliedPrecisionM`,
+  `checkCoordinatePrecision`.
+- `apps/api/src/geo/precision.spec.ts`: 16 tests, including the exact coordinate that caused it.
+- `apps/api/src/admin/admin.service.ts`: `createVenue` rejects with a message naming the implied
+  precision, the required precision and what to do.
+- `apps/api/src/admin/admin.spec.ts`: the failing coordinate is a 400; the same coordinate at a
+  500 m radius is a 201, because the rule scales.
+- `apps/web/src/pages/TasksTab.tsx`: decimal-count nudge and share-link detection.
+- `docs/DECISIONS.md`: D-020. `README.md`: the authoring section.
+
+**Now true.**
+
+1. **The engine has now been wrong zero times and looked wrong twice.** Both were the input.
+   The drive was a real rejection of a real absence; this one was a correct measurement against
+   a wrong centre. Before touching a threshold because a verdict looks wrong, check the venue
+   coordinate and the ping coordinates against a map.
+2. **`decimalPlaces` must round-and-compare, not count string digits.** The seeded venue reads
+   back as `35.913700000000006`; counting characters would claim fifteen decimals of precision
+   for a four decimal value and wave through exactly what this guard exists to catch.
+3. **The web does NOT duplicate the threshold.** It nudges on decimal count only; the server
+   owns the rule that scales with radius. A second copy of a threshold is the thing this repo
+   keeps getting bitten by.
+4. **The precision rule scales with the radius**, so it is not "always five decimals". Three
+   decimals (~56 m) is fine for a 500 m fence and useless for a 25 m one.
+5. **Existing venues are not re-validated.** `Lune` at `31.98, 35.83` is still in the live
+   database and still unusable, and there is still no venue edit endpoint.
+
+**Open.**
+
+- **`Lune`'s coordinates are still wrong in production.** The correct value is about
+  `31.9399, 35.8486`, taken from where the participant's own fixes clustered. Needs either a
+  direct database correction or the venue edit endpoint that does not exist.
+- **`accuracyRealism` penalised an honest participant -12 on that visit**: "Median accuracy was
+  4 m at an indoor venue. Indoor fixes normally degrade to tens of metres." They had a genuine
+  4 m fix at a venue flagged `indoor`. The signal is defensible against a spoofer but this was a
+  false positive, and it is the one signal observed firing wrongly on real data. Changing it
+  needs a spoof-adversary pass; NOT changed here.
+- Unchanged: reaper merged? no — `feat/lazy-reaper` is still an unmerged branch. No Arabic pass.
+
+### 2026-09-08 - feat/venue-edit (on fix/venue-coordinate-precision)
+
+**What.** `PATCH /venues/:id` and a Venues table with an Edit action in the Tasks tab. Ping
+ingest now measures against the session's `venueSnapshot` instead of the live venue.
+
+**Why.** D-021. D-020 stopped a bad coordinate being created but left the existing one
+unfixable. Building the edit path exposed the ingest bug, which had to be fixed first.
+
+**Files.**
+
+- `apps/api/src/pings/pings.service.ts`: measures against `session.venueSnapshot`, falling back
+  to the live venue only when it is null.
+- `apps/api/src/admin/admin.service.ts`: `updateVenue`. `dto/update-venue.dto.ts`: all optional,
+  no `clientOrgId`. `admin.controller.ts`: `@Patch('venues/:venueId')`.
+- `apps/api/src/pings/pings.spec.ts`, `admin.spec.ts`: the regression and the edit boundaries.
+- `apps/web/src/pages/TasksTab.tsx`: venues table, form doubles as create-or-correct.
+- `docs/DECISIONS.md`: D-021. `README.md`: endpoint table and what is missing.
+
+**Now true.**
+
+1. **THE BUG WORTH REMEMBERING: D-012 was only half applied.** It pinned `venueSnapshot` and
+   switched the evaluator to it, but ingest kept reading the venue live — so the evaluator used
+   a snapshot venue alongside per-fix `distanceM`/`presence` computed against the live one. One
+   venue edit mid-visit put two vintages of geofence in a single trace. Same shape as every
+   other bug here: a seam between two subsystems that were each correct alone.
+2. **A correction never changes a verdict already reached**, and re-running the evaluator will
+   not change it either. Visits are judged against the fence they ran under. Correct, and
+   counter-intuitive enough to be worth saying out loud to a reviewer.
+3. **A venue cannot change organisation.** `clientOrgId` is absent from `UpdateVenueDto`, so
+   `forbidNonWhitelisted` makes it a 400 rather than a silently dropped field.
+4. **Precision is re-checked against the RESULTING pair.** Tightening the radius alone can fail
+   even though the coordinate did not move, which is the point.
+5. **The snapshot-less fallback in ingest is dead code in production** — every session since
+   D-012 has a snapshot. It is covered by a test and should be deleted when no such sessions
+   remain.
+
+**Verified rather than assumed.** 420 tests pass. The new ingest test fails without the fix: it
+puts the snapshot ~5.5 km from the live venue and asserts a fix at the snapshot reads `inside`.
+
+**Open.** `Lune` still needs correcting in production — do it through the deployed `PATCH`
+endpoint once this is on `main`, which also verifies the endpoint live.

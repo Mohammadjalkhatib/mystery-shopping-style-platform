@@ -809,3 +809,138 @@ a standalone `mongod` can no longer run the admin surface, and that failure is i
 someone tries. Re-assigning the same task to the same participant is refused by the unique
 index rather than being treated as an update, so there is no way to move an assignment between
 participants; deleting and recreating is the only path, and neither is built.
+
+---
+
+## D-019: The reaper sweeps on participant AND console reads, and says which timer fired
+
+**Date:** 2026-09-08
+**Status:** accepted
+
+**Decision.** `GET /sessions/mine` sweeps that participant's overdue sessions; `GET
+/console/visits` and `/visits/counts` sweep the org's. Both `await` the sweep before reading,
+so the response reflects it. A reaped session carries a `terminalReason` in plain words, and
+`/sessions/mine` keeps showing terminal sessions for 24 hours so the participant can read it.
+
+**Context.** D-016 settled the mechanism — lazy-on-read, not a cron, because on a free tier
+that sleeps a cron stops silently and `SESSION_ABANDON_AFTER_SECONDS` is the same order as the
+idle window. It did not settle which reads trigger it, and that turns out to decide whether the
+feature works at all.
+
+**Alternatives considered.**
+
+- *Participant reads only.* The surgical version: state is corrected exactly where it is
+  observed, and no write ever enters the console's read path. Rejected because it does not
+  work — abandonment IS the participant not coming back, so the trigger never fires for the
+  sessions that most need it. The console would show an `active` visit that died hours ago, and
+  the one thing the reaper exists to prevent is the thing it would fail at.
+- *A small batch swept on every authenticated request.* Nothing can go stale, and it is the
+  closest thing to a cron that is not one. Rejected because it puts a write in the path of ping
+  ingest, the hottest route in the system, and makes reaping latency depend on unrelated
+  traffic — a session's fate would hinge on whether somebody else happened to be using the app.
+- *A generic "this visit has ended" message.* Less copy, and one string to translate for the
+  Arabic pass. Rejected because `dueEvent()` already distinguishes expiry from abandonment, and
+  the document distinguishes three kinds of abandonment — never started, went quiet mid-visit,
+  ended but never filed. Throwing that away leaves a participant unable to tell whether they
+  did something wrong.
+
+**Consequences.** Every console list now costs one extra indexed query, and a business user's
+read performs writes — defensible because the write is to `sessions`, which the console already
+reads, so rule 6 is untouched, but it is a read path with a side effect and that is worth
+knowing. Reaping is only as timely as the next read: a session that nobody looks at stays
+`active` in the database indefinitely, which is correct for a demo and would not be for
+billing or payouts. The sweep is capped at 100 sessions per read, so the first read after a
+long outage may take several passes to settle. And the participant's list now shows dead
+visits for a day, which is a small step towards a history screen this deliberately is not.
+
+---
+
+## D-020: Refuse a venue coordinate coarser than the geofence it defines
+
+**Date:** 2026-09-08
+**Status:** accepted
+
+**Decision.** `POST /venues` rejects coordinates whose implied precision is worse than half the
+radius. A value written to `d` decimal places locates a point to within half a unit of the last
+place, so the check is arithmetic on how the number was written, not on the number itself. In
+practice: three decimals for a wide fence, four for anything tighter.
+
+**Context.** A venue was created at `31.98, 35.83` with a 25 m radius. Two decimals locate a
+point to within about 557 m, so that fence could not be entered from anywhere on earth. The
+participant stood in the right shop; the system measured 4,789 m and rejected the visit. Every
+layer was correct — capture was flawless that run, 7 fixes at a 30 s cadence, 100 % coverage,
+3–6 m accuracy — and the verdict was still wrong, because the number it measured against was.
+This is the project's recurring failure shape: a seam where two correct things meet, and no
+test can see it because no test invents the coordinate.
+
+**Alternatives considered.**
+
+- *Demand a fixed number of decimal places, say five, for every venue.* One rule, no arithmetic,
+  trivially explained. Rejected because it is wrong in both directions: five decimals is
+  needless ceremony for a 500 m fence around a mall, and it says nothing about *why*, so the
+  next person to widen the radius has no idea whether the rule still applies.
+- *Warn in the UI and let the server accept it.* Keeps the API permissive and the fix cheap.
+  Rejected because the UI is not the only writer — the seed and any future import go through
+  the same service, and this failure is silent and expensive precisely because it produces a
+  plausible-looking venue that reads as an engine bug months later.
+- *Infer the venue location from the pasted Google Maps link.* It is what the user actually had
+  on their clipboard, and it would remove the retyping entirely. Rejected for now: a
+  `maps.app.goo.gl` short link only resolves by following a redirect, which the browser will
+  not allow cross-origin and which would make venue creation depend on a third party being up.
+  The form detects the link and says what to do instead.
+
+**Consequences.** A legitimate venue that genuinely sits on a round coordinate cannot be entered
+as written and has to be given more decimals, which is a small lie about precision — accepted,
+because the alternative is accepting a fence nobody can enter. The threshold of half the radius
+is a judgement call, not a derived constant; what would make it principled is data on how far
+recorded venue coordinates sit from where participants actually stand, which is the same
+labelled data D-009 wants and this project does not have. The check does not run against
+existing venues, so a bad coordinate already in the database stays bad until someone edits it —
+and there is still no way to edit one.
+
+---
+
+## D-021: Venues can be corrected, and ingest measures against the session's snapshot
+
+**Date:** 2026-09-08
+**Status:** accepted
+
+**Decision.** `PATCH /venues/:id` corrects a venue in place. To make that safe, ping ingest now
+computes `distanceM` and `presence` against the session's `venueSnapshot` rather than the live
+venue, falling back to the live venue only for sessions that predate the field. A venue cannot
+change organisation.
+
+**Context.** D-020 stopped a bad coordinate being created but left the one already in the
+database unusable, with no way to fix it. Adding an edit path exposed a latent bug: D-012 pinned
+`venueSnapshot` at `start` and switched the *evaluator* to it, but ingest was still reading the
+venue live. So the evaluator took the venue from the snapshot while consuming per-fix
+`distanceM` and `presence` values measured against whatever the venue looked like when each fix
+arrived. One edit mid-visit would put two vintages of geofence into a single trace — the exact
+failure D-010 item 5 and D-012 each fixed one half of. Without this, venue editing would have
+been a one-click corruption of any visit in progress.
+
+**Alternatives considered.**
+
+- *Correct the coordinate directly in the database and build no endpoint.* Fixes the immediate
+  problem in one command and adds no surface. Rejected because it makes a database console a
+  required part of operating the product: the next wrong venue — and there will be one, because
+  the coordinate is typed by a human — needs the same intervention.
+- *Delete and recreate the venue instead of editing it.* No new invariants, and create is already
+  precision-checked. Rejected because tasks, assignments and sessions reference `venueId`, so a
+  recreate orphans all of them and the wrong venue stays in the list for ever next to its
+  replacement.
+- *Recompute stored pings when a venue moves.* Would make old traces consistent with the new
+  geofence. Rejected outright: it rewrites evidence after the fact, which is the thing
+  `venueSnapshot` and rule 8 both exist to prevent. A visit is judged against the fence it was
+  run under, and a correction applies from the next visit onward.
+- *Let a venue move between organisations.* Rejected: tasks, assignments and sessions each carry
+  their own `clientOrgId`, so re-homing the venue alone would split one visit across two tenants
+  with nothing downstream noticing. The field is absent from the DTO, so it is a 400 rather than
+  a silently ignored value.
+
+**Consequences.** A correction does not fix visits already run against the wrong fence — their
+verdicts stand, correctly, because they describe what was measured at the time. Re-running the
+evaluator on them would not change anything either, which is right but will surprise someone.
+There is still no venue delete, and no edit for tasks or assignments. The ingest fallback path
+for snapshot-less sessions is untestable in production because every session created since
+D-012 has one; it is covered by a test and should be deleted once no such sessions remain.

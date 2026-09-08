@@ -47,10 +47,10 @@ Built and working end to end:
 - [x] Review queue as a filter on the feed, with a recorded human override
 - [x] Seeded demo data, relocatable for testing outside the client's market
 - [x] Authoring: create venues, tasks and assignments from the console's Tasks tab
+- [x] Abandoned and expired sessions, reaped lazily on read, with the reason shown to the participant
 
 Not built:
 
-- [ ] Abandoned session reaper and hard session cap (the logic exists; nothing schedules it)
 - [ ] Evidence upload to object storage — deliberately cut, see "Deliberately out of scope"
 - [ ] Arabic pass on participant screens
 - [ ] Capture watchdog — nothing notices if `watchPosition` stops delivering silently
@@ -264,8 +264,9 @@ to the person it was created for.
 
 | Endpoint | Role | Notes |
 |---|---|---|
-| `POST /venues` | admin, business | `lat`/`lng` in, `[lng, lat]` stored. `radiusM` 25–500 |
+| `POST /venues` | admin, business | `lat`/`lng` in, `[lng, lat]` stored. `radiusM` 25–500. Coordinates must be precise enough for the radius — see D-020 |
 | `GET /venues` | admin, business | Scoped to your org |
+| `PATCH /venues/:id` | admin, business | Correct a venue. Safe for visits already started — they keep the geofence they began with |
 | `POST /tasks` | admin, business | Inherits its org from the venue |
 | `GET /tasks` | admin, business | With a live assignment count |
 | `POST /assignments` | admin, business | Creates the pending session too |
@@ -456,6 +457,7 @@ See `.env.example`. Every value is documented there. The ones worth knowing abou
 | `PING_RETENTION_DAYS` | TTL on raw location pings. This is a privacy control, not a tuning knob |
 | `VERIFY_AUTO_THRESHOLD` / `VERIFY_REJECT_THRESHOLD` | Verdict banding. Config rather than constants because they are placeholders until there is labelled data to tune them against |
 | `SESSION_HARD_CAP_SECONDS` | Sessions auto-end. Without this you accumulate zombie sessions and keep tracking people who think they are done |
+| `SESSION_ABANDON_AFTER_SECONDS` | How long a session may go quiet before the reaper closes it. Also the text the participant is shown, so the number and the message cannot drift apart |
 | `S3_*` | The only values that differ between MinIO locally and R2 in production |
 
 ---
@@ -464,21 +466,22 @@ See `.env.example`. Every value is documented there. The ones worth knowing abou
 
 Stated plainly rather than left to be discovered.
 
-**Authoring exists, but nothing can be edited or deleted.** `POST /venues`, `/tasks` and
-`/assignments` are built, role-guarded and driven from the console's Tasks tab, so the seed is
-no longer the only way work enters the system. What is missing is the rest of CRUD: a venue's
-geofence cannot be corrected after a typo, a task cannot be deactivated, and an assignment
-cannot be moved to a different participant — the unique index refuses the duplicate and there
-is no delete. Editing a `radiusM` in particular is deliberately absent rather than merely
-unbuilt: every started session pins a `venueSnapshot`, so an edit is safe for visits that have
-not begun and needs a decision about the ones that have.
+**Authoring exists; deletion does not.** `POST /venues`, `/tasks`, `/assignments` and
+`PATCH /venues/:id` are built, role-guarded and driven from the console's Tasks tab, so the seed
+is no longer the only way work enters the system, and a mistyped geofence can be corrected.
+What is still missing: nothing can be deleted, a task cannot be deactivated or edited, and an
+assignment cannot be moved to a different participant — the unique index refuses the duplicate
+and there is no delete. Correcting a venue does not change verdicts already reached, because
+every started session pins a `venueSnapshot` and is judged against the fence it ran under
+(D-021). That is correct, and it will surprise someone.
 
-**Nothing schedules the reaper.** `dueEvent()` and `SessionsService.apply()` both exist and
-are tested, so `abandoned` and `expired` are reachable in principle and unreachable in
-practice. This is blocked on a real question rather than on effort: an in-process cron does
-not run while a free-tier service is asleep, and `SESSION_ABANDON_AFTER_SECONDS` is 900 —
-exactly the idle window before such a service sleeps. Reaping lazily on read is the cheap
-deterministic answer and is not built.
+**The reaper is only as timely as the next read.** Sessions are reaped when a participant
+loads their visits or the console loads its feed (D-019), never on a timer — an in-process cron
+does not run while a free-tier service is asleep, and `SESSION_ABANDON_AFTER_SECONDS` is 900,
+exactly the idle window before such a service sleeps. The consequence is real and worth stating:
+a session nobody looks at stays `active` in the database indefinitely. That is correct for a
+demo and would be wrong for anything that paid people, which would need a real scheduler on a
+tier that does not sleep.
 
 **Location capture holds while the tab is visible and goes quiet after that.** The flow has now
 run on a real handset — a 50-minute drive around Amman on 8 September 2026, deliberately outside

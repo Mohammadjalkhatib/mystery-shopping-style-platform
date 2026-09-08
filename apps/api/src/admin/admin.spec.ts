@@ -263,6 +263,26 @@ describe('admin surface', () => {
         .expect(400);
     });
 
+    it('rejects a coordinate too coarse for the geofence it defines (D-020)', async () => {
+      // The exact input that produced a venue 4.8 km from where the participant stood.
+      const res = await request(app.getHttpServer())
+        .post('/venues')
+        .set(auth(bizToken))
+        .send(venueBody({ lat: 31.98, lng: 35.83, radiusM: 25 }))
+        .expect(400);
+      expect(JSON.stringify(res.body)).toMatch(/decimal places/);
+    });
+
+    it('accepts the same coordinate when the fence is wide enough to tolerate it', async () => {
+      // The rule scales with the radius rather than demanding a fixed digit count. Three
+      // decimals is ~56 m: useless at 25 m, fine at 500 m.
+      await request(app.getHttpServer())
+        .post('/venues')
+        .set(auth(bizToken))
+        .send(venueBody({ name: `Coarse ${Math.random()}`, lat: 31.939, lng: 35.848, radiusM: 500 }))
+        .expect(201);
+    });
+
     it('rejects an out-of-range coordinate', async () => {
       await request(app.getHttpServer())
         .post('/venues')
@@ -363,6 +383,88 @@ describe('admin surface', () => {
 
       expect(await Assignments.countDocuments({ taskId, participantId: 'u-participant-4' })).toBe(1);
       expect(await Sessions.countDocuments({ participantId: 'u-participant-4', venueId: { $exists: true } })).toBeGreaterThan(0);
+    });
+
+    it('corrects a venue, which is the whole point of the edit path (D-021)', async () => {
+      // The real case, as close as the create guard now allows: a coarse-but-legal venue at a
+      // wide radius, then corrected to a precise coordinate and a tight fence. The original
+      // 2-decimal coordinate can no longer be created at all, which is D-020 working.
+      const created = await request(app.getHttpServer())
+        .post('/venues')
+        .set(auth(bizToken))
+        .send(venueBody({ name: `Fixable ${Math.random()}`, lat: 31.939, lng: 35.848, radiusM: 500 }))
+        .expect(201);
+      const id = (created.body as { id: string }).id;
+
+      const patched = await request(app.getHttpServer())
+        .patch(`/venues/${id}`)
+        .set(auth(bizToken))
+        .send({ lat: 31.9399307, lng: 35.8486227, radiusM: 25 })
+        .expect(200);
+
+      const body = patched.body as { lat: number; lng: number; radiusM: number };
+      expect(body.lat).toBeCloseTo(31.9399307, 6);
+      expect(body.radiusM).toBe(25);
+      const stored = await Venues.findById(id).lean<{
+        location: { coordinates: [number, number] };
+      } | null>();
+      expect(stored!.location.coordinates).toEqual([35.8486227, 31.9399307]);
+    });
+
+    it('re-checks precision against the RESULTING pair, not just what was sent', async () => {
+      // 3 decimals is fine at 500 m and useless at 25 m, so tightening the radius alone has
+      // to be able to fail even though the coordinate did not change.
+      const created = await request(app.getHttpServer())
+        .post('/venues')
+        .set(auth(bizToken))
+        .send(venueBody({ name: `Tighten ${Math.random()}`, lat: 31.939, lng: 35.848, radiusM: 500 }))
+        .expect(201);
+      const id = (created.body as { id: string }).id;
+
+      await request(app.getHttpServer())
+        .patch(`/venues/${id}`)
+        .set(auth(bizToken))
+        .send({ radiusM: 25 })
+        .expect(400);
+    });
+
+    it('refuses half a coordinate', async () => {
+      const id = await seedVenue(ORG);
+      await request(app.getHttpServer())
+        .patch(`/venues/${id}`)
+        .set(auth(bizToken))
+        .send({ lat: 31.9399307 })
+        .expect(400);
+    });
+
+    it('will not edit another organisation venue, and a participant cannot edit at all', async () => {
+      const foreign = await seedVenue(OTHER_ORG);
+      await request(app.getHttpServer())
+        .patch(`/venues/${foreign}`)
+        .set(auth(bizToken))
+        .send({ name: 'Mine now' })
+        .expect(403);
+
+      const mine = await seedVenue(ORG);
+      await request(app.getHttpServer())
+        .patch(`/venues/${mine}`)
+        .set(auth(participantToken))
+        .send({ name: 'Mine now' })
+        .expect(403);
+      await request(app.getHttpServer()).patch(`/venues/${mine}`).send({ name: 'x' }).expect(401);
+    });
+
+    it('cannot move a venue between organisations', async () => {
+      const mine = await seedVenue(ORG);
+      // clientOrgId is not on the DTO at all, so forbidNonWhitelisted rejects it outright
+      // rather than ignoring it (rule 2).
+      await request(app.getHttpServer())
+        .patch(`/venues/${mine}`)
+        .set(auth(bizToken))
+        .send({ clientOrgId: OTHER_ORG })
+        .expect(400);
+      const stored = await Venues.findById(mine).lean<{ clientOrgId: string } | null>();
+      expect(stored!.clientOrgId).toBe(ORG);
     });
 
     it('a task inherits its org from the venue, and counts its assignments', async () => {
