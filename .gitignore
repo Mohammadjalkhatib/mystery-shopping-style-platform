@@ -2,8 +2,10 @@ node_modules/
 dist/
 build/
 coverage/
+# Any .env variant is secret. The example is the one exception.
 .env
-.env.local
+.env.*
+!.env.example
 *.log
 .DS_Store
 .vscode/
@@ -15,3 +17,7 @@ packages/*/node_modules/
 
 # Claude Code local overrides, not shared
 .claude/settings.local.json
+
+# TypeScript project-reference build state
+*.tsbuildinfo
+apps/web/dist-types/

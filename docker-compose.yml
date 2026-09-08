@@ -1,54 +1,46 @@
-# Local development stack. `docker compose up` should give a working, seeded system
-# with no manual steps beyond `cp .env.example .env`.
+# Local development stack.
 #
-# Kept deliberately close to production: the API talks to Mongo over a URI and to object
-# storage over the S3 API, exactly as it does against Atlas and R2. Only env values change.
+#   cp .env.example .env && docker compose up --build
+#
+# That is the whole procedure. The stack seeds itself and needs no manual step (CLAUDE.md §7).
+#
+# Kept deliberately close to production: the API talks to Mongo over a URI exactly as it does
+# to Atlas. Only env values change.
 
 services:
+  # ---------------------------------------------------------------------- mongo
+  #
+  # A single-node REPLICA SET, not a standalone.
+  #
+  # Design rule 9 makes report submission one transaction across report, session state, its
+  # event and the outbox row. MongoDB refuses multi-document transactions outside a replica
+  # set, so a standalone container meant `submit` threw
+  # "Transaction numbers are only allowed on a replica set member or mongos" -- and ONLY
+  # locally, because Atlas M0 is a replica set. The bug would have been invisible until
+  # someone ran the documented compose command.
   mongo:
-    image: mongo:7
+    image: mongo:8
     restart: unless-stopped
+    command: ["--replSet", "rs0", "--bind_ip_all"]
     ports:
       - "27017:27017"
     volumes:
       - mongo-data:/data/db
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      # Self-initiating: the first probe creates the replica set, later probes confirm it.
+      # `mongo:27017` is the advertised host, so it must be resolvable from inside the
+      # network -- which is why clients connect with `?replicaSet=rs0` rather than by IP.
+      test: >
+        mongosh --quiet --eval "
+          try { rs.status().ok }
+          catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongo:27017'}]}).ok }
+        "
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 15s
 
-  minio:
-    image: minio/minio:latest
-    restart: unless-stopped
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-minioadmin}
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio-data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # one-shot: creates the bucket so the API does not have to handle a missing bucket
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 ${S3_ACCESS_KEY_ID:-minioadmin} ${S3_SECRET_ACCESS_KEY:-minioadmin} &&
-      mc mb --ignore-existing local/${S3_BUCKET:-visit-evidence} &&
-      exit 0
-      "
-
+  # ------------------------------------------------------------------------ api
   api:
     build:
       context: .
@@ -57,20 +49,49 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      MONGO_URI: mongodb://mongo:27017/${MONGO_DB_NAME:-mystery-shopping}
-      S3_ENDPOINT: http://minio:9000
+      # replicaSet=rs0 is required, not decorative: without it the driver treats the node as
+      # a standalone and transactions fail exactly as they did before.
+      MONGO_URI: mongodb://mongo:27017/${MONGO_DB_NAME:-mystery-shopping}?replicaSet=rs0
+      WEB_PUBLIC_URL: http://localhost:5173
     ports:
       - "3000:3000"
     depends_on:
       mongo:
         condition: service_healthy
-      minio:
-        condition: service_healthy
     volumes:
-      - ./apps/api:/app/apps/api
-      - ./packages:/app/packages
+      - ./apps/api/src:/app/apps/api/src
+      - ./packages/shared/src:/app/packages/shared/src
+      # Anonymous volumes so the image's node_modules survive the bind mounts above. Only
+      # `src` is mounted precisely to avoid needing these for the whole app directory.
       - /app/node_modules
+      - /app/apps/api/node_modules
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
+  # ----------------------------------------------------------------------- seed
+  #
+  # One-shot, and it runs on every `up` on purpose: the seed is idempotent, and re-seeding
+  # is the documented way to reset a stale demo (its pending sessions are re-clocked so the
+  # reaper cannot leave them abandoned and unrevivable -- see D-012).
+  seed:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: development
+    env_file: .env
+    environment:
+      MONGO_URI: mongodb://mongo:27017/${MONGO_DB_NAME:-mystery-shopping}?replicaSet=rs0
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: "no"
+    command: ["sh", "-c", "npm run build --workspace @msp/api && node apps/api/dist/db/seed.js"]
+
+  # ------------------------------------------------------------------------ web
   web:
     build:
       context: .
@@ -78,16 +99,31 @@ services:
       target: development
     restart: unless-stopped
     environment:
+      # The browser talks to the API on the HOST, not inside the compose network, so this is
+      # localhost rather than `api`.
       VITE_API_BASE_URL: http://localhost:3000
     ports:
       - "5173:5173"
     depends_on:
       - api
     volumes:
-      - ./apps/web:/app/apps/web
-      - ./packages:/app/packages
+      - ./apps/web/src:/app/apps/web/src
+      - ./apps/web/index.html:/app/apps/web/index.html
+      - ./packages/shared/src:/app/packages/shared/src
       - /app/node_modules
+      - /app/apps/web/node_modules
 
 volumes:
   mongo-data:
-  minio-data:
+
+# ---------------------------------------------------------------------------
+# NOT HERE, deliberately: minio.
+#
+# It existed for `feat/evidence-upload`, which is on the cut list and is not built -- nothing
+# in this repo speaks S3 today. Keeping it would mean two unpinned `:latest` images, a bucket
+# init container, and a healthcheck using `curl`, which recent minio images no longer ship
+# (so `depends_on: service_healthy` would hang forever and look like a broken build rather
+# than a missing binary). A service nothing uses is not free; it is three failure modes.
+#
+# The `S3_*` values stay in .env.example so the shape is documented if that work resumes.
+# ---------------------------------------------------------------------------

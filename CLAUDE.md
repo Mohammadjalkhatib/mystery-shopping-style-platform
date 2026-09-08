@@ -31,6 +31,8 @@ Repo: `https://github.com/Mohammadjalkhatib/mystery-shopping-style-platform.git`
 
 - `main` is protected and only receives merges from `dev` after approval. Never commit or push
   directly to `main`. Never merge to `main` without being asked explicitly.
+  **`main` is also the deployed branch** — Render tracks it, so a merge into `main` redeploys
+  the live demo. That raises the cost of a careless merge; it does not change the rule above.
 - `dev` is the integration branch. All feature work merges here first for testing.
 - Feature branches: `feat/<short-kebab-name>` or `fix/<short-kebab-name>`, always branched from
   `dev`, always merged back into `dev`.
@@ -106,8 +108,8 @@ say so and we will discuss it, but do not just implement the other thing.
 Monorepo, npm workspaces.
 
 ```
-apps/api      NestJS 10, TypeScript, Mongoose
-apps/web      React 18, Vite, TypeScript, MUI v5, React Router
+apps/api      NestJS 12, TypeScript 6, Mongoose 9  (ESM, see D-007)
+apps/web      React 19, Vite 8, TypeScript 6, MUI v9, React Router 8
 packages/shared   shared DTO types only (Verdict, Signal, SessionState, presence)
 ```
 
