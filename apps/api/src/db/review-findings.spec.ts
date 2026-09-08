@@ -325,4 +325,99 @@ describe('schema-reviewer findings (D-012)', () => {
       await c2.close();
     });
   });
+
+  describe('re-seeding does not resurrect a session that already started (D-015)', () => {
+    /**
+     * The D-012 revive fix reset `state` on EVERY session, not only the ones that never
+     * started. A `docker compose down` + `up` on a preserved volume therefore turned a
+     * SUBMITTED session back into `pending` while it still carried `startedAt`, `endedAt`
+     * and its pings -- a combination no transition in the state machine can produce -- and
+     * the console went from showing the completed visits to showing none.
+     */
+    const startedFields = {
+      state: 'submitted' as const,
+      startedAt: new Date('2026-09-08T07:32:53.074Z'),
+      endedAt: new Date('2026-09-08T07:35:10.645Z'),
+      lastSeenAt: new Date('2026-09-08T07:35:10.645Z'),
+      pingCount: 9,
+      latestVerdict: 'auto_verified' as const,
+      latestScore: 79,
+    };
+
+    it('leaves a submitted session, its clocks and its verdict untouched', async () => {
+      const uri = mongod.getUri('seed-preserve');
+      await seed(uri);
+
+      const c = await mongoose.createConnection(uri).asPromise();
+      const S = c.model('Session', SessionSchema);
+      const target = await S.findOne().lean<{ _id: unknown } | null>();
+      await S.updateOne({ _id: target!._id }, { $set: startedFields });
+      await c.close();
+
+      await seed(uri);
+
+      const c2 = await mongoose.createConnection(uri).asPromise();
+      const after = await c2
+        .model('Session', SessionSchema)
+        .findById(target!._id)
+        .lean<(typeof startedFields & { createdAtServer: Date }) | null>();
+
+      expect(after).not.toBeNull();
+      expect(after!.state).toBe('submitted');
+      expect(after!.startedAt).toEqual(startedFields.startedAt);
+      expect(after!.endedAt).toEqual(startedFields.endedAt);
+      expect(after!.lastSeenAt).toEqual(startedFields.lastSeenAt);
+      expect(after!.pingCount).toBe(9);
+      expect(after!.latestVerdict).toBe('auto_verified');
+      expect(after!.latestScore).toBe(79);
+      await c2.close();
+    });
+
+    it('does not create a second session for that assignment', async () => {
+      // `assignmentId` is unique, so a naive "insert a fresh one instead" would throw --
+      // but a filtered upsert would ALSO have thrown, silently, on the normal path.
+      const uri = mongod.getUri('seed-preserve-count');
+      await seed(uri);
+
+      const c = await mongoose.createConnection(uri).asPromise();
+      const S = c.model('Session', SessionSchema);
+      const target = await S.findOne().lean<{ _id: unknown } | null>();
+      await S.updateOne({ _id: target!._id }, { $set: startedFields });
+      await c.close();
+
+      await expect(seed(uri)).resolves.toBeUndefined();
+
+      const c2 = await mongoose.createConnection(uri).asPromise();
+      expect(await c2.model('Session', SessionSchema).countDocuments()).toBe(10);
+      await c2.close();
+    });
+
+    it('will not revive an abandoned session that HAD started, because it has evidence', async () => {
+      // The guard is `startedAt === null`, not the state name. A session abandoned mid-visit
+      // has pings attached; reviving it would let a second visit append to the same trace and
+      // the evaluator would score both as one.
+      const uri = mongod.getUri('seed-abandoned-started');
+      await seed(uri);
+
+      const c = await mongoose.createConnection(uri).asPromise();
+      const S = c.model('Session', SessionSchema);
+      const target = await S.findOne().lean<{ _id: unknown } | null>();
+      await S.updateOne(
+        { _id: target!._id },
+        { $set: { state: 'abandoned', startedAt: new Date(0), lastSeenAt: new Date(0), pingCount: 4 } },
+      );
+      await c.close();
+
+      await seed(uri);
+
+      const c2 = await mongoose.createConnection(uri).asPromise();
+      const after = await c2
+        .model('Session', SessionSchema)
+        .findById(target!._id)
+        .lean<{ state: string; pingCount: number }>();
+      expect(after.state).toBe('abandoned');
+      expect(after!.pingCount).toBe(4);
+      await c2.close();
+    });
+  });
 });

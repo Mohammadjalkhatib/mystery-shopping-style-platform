@@ -663,3 +663,81 @@ identical consecutive coordinates, trips `jitterFingerprint` at −45, and is al
 
 **Open.** This is a seed-time workaround for a missing admin surface. The real answer is
 `POST /venues` and a form, so a venue can be created wherever it actually is.
+
+---
+
+### 2026-09-08 - fix/seed-preserves-completed-sessions
+
+**What.** `chore/dockerize` is now **verified** — the compose stack was run to completion for
+the first time, end to end, and the one bug that run surfaced is fixed: re-seeding no longer
+resets sessions that have already started.
+
+**Why.** D-015. The compose run itself was the outstanding item from the `chore/dockerize`
+entry: all four images built last session but the run was never finished.
+
+**Files.**
+
+- `apps/api/src/db/seed.ts`: session upsert replaced with read-then-branch — create if
+  missing, re-clock only if `startedAt` is null, otherwise leave alone; new log line reporting
+  created/revived/preserved
+- `apps/api/src/db/review-findings.spec.ts`: 3 tests — a submitted session survives a re-seed
+  with its clocks and verdict, no second session is created for that assignment, and an
+  `abandoned` session that HAD started is not revived
+- `README.md`: the reset semantics were wrong, `down -v` is now named as the only full reset
+- `docs/DECISIONS.md`: D-015
+
+**Now true.**
+
+1. **The compose stack is verified, not just built.** From `down -v`: mongo self-initiates the
+   replica set and goes healthy on the first probe; `seed` exits 0; `GET /health` answers
+   `{"status":"ok","mongo":"up"}` from the host and the api container reports `healthy`; the
+   web app serves on 5173.
+2. **The transaction works against the containerised single-node replica set.** A real report
+   submitted (`queuedForVerification: true`), the evaluator ran, and the verdict came back
+   `auto_verified` score 79. This is the thing Atlas was silently covering for.
+3. **SSE was verified with a second live visit.** A console stream opened with the business
+   token received `event: visit` carrying `auto_verified` score 76, interleaved with 20 s
+   heartbeats, with no request from the console. `id:` is present, so the replay buffer of
+   D-013 has something to replay against.
+4. **`docker compose up` is no longer a demo reset. `docker compose down -v` is.** Restarting
+   the stack now preserves completed visits, their reports and their verdicts.
+5. **The seed says what it did**: `created=N revived=N preserved=N`. `preserved > 0` is why a
+   participant may have nothing to open — not a broken seed.
+6. **A participant who has submitted their one session sees an empty `/sessions/mine`.** Ten
+   assignments is ten demo visits; after that `down -v` is the way to get more. Accepted cost
+   of D-015, and a candidate to fix properly when the admin surface lands.
+7. `/console/visits` returns a **bare array**, not `{ items: [] }`, and `/auth/login` returns
+   `{ token, user }`, not `accessToken`. Cost me a false alarm; writing it down so it does not
+   cost the next session one.
+
+**The bug, because the shape of it matters.** The D-012 fix made the seed `$set`
+`state: 'pending'` and both clocks on every run so the reaper could not strand demo sessions.
+It was aimed at sessions that never started but was written to apply to all of them. A
+`down` + `up` on a preserved volume therefore turned SUBMITTED sessions back into `pending`
+while they still carried `startedAt`, `endedAt` and `pingCount: 9` — a combination the state
+machine cannot produce — with reports, session events, outbox rows and verification results
+still pointing at them. The console showed 2 visits before the restart and 0 after.
+
+The disappearance was not the worst part. A resurrected session can be `start`ed again, and
+the evaluator builds evidence from every ping for a `sessionId`, so the next verdict would
+have been computed over a merged trace from two different visits and appended under the same
+`engineVersion` (rule 8) with nothing to distinguish them.
+
+**Same lesson as D-014, one layer out.** All 356 tests passed against this, and the
+`re-seeding revives sessions the reaper abandoned` test passed *specifically because* it set
+`state: 'abandoned'` without a `startedAt` — it asserted the D-012 behaviour on exactly the
+input where the behaviour is correct. Nothing was wrong with that test. The bug lived between
+the seed and the state machine, and only appeared when the documented start command was run
+twice with data in between. Found by restarting the stack, which nobody had done.
+
+**Open.**
+
+- Nothing is deployed. HTTPS, and therefore the participant flow on a real phone, is still the
+  largest unknown: the geolocation prompt, Wake Lock and iOS Safari suspension are unverified.
+- Still no reaper. `dueEvent()` and `apply()` are tested but nothing calls them, so `abandoned`
+  and `expired` are unreachable. Note that D-015's guard is written against `startedAt`, not a
+  state list, so it stays correct whichever way the reaper is built.
+- Still no admin surface; the seed remains the only way data enters the system.
+- The api `development` image bakes `packages/shared/dist` but bind-mounts `packages/shared/src`
+  over the source, so a change to shared is invisible in the container until a rebuild. Latent,
+  did not bite this run.

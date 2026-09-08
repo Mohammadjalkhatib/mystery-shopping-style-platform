@@ -147,10 +147,23 @@ set on first start.
 built; nothing in the repo speaks S3. The `S3_*` values stay in `.env.example` so the shape is
 documented if that work resumes.
 
-Re-running `docker compose up` re-seeds. That is the supported way to reset a stale demo: the
-seed is idempotent and re-clocks the demo sessions so the reaper cannot leave them stranded.
+Re-running `docker compose up` re-seeds, and the seed is idempotent. It re-clocks demo
+sessions that have **not started**, so the reaper cannot leave them stranded, and it creates
+any that are missing.
 
-Stop and reset everything including data:
+**It does not touch a session that has already started.** Restarting the stack therefore keeps
+your completed visits, their reports and their verdicts — the console looks the same after an
+`up` as it did before the `down`. The seed says which happened:
+
+```
+[seed] sessions created=0 revived=9 preserved=1 -- preserved sessions have already started...
+```
+
+`preserved` is why no new session appeared for that participant. Earlier this reset every
+session to `pending`, which resurrected submitted visits into a state the state machine cannot
+produce and emptied the console on restart (D-015).
+
+Reset the demo — this is the only full reset, and it destroys the visit data:
 
 ```bash
 docker compose down -v

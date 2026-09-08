@@ -125,6 +125,9 @@ export async function seed(uri: string): Promise<void> {
   let venueCount = 0;
   let taskCount = 0;
   let assignmentCount = 0;
+  let sessionsCreated = 0;
+  let sessionsRevived = 0;
+  let sessionsPreserved = 0;
 
   for (const v of VENUES) {
     const venue = await Venue.findOneAndUpdate(
@@ -178,39 +181,77 @@ export async function seed(uri: string): Promise<void> {
       /**
        * A pending session per assignment, so the participant app has something to open.
        *
-       * The clocks are $set on EVERY run, not $setOnInsert.
+       * THE SEED ONLY TOUCHES A SESSION THAT NEVER STARTED (D-015).
        *
-       * With $setOnInsert they were pinned to first-boot time, and dueEvent() reaps a
-       * pending session off its idle clock after SESSION_ABANDON_AFTER_SECONDS (900).
-       * Fifteen minutes after the first `docker compose up` all ten demo sessions became
-       * `abandoned` -- terminal -- and re-running the seed could not revive them because
-       * the insert never fired again. The demo was then permanently empty and the only
-       * recovery was `docker compose down -v`. Caught by the schema-reviewer pass, D-012.
+       * The clocks are re-`$set` rather than `$setOnInsert`, which is the D-012 fix: pinned
+       * to first-boot time, `dueEvent()` reaps a pending session off its idle clock after
+       * SESSION_ABANDON_AFTER_SECONDS (900), so fifteen minutes after the first
+       * `docker compose up` all ten demo sessions went `abandoned` -- terminal -- and the
+       * insert never fired again to revive them.
        *
-       * Re-seeding is therefore also the documented way to reset a stale demo.
+       * But that fix was written to apply to EVERY session, and it also reset `state` to
+       * `pending`. On a `down` + `up` with the volume preserved, that resurrected SUBMITTED
+       * sessions into a state the state machine cannot produce: `pending` while carrying
+       * `startedAt`, `endedAt` and a non-zero `pingCount`, with reports, session events,
+       * outbox rows and verification results still pointing at them. The console showed the
+       * completed visits before the restart and none after.
+       *
+       * Restarting is not the only cost. A resurrected session can be `start`ed again, and
+       * the evaluator builds evidence from every ping for a `sessionId` -- so the next
+       * verdict would be computed over a MERGED TRACE FROM TWO DIFFERENT VISITS, appended
+       * under the same `engineVersion` (rule 8) with nothing to say which visit it describes.
+       *
+       * The guard is `startedAt === null`, not a list of states, because that is the property
+       * that actually matters: a session with a `startedAt` has evidence attached, whatever
+       * state it currently reports. D-012's real requirement still holds -- a pending session
+       * abandoned off its idle clock never started, so it is still revived.
+       *
+       * `docker compose down -v` is the demo reset now. `up` is not.
        */
       const now = new Date();
-      await Session.findOneAndUpdate(
-        { assignmentId: String(assignment._id) },
-        {
-          $setOnInsert: {
-            assignmentId: String(assignment._id),
-            participantId,
-            clientOrgId,
-            venueId: String(venue._id),
-            pingCount: 0,
-          },
-          // Reset the clocks and the state so the demo is always openable.
-          $set: { state: 'pending', createdAtServer: now, lastSeenAt: now },
-        },
-        { upsert: true, returnDocument: 'after' },
-      );
+      const existing = await Session.findOne({ assignmentId: String(assignment._id) })
+        .select({ _id: 1, startedAt: 1 })
+        .lean<{ _id: unknown; startedAt: Date | null } | null>();
+
+      if (!existing) {
+        await Session.create({
+          assignmentId: String(assignment._id),
+          participantId,
+          clientOrgId,
+          venueId: String(venue._id),
+          pingCount: 0,
+          state: 'pending',
+          createdAtServer: now,
+          lastSeenAt: now,
+        });
+        sessionsCreated++;
+      } else if (existing.startedAt == null) {
+        // Never started, so there is no evidence to contradict. Re-clock it (D-012) and
+        // make sure it is openable again even if the reaper has abandoned it.
+        await Session.updateOne(
+          { _id: existing._id },
+          { $set: { state: 'pending', createdAtServer: now, lastSeenAt: now } },
+        );
+        sessionsRevived++;
+      } else {
+        // Has a startedAt: real evidence hangs off this session. Leave it entirely alone.
+        sessionsPreserved++;
+      }
     }
   }
 
   // eslint-disable-next-line no-console
   console.log(
     `[seed] org=${SEED_ORG_SLUG} venues=${venueCount} tasks=${taskCount} assignments=${assignmentCount} (idempotent)`,
+  );
+  // eslint-disable-next-line no-console
+  console.log(
+    `[seed] sessions created=${sessionsCreated} revived=${sessionsRevived} ` +
+      `preserved=${sessionsPreserved}` +
+      (sessionsPreserved > 0
+        ? ' -- preserved sessions have already started, so the seed left them and their ' +
+          'evidence alone (D-015). `docker compose down -v` is the full reset.'
+        : ''),
   );
   // eslint-disable-next-line no-console
   console.log(
