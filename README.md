@@ -264,8 +264,15 @@ npm run db:seed
 
 ### 3. Create the Render blueprint
 
-New → **Blueprint** → pick this repository. Render reads `render.yaml` and creates both
-services. It will prompt for the values marked `sync: false`:
+New → **Blueprint** → pick this repository.
+
+**Set the branch to `dev`.** Render defaults to the repository's default branch, which is
+`main`, and `main` is deliberately behind — `render.yaml` is not on it. Left on `main`, Render
+reports that it cannot find a blueprint, which looks like a malformed file rather than a
+branch that does not have one yet.
+
+Render then reads `render.yaml` and creates both services. It will prompt for the values
+marked `sync: false`:
 
 | Prompt | Value |
 |---|---|
