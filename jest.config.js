@@ -13,7 +13,13 @@ module.exports = {
   // apps/web is included ONLY for the offline queue: CLAUDE.md section 5 rules out UI
   // rendering tests, but the queue is pure logic where a bug loses or duplicates evidence
   // silently. No component is rendered anywhere in this project.
-  roots: ['<rootDir>/apps/api', '<rootDir>/packages/shared', '<rootDir>/apps/web/src/participant'],
+  roots: [
+    '<rootDir>/apps/api',
+    '<rootDir>/packages/shared',
+    '<rootDir>/apps/web/src/participant',
+    // The i18n dictionary is data with an invariant that fails silently, not UI rendering.
+    '<rootDir>/apps/web/src/i18n',
+  ],
   testMatch: ['**/*.spec.ts'],
   extensionsToTreatAsEsm: ['.ts'],
   // Maps our own `./foo.js` ESM imports back to `foo.ts` without touching node_modules.

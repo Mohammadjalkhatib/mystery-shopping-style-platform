@@ -944,3 +944,50 @@ evaluator on them would not change anything either, which is right but will surp
 There is still no venue delete, and no edit for tasks or assignments. The ingest fallback path
 for snapshot-less sessions is untestable in production because every session created since
 D-012 has one; it is covered by a test and should be deleted once no such sessions remain.
+
+---
+
+## D-022: A hand-written dictionary and document direction, no i18n or RTL library
+
+**Date:** 2026-09-08
+**Status:** accepted
+
+**Decision.** The Arabic pass is a typed object of about ninety strings, a context that swaps
+the dictionary and the theme's `direction` together, and `document.documentElement.dir`. No
+`i18next`, no `stylis-plugin-rtl`. The API gained a `terminalReasonCode` so the one
+server-composed sentence a participant sees can be said in Arabic too.
+
+**Context.** CLAUDE.md scopes this to "participant screens get an Arabic pass, nothing more",
+and every dependency needs a reason. The participant flow is four screens and one language pair.
+`theme.ts` was already written with `direction: 'ltr'` and an Arabic family in the font stack,
+so the groundwork assumed something like this.
+
+**Alternatives considered.**
+
+- *`i18next` + `react-i18next`.* The default answer, with plurals, interpolation, namespaces and
+  lazy-loaded bundles. Rejected because every one of those features is for a problem this does
+  not have: two languages, one namespace, no runtime loading, and a plural rule set that is
+  avoided entirely by writing "Locations recorded: 3" instead of "3 locations". It would be two
+  dependencies and a config file to replace fifteen lines of `replaceAll`.
+- *`stylis-plugin-rtl` for mirrored styles.* The conventional way to flip an emotion app.
+  Rejected after checking what actually needs flipping: `document.dir` already handles text
+  direction, alignment, flex order and logical properties, MUI v9 components follow it, and this
+  app's own `sx` is spacing shorthands rather than physical `marginLeft`. A plugin to mirror
+  styles that are already direction-agnostic is a dependency bought on reputation.
+- *Leaving `terminalReason` as the server's English.* Cheapest, and the string is already
+  written. Rejected because it is the only server-composed sentence a participant ever reads,
+  and leaving it would produce a screen that is Arabic everywhere except the line explaining why
+  their visit was closed — the worst possible sentence to leave untranslated.
+- *Translating the business console too.* Rejected as out of scope by CLAUDE.md section 9. It is
+  an internal tool for a business user, and the verification signal reasons it displays are
+  composed on the server in English; doing it properly means codes and parameters for all nine
+  signals, which is the "full i18n" that was explicitly cut.
+
+**Consequences.** Adding a third language means editing a TypeScript file and shipping a new
+bundle, with no lazy loading — fine at this size, wrong at ten languages. There is no plural
+machinery, so any future copy has to keep being written count-neutrally or it will be subtly
+wrong in Arabic. The console and every signal reason stay English, so a business user reviewing
+an Arabic participant's visit reads English evidence. Numerals are Western digits, not
+Eastern Arabic — correct for Jordan and the Gulf, wrong if this ever ships to a market that
+expects ٠١٢. And the RTL claim rests on inspection rather than a plugin: a future component
+using `marginLeft` directly will not mirror, and nothing will fail to warn about it.

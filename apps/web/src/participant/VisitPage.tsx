@@ -15,6 +15,7 @@ import {
   Typography,
 } from '@mui/material';
 import { useCallback, useEffect, useState } from 'react';
+import { useLocale, useT } from '../i18n/LocaleContext.js';
 import { api, type SessionView } from '../api/client.js';
 import { useAuth } from '../auth/AuthContext.js';
 import { Consent, CONSENT_VERSION } from './Consent.js';
@@ -34,6 +35,8 @@ export function VisitPage() {
   const [current, setCurrent] = useState<SessionView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const t = useT();
+  const { toggle } = useLocale();
 
   const load = useCallback(async () => {
     try {
@@ -74,13 +77,21 @@ export function VisitPage() {
       <AppBar position="sticky">
         <Toolbar sx={{ gap: 1 }}>
           <Typography variant="h3" sx={{ fontSize: '1.05rem', flexGrow: 1 }}>
-            My visit
+            {t('yourVisit')}
           </Typography>
           <Typography variant="body2" color="text.secondary">
             {user?.displayName}
           </Typography>
+          {/*
+            The language toggle lives here because this is the only screen a participant is
+            guaranteed to reach, and it shows the language it switches TO, not the current one
+            -- a button reading "العربية" while the page is already Arabic is a coin flip.
+          */}
+          <Button size="small" onClick={toggle}>
+            {t('language')}
+          </Button>
           <Button size="small" onClick={logout}>
-            Sign out
+            {t('signOut')}
           </Button>
         </Toolbar>
       </AppBar>
@@ -93,9 +104,7 @@ export function VisitPage() {
 
       {!current && (
         <Box sx={{ p: 3, textAlign: 'center' }}>
-          <Typography color="text.secondary">
-            You have no visits assigned right now.
-          </Typography>
+          <Typography color="text.secondary">{t('noVisits')}</Typography>
         </Box>
       )}
 
@@ -147,10 +156,7 @@ export function VisitPage() {
             whether it was their fault (D-019).
           */}
           <Alert severity={current.state === 'submitted' ? 'success' : 'warning'}>
-            {current.state === 'submitted'
-              ? 'Report submitted. It is being reviewed — you do not need to do anything else.'
-              : (current.terminalReason ??
-                `This visit is ${current.state} and can no longer be continued.`)}
+            {current.state === 'submitted' ? t('reportSubmitted') : terminalText(t, current)}
           </Alert>
         </Box>
       )}
@@ -167,6 +173,7 @@ function ReadyToStart({
   busy: boolean;
   onStart: () => void;
 }) {
+  const t = useT();
   return (
     <Box sx={{ p: 2, maxWidth: 560, mx: 'auto' }}>
       <Card>
@@ -175,16 +182,14 @@ function ReadyToStart({
             {session.venue.name}
           </Typography>
           <Typography color="text.secondary" sx={{ mb: 2 }}>
-            {session.venue.indoor ? 'Indoor venue' : 'Outdoor venue'} · {session.venue.radiusM} m
-            geofence
+            {session.venue.indoor ? t('venueIndoor') : t('venueOutdoor')} ·{' '}
+            {t('geofence', { radius: session.venue.radiusM })}
           </Typography>
           <Alert severity="info" sx={{ mb: 2 }}>
-            Start the visit <strong>as you arrive</strong>, and keep this page open and in
-            front of you while you are inside. Your phone can go back in your pocket between
-            interactions — the gaps are expected.
+            {t('readyAdvice')}
           </Alert>
           <Button variant="contained" size="large" fullWidth disabled={busy} onClick={onStart}>
-            {busy ? 'Starting…' : 'Start visit'}
+            {busy ? t('starting') : t('startVisit')}
           </Button>
         </CardContent>
       </Card>
@@ -203,6 +208,8 @@ function ActiveVisit({
   onEnd: () => void;
 }) {
   const t = useVisitTracker(session.id, true);
+  // `t` is the tracker in this component, so the translator is `tx` rather than shadowing it.
+  const tx = useT();
   const [confirming, setConfirming] = useState(false);
 
   const started = session.startedAt ? new Date(session.startedAt).getTime() : Date.now();
@@ -229,14 +236,14 @@ function ActiveVisit({
             <Chip
               size="small"
               color={t.visible ? 'primary' : 'default'}
-              label={t.visible ? 'Capturing' : 'Paused'}
+              label={t.visible ? tx('capturing') : tx('paused')}
             />
           </Stack>
           <Typography variant="h1" sx={{ fontSize: '2.2rem', fontVariantNumeric: 'tabular-nums' }}>
             {mins}:{String(secs).padStart(2, '0')}
           </Typography>
           <Typography color="text.secondary" variant="body2">
-            on site
+            {tx('onSite')}
           </Typography>
         </CardContent>
       </Card>
@@ -244,39 +251,43 @@ function ActiveVisit({
       {/* Honest status. Each of these is a real condition, not a decorative badge. */}
       {t.permission === 'denied' && (
         <Alert severity="error" sx={{ mb: 2 }}>
-          Location permission is off, so nothing is being recorded. Turn it on in your browser
-          settings — without it this visit cannot be verified.
+          {tx('permDenied')}
         </Alert>
       )}
       {t.permission === 'unsupported' && (
         <Alert severity="error" sx={{ mb: 2 }}>
-          This browser does not provide location. Try Chrome or Safari.
+          {tx('permUnsupported')}
         </Alert>
       )}
       {!t.visible && (
         <Alert severity="warning" sx={{ mb: 2 }}>
-          This page is in the background, so your location is not being recorded right now.
-          That is normal and the gap is expected — bring the page back when you can.
+          {tx('backgroundNotice')}
         </Alert>
       )}
       {!t.online && (
         <Alert severity="warning" sx={{ mb: 2 }}>
-          You are offline. Fixes are being saved on your phone and will send themselves when
-          you reconnect. {t.pending > 0 && `${t.pending} waiting.`}
+          {tx('offlineNotice')}{' '}
+          {t.pending > 0 && tx('offlineWaiting', { count: t.pending })}
         </Alert>
       )}
 
       <Card sx={{ mb: 2 }}>
         <CardContent>
           <Typography variant="body2" color="text.secondary">
-            {t.captured} location{t.captured === 1 ? '' : 's'} recorded
-            {t.lastAccuracyM !== null && ` · last accurate to ~${Math.round(t.lastAccuracyM)} m`}
-            {t.pending > 0 && ` · ${t.pending} waiting to send`}
-            {t.wakeLock && ' · screen kept awake while this page is open'}
+            {/*
+              Count-neutral phrasing ("Locations recorded: 3"), not "3 locations". English
+              needs one plural rule, Arabic needs six, and a pass is not the place to build a
+              plural engine -- so the copy is written to need none.
+            */}
+            {tx('locationsRecorded', { count: t.captured })}
+            {t.lastAccuracyM !== null &&
+              ` · ${tx('lastAccurate', { metres: Math.round(t.lastAccuracyM) })}`}
+            {t.pending > 0 && ` · ${tx('waitingToSend', { count: t.pending })}`}
+            {t.wakeLock && ` · ${tx('screenAwake')}`}
           </Typography>
           {t.captured === 0 && t.permission === 'granted' && (
             <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-              Waiting for a first fix. This can take a few seconds outdoors and longer inside.
+              {tx('waitingFirstFix')}
             </Typography>
           )}
         </CardContent>
@@ -285,12 +296,12 @@ function ActiveVisit({
       {confirming ? (
         <Stack spacing={1.5}>
           <Alert severity="info">
-            Ending the visit stops location capture. You will write your report next.
+            {tx('endingNotice')}
           </Alert>
           <Button variant="contained" size="large" fullWidth disabled={busy} onClick={onEnd}>
-            {busy ? 'Ending…' : 'Yes, end the visit'}
+            {busy ? tx('ending') : tx('endingConfirm')}
           </Button>
-          <Button onClick={() => setConfirming(false)}>Not yet</Button>
+          <Button onClick={() => setConfirming(false)}>{tx('notYet')}</Button>
         </Stack>
       ) : (
         <Button
@@ -300,7 +311,7 @@ function ActiveVisit({
           color="secondary"
           onClick={() => setConfirming(true)}
         >
-          End visit
+          {tx('endVisit')}
         </Button>
       )}
     </Box>
@@ -312,6 +323,7 @@ function ReportForm({ session, onSubmitted }: { session: SessionView; onSubmitte
   const [rating, setRating] = useState<number | null>(4);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const t = useT();
 
   const submit = async (): Promise<void> => {
     setBusy(true);
@@ -329,7 +341,7 @@ function ReportForm({ session, onSubmitted }: { session: SessionView; onSubmitte
   return (
     <Box sx={{ p: 2, maxWidth: 560, mx: 'auto' }}>
       <Typography variant="h1" sx={{ fontSize: '1.3rem', mb: 0.5 }}>
-        Your report
+        {t('reportTitle')}
       </Typography>
       <Typography color="text.secondary" sx={{ mb: 2 }}>
         {session.venue.name}
@@ -344,19 +356,19 @@ function ReportForm({ session, onSubmitted }: { session: SessionView; onSubmitte
       <Card>
         <CardContent>
           <Typography component="legend" variant="body2" sx={{ mb: 0.5 }}>
-            Overall experience
+            {t('reportRating')}
           </Typography>
           <Rating value={rating} onChange={(_, v) => setRating(v)} size="large" sx={{ mb: 2 }} />
           <Divider sx={{ mb: 2 }} />
           <TextField
-            label="What did you observe?"
-            placeholder="Greeting time, staff helpfulness, queue length, cleanliness…"
+            label={t('reportNotes')}
+            placeholder={t('reportNotesHint')}
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             multiline
             minRows={5}
             fullWidth
-            helperText={`${notes.trim().length}/10 characters minimum`}
+            helperText={t('reportNotesCounter', { count: notes.trim().length })}
             error={notes.length > 0 && notes.trim().length < 10}
           />
         </CardContent>
@@ -370,8 +382,35 @@ function ReportForm({ session, onSubmitted }: { session: SessionView; onSubmitte
         disabled={busy || notes.trim().length < 10}
         onClick={() => void submit()}
       >
-        {busy ? 'Submitting…' : 'Submit report'}
+        {busy ? t('submitting') : t('submitReport')}
       </Button>
     </Box>
   );
+}
+
+/**
+ * The end-of-visit message, in the participant's language.
+ *
+ * Renders from `terminalReasonCode` rather than the server's English `terminalReason`, which
+ * is the only server-composed sentence a participant ever sees. Without the code this screen
+ * would be Arabic everywhere except the one line explaining what went wrong (D-022). The
+ * English text is still the fallback if a future code arrives that this build does not know.
+ */
+function terminalText(
+  t: (key: Parameters<ReturnType<typeof useT>>[0], vars?: Record<string, string | number>) => string,
+  session: SessionView,
+): string {
+  const { abandonMinutes: mins, hardCapHours: hours } = session.timeouts;
+  switch (session.terminalReasonCode) {
+    case 'never_started':
+      return t('endedNeverStarted', { mins });
+    case 'went_quiet':
+      return t('endedWentQuiet', { mins });
+    case 'no_report':
+      return t('endedNoReport', { mins });
+    case 'expired':
+      return t('endedExpired', { hours });
+    default:
+      return session.terminalReason ?? t('endedGeneric');
+  }
 }
