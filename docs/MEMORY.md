@@ -1316,3 +1316,53 @@ written to myself, plus an out-of-scope line saying there was no task authoring 
 unverified on an iPhone, RTL has not been looked at on a real screen, and `accuracyRealism`
 still has the false positive from user2's visit — penalising an honest 4 m fix at an indoor
 venue. That last one needs a spoof-adversary pass before anyone touches it.
+
+### 2026-09-08 - feat/i18n-json-and-ux
+
+**What.** All copy moved to `en.json` / `ar.json` and extended to the whole app (console and
+admin were English). A discreet screen for the participant. A responsive pass so the pages work
+on a phone.
+
+**Why.** D-024 and D-025, both from direct user requests. D-024 supersedes the format and scope
+halves of D-022; the no-library decision there still stands.
+
+**Files.**
+
+- `apps/web/src/i18n/en.json`, `ar.json`: ~145 keys, nested by area. `strings.ts`: JSON loaders,
+  `TranslationKey` derived from English, `lookup`/`interpolate`/`flatten`.
+- `apps/web/src/i18n/strings.spec.ts`: 11 tests. `LocaleContext.tsx`: dotted keys with fallback.
+- `Console.tsx`, `TasksTab.tsx`, `VerdictChip.tsx`: localised — these were entirely English.
+- `apps/web/src/participant/DiscreetMode.tsx`: new. `VisitPage.tsx`: renders it as an overlay.
+- `apps/web/tsconfig.json`, `jest.config.js`: `resolveJsonModule`.
+
+**Now true.**
+
+1. **`en.json` is the source of truth and `TranslationKey` is derived from it**, so a key that
+   does not exist in English is a compile error. What types CANNOT see — an empty value, an
+   untranslated copy-paste, a dropped `{placeholder}`, a key missing from Arabic — is what
+   `strings.spec.ts` exists for. Do not weaken it; these files are meant to be edited by
+   non-developers.
+2. **`t()` falls back English → key, never to empty.** Lookup is now runtime, so a bad key is
+   possible in a way it was not before; a visible untranslated sentence beats a blank button.
+3. **Verification signal reasons are STILL English in every locale.** They are composed on the
+   API. This is the visible seam the whole-app translation created, and it is documented in the
+   README rather than hidden.
+4. **`DiscreetMode` is an overlay rendered as a SIBLING inside `ActiveVisit`.** It must never
+   replace that subtree: `useVisitTracker` lives there, so unmounting it to show a cover would
+   release the watch and stop capture — the opposite of the feature's purpose.
+5. **It deliberately does not imitate a real lock screen** (D-025) and always shows that the
+   visit is running. It conceals from a bystander, never from the participant.
+6. **The visit list has two presentations**: a table from `sm` up, cards below. A four-column
+   table was unusable at 360 px. Both render from the same `rows`.
+
+**Verified rather than assumed.** 443 tests pass, both apps build. Not verified: nothing has been
+looked at in a browser — the Chrome extension is not connected in this environment — so the
+responsive work and RTL are reasoned, not observed.
+
+**Open.**
+
+- **No graphs anywhere.** Never built, never planned; the user asked as though they existed.
+- **No evidence upload.** Never built either — only an `evidenceKey` field on the report schema.
+  It is a documented cut (README, "Deliberately out of scope"), and reversing it needs S3/R2
+  credentials plus a decision entry.
+- Discreet mode and the responsive layouts are unobserved on a real device.
