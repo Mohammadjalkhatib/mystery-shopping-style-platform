@@ -125,11 +125,25 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Brings up `mongo`, `minio`, `api` and `web`, creates the bucket, and seeds the database.
+That is the whole procedure — the stack seeds itself, with no manual step.
 
 - Web: http://localhost:5173
 - API: http://localhost:3000
-- MinIO console: http://localhost:9001 (minioadmin / minioadmin)
+- Mongo: `localhost:27017` (add `?directConnection=true` to connect from the host — the
+  replica set advertises itself as `mongo:27017`, which only resolves inside the network)
+
+**Mongo runs as a single-node replica set, not a standalone.** Design rule 9 makes report
+submission one transaction, and MongoDB refuses multi-document transactions outside a replica
+set. A standalone container meant `submit` failed locally while working on Atlas — the worst
+kind of bug, invisible until someone ran the documented command. The healthcheck initiates the
+set on first start.
+
+**There is no MinIO service.** It existed for evidence upload, which is out of scope and not
+built; nothing in the repo speaks S3. The `S3_*` values stay in `.env.example` so the shape is
+documented if that work resumes.
+
+Re-running `docker compose up` re-seeds. That is the supported way to reset a stale demo: the
+seed is idempotent and re-clocks the demo sessions so the reaper cannot leave them stranded.
 
 Stop and reset everything including data:
 

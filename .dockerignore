@@ -1,0 +1,22 @@
+# Never copy host artefacts into a build: node_modules is platform-specific and dist would
+# mask a broken build with a stale one.
+node_modules
+**/node_modules
+dist
+**/dist
+**/dist-types
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# Secrets. .env.example is the only env file that belongs in an image.
+.env
+.env.*
+!.env.example
+
+.git
+.githooks
+coverage
+*.log
+.claude
+docs
+README.md
