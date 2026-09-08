@@ -903,3 +903,29 @@ than one wrong line. Write-up in `docs/AI-NOTES.md`.
 **Open.** Unchanged. Nothing is deployed and verified: the Docker build from the repository
 root, SSE through Render's proxy, and a Nest boot inside 512 MB / 0.1 CPU are all still
 untested, as is the participant flow on a phone.
+
+### 2026-09-08 - fix/signal-copy-article
+
+**What.** `accuracyRealism` rendered "consistent with a indoor venue". Now "an".
+
+**Why.** Found in the console output of the first real phone visit, not by a test. Signal
+reasons are the product — rule 1 says a verdict is a score plus reasons a human can act on —
+so this is shipped user-facing copy on the surface a client is meant to trust, not a comment.
+
+**Files.**
+
+- `apps/api/src/verification/signals.ts`: the `+2` accuracyRealism branch interpolates
+  `indoor ? 'indoor' : 'outdoor'` after an article. Both branches begin with a vowel, so the
+  article is unconditionally "an" and needs no ternary of its own.
+
+**Now true.**
+
+1. **No test covers signal prose, deliberately.** The testing policy tests where a bug is
+   silent and expensive; a wrong article is visible and cheap, and asserting on reason strings
+   would freeze copy that should stay editable. This one was caught the only way it could be —
+   by reading the console the way a client would. Grep for `a ${` before adding a branch that
+   interpolates a word after an article; that sweep is now clean across `signals.ts`.
+2. Copy only. No signal, weight or threshold moved, so no spoof-adversary run was required and
+   none was done. 359 tests pass, unchanged.
+
+**Open.** Nothing. Standalone fix.
