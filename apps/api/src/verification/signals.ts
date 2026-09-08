@@ -223,7 +223,7 @@ export const accuracyRealism: SignalFn = (evidence, rollups) => {
   return {
     code: 'accuracyRealism',
     contribution: 2,
-    reason: `Accuracy varied between readings and its median of ${Math.round(median)} m is consistent with a ${indoor ? 'indoor' : 'outdoor'} venue.`,
+    reason: `Accuracy varied between readings and its median of ${Math.round(median)} m is consistent with an ${indoor ? 'indoor' : 'outdoor'} venue.`,
   };
 };
 
