@@ -14,7 +14,12 @@ import type { AuthUser, Verdict } from '@msp/shared';
 import { Observable, concat, from, interval, map, merge } from 'rxjs';
 import { CurrentUser, Roles } from '../auth/auth.decorators.js';
 import { ReaperService } from '../session/reaper.service.js';
-import { ConsoleService, type VisitDetail, type VisitRow } from './console.service.js';
+import {
+  ConsoleService,
+  type ConsoleStats,
+  type VisitDetail,
+  type VisitRow,
+} from './console.service.js';
 import { ReviewDto } from './dto/review.dto.js';
 import { VisitEventsService } from './visit-events.service.js';
 
@@ -70,6 +75,19 @@ export class ConsoleController {
   async counts(@CurrentUser() user: AuthUser): Promise<Record<string, number>> {
     await this.reaper.reapForOrg(user.clientOrgId);
     return this.console.counts(user);
+  }
+
+  /**
+   * Dashboard aggregates. Same tenancy rule as every other console read: the org comes from
+   * the verified token, never from a query parameter.
+   *
+   * Declared BEFORE `visits/:sessionId` would be reached, but on its own path, so there is no
+   * chance of `stats` being captured as a session id.
+   */
+  @Roles('business', 'admin')
+  @Get('stats')
+  stats(@CurrentUser() user: AuthUser, @Query('days') days?: string): Promise<ConsoleStats> {
+    return this.console.stats(user, days ? Number(days) : undefined);
   }
 
   @Roles('business', 'admin')

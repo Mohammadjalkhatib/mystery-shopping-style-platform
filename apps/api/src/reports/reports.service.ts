@@ -3,6 +3,7 @@ import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import type { AuthUser } from '@msp/shared';
 import type { Connection, Model } from 'mongoose';
 import { OutboxEntry, Report } from '../db/schemas/report-verification.schema.js';
+import { EvidenceService } from '../evidence/evidence.service.js';
 import { Session } from '../db/schemas/task-session.schema.js';
 import { SessionsService } from '../session/sessions.service.js';
 import { EvaluatorRunner } from '../verification/evaluator.runner.js';
@@ -17,6 +18,7 @@ export class ReportsService {
     @InjectModel(OutboxEntry.name) private readonly outbox: Model<OutboxEntry>,
     private readonly sessionsService: SessionsService,
     private readonly runner: EvaluatorRunner,
+    private readonly evidence: EvidenceService,
   ) {}
 
   /**
@@ -46,6 +48,18 @@ export class ReportsService {
     if (!session) throw new NotFoundException('Session not found');
     if (session.participantId !== user.id) {
       throw new ForbiddenException('This session belongs to another participant');
+    }
+
+    /**
+     * The evidence key is checked BEFORE the transaction opens.
+     *
+     * It is a client-carried identifier (rule 2), so the server confirms the stored object was
+     * uploaded against THIS session rather than trusting the value. Outside the transaction on
+     * purpose: a rejected key should be a 400 or 403 the participant can act on, not a rolled
+     * back submit that reads as a server fault.
+     */
+    if (dto.evidenceKey) {
+      await this.evidence.assertBelongsTo(dto.evidenceKey, sessionId);
     }
 
     const now = new Date();
@@ -78,7 +92,7 @@ export class ReportsService {
               participantId: user.id,
               notes: dto.notes,
               rating: dto.rating,
-              evidenceKey: null,
+              evidenceKey: dto.evidenceKey ?? null,
               // Server clock. A client-supplied submittedAt is not in the DTO at all.
               submittedAt: now,
             },
@@ -104,6 +118,21 @@ export class ReportsService {
      * periodic sweep picks the outbox row up, which is the whole point of having an outbox.
      */
     this.runner.kick();
+
+    /**
+     * Sweep any photo this session uploaded that the report did not reference.
+     *
+     * The replace case is handled at upload time, but a participant who attaches a photo and
+     * then submits without it would otherwise leave an object nothing points at, no product
+     * surface can reach, and no retention rule covers -- a picture taken inside a venue, kept
+     * for ever, invisible. Found by the schema-reviewer pass.
+     *
+     * After the commit and deliberately not awaited into the response: submit must stay a fast
+     * transactional write (rule 9), and a failed cleanup is a stale object, not a failed visit.
+     */
+    void this.evidence
+      .deleteForSession(sessionId, dto.evidenceKey ?? null)
+      .catch(() => undefined);
 
     return { sessionId, submittedAt: now, queuedForVerification: true };
   }

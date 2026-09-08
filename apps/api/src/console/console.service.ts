@@ -19,6 +19,19 @@ export interface VisitRow {
   score: number | null;
 }
 
+export interface ConsoleStats {
+  /** The window these numbers describe, so a tile can say what it is counting. */
+  days: number;
+  totals: { visits: number; auto_verified: number; needs_review: number; rejected: number };
+  /** Median rather than mean: one 4,789 m outlier should not move the headline. */
+  medianCoverageRatio: number | null;
+  medianScore: number | null;
+  /** Newest last, one entry per day, zero-filled so the axis has no holes. */
+  byDay: { date: string; auto_verified: number; needs_review: number; rejected: number }[];
+  /** Which signals actually cost visits their score, worst first. */
+  topFailingSignals: { code: string; visits: number; totalPenalty: number; reason: string }[];
+}
+
 export interface VisitDetail extends VisitRow {
   startedAt: Date | null;
   signals: Signal[];
@@ -31,7 +44,13 @@ export interface VisitDetail extends VisitRow {
     medianAccuracyM: number | null;
     unusableFixCount: number;
   } | null;
-  report: { notes: string; rating: number; submittedAt: Date } | null;
+  report: {
+    notes: string;
+    rating: number;
+    submittedAt: Date;
+    /** The key only. The image itself is served by a separate, separately-authorized route. */
+    evidenceKey: string | null;
+  } | null;
   review: { decision: string; note: string; reviewerId: string; at: Date } | null;
   venue: { name: string; radiusM: number; indoor: boolean } | null;
 }
@@ -127,7 +146,7 @@ export class ConsoleService {
 
     const report = await this.reports
       .findOne({ sessionId })
-      .lean<{ notes: string; rating: number; submittedAt: Date }>();
+      .lean<{ notes: string; rating: number; submittedAt: Date; evidenceKey: string | null }>();
 
     const review = await this.reviews
       .findOne({ sessionId })
@@ -149,7 +168,14 @@ export class ConsoleService {
       signals: result?.signals ?? [],
       engineVersion: result?.engineVersion ?? null,
       rollups: result?.rollups ?? null,
-      report: report ? { notes: report.notes, rating: report.rating, submittedAt: report.submittedAt } : null,
+      report: report
+        ? {
+            notes: report.notes,
+            rating: report.rating,
+            submittedAt: report.submittedAt,
+            evidenceKey: report.evidenceKey ?? null,
+          }
+        : null,
       review: review ?? null,
       venue: venue ? { name: venue.name, radiusM: venue.radiusM, indoor: venue.indoor } : null,
     };
@@ -192,6 +218,115 @@ export class ConsoleService {
     });
 
     return { ok: true };
+  }
+
+  /**
+   * The dashboard numbers.
+   *
+   * Aggregated in Mongo rather than pulled into Node: this is the one console read whose cost
+   * grows with history rather than with page size, and `{ clientOrgId, state, endedAt }` already
+   * exists as an index for exactly this shape of query.
+   *
+   * Rule 6 still holds -- sessions and verificationResults only. `topFailingSignals` reads the
+   * signals the evaluator already wrote; it never touches a ping.
+   */
+  async stats(user: AuthUser, days = 30): Promise<ConsoleStats> {
+    const orgId = this.orgFor(user);
+    const window = Math.min(Math.max(Math.trunc(days), 1), 365);
+    const since = new Date(Date.now() - window * 24 * 60 * 60 * 1000);
+
+    const sessionMatch: Record<string, unknown> = { state: 'submitted', endedAt: { $gte: since } };
+    if (orgId) sessionMatch.clientOrgId = orgId;
+
+    const sessions = await this.sessions
+      .find(sessionMatch)
+      .select({ _id: 1, endedAt: 1, latestVerdict: 1, latestScore: 1 })
+      .lean<
+        {
+          _id: unknown;
+          endedAt: Date | null;
+          latestVerdict: Verdict | null;
+          latestScore: number | null;
+        }[]
+      >();
+
+    const totals = { visits: sessions.length, auto_verified: 0, needs_review: 0, rejected: 0 };
+    const perDay = new Map<string, { auto_verified: number; needs_review: number; rejected: number }>();
+    const scores: number[] = [];
+
+    for (const s of sessions) {
+      if (s.latestVerdict) totals[s.latestVerdict] += 1;
+      if (typeof s.latestScore === 'number') scores.push(s.latestScore);
+      if (!s.endedAt || !s.latestVerdict) continue;
+      const key = s.endedAt.toISOString().slice(0, 10);
+      const row = perDay.get(key) ?? { auto_verified: 0, needs_review: 0, rejected: 0 };
+      row[s.latestVerdict] += 1;
+      perDay.set(key, row);
+    }
+
+    /**
+     * Zero-filled, every day in the window.
+     *
+     * A bar chart built only from days that HAVE visits silently compresses quiet periods and
+     * makes a gap look like continuous activity -- the axis would lie about the shape of the
+     * data, which is the whole thing a time series is for.
+     */
+    const byDay: ConsoleStats['byDay'] = [];
+    for (let i = window - 1; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      byDay.push({ date: d, ...(perDay.get(d) ?? { auto_verified: 0, needs_review: 0, rejected: 0 }) });
+    }
+
+    const ids = sessions.map((s) => String(s._id));
+    const [signalRows, coverageRows] = await Promise.all([
+      /**
+       * Only NEGATIVE contributions, grouped by code.
+       *
+       * "Recurring failures" is the question a business user actually has, and a signal that
+       * awards +2 for honest GPS is not a failure. Mixing the two would net them out and show
+       * nothing.
+       */
+      this.results.aggregate<{ _id: string; visits: number; totalPenalty: number; reason: string }>([
+        { $match: { sessionId: { $in: ids } } },
+        { $unwind: '$signals' },
+        { $match: { 'signals.contribution': { $lt: 0 } } },
+        {
+          $group: {
+            _id: '$signals.code',
+            visits: { $sum: 1 },
+            totalPenalty: { $sum: '$signals.contribution' },
+            reason: { $first: '$signals.reason' },
+          },
+        },
+        { $sort: { visits: -1 } },
+        { $limit: 6 },
+      ]),
+      this.results.aggregate<{ _id: null; coverage: number[] }>([
+        { $match: { sessionId: { $in: ids } } },
+        { $group: { _id: null, coverage: { $push: '$rollups.coverageRatio' } } },
+      ]),
+    ]);
+
+    const median = (xs: number[]): number | null => {
+      const clean = xs.filter((n) => typeof n === 'number' && Number.isFinite(n)).sort((a, b) => a - b);
+      if (clean.length === 0) return null;
+      const mid = Math.floor(clean.length / 2);
+      return clean.length % 2 ? clean[mid]! : (clean[mid - 1]! + clean[mid]!) / 2;
+    };
+
+    return {
+      days: window,
+      totals,
+      medianCoverageRatio: median(coverageRows[0]?.coverage ?? []),
+      medianScore: median(scores),
+      byDay,
+      topFailingSignals: signalRows.map((r) => ({
+        code: r._id,
+        visits: r.visits,
+        totalPenalty: r.totalPenalty,
+        reason: r.reason,
+      })),
+    };
   }
 
   /** Counts for the filter chips. */

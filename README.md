@@ -49,11 +49,12 @@ Built and working end to end:
 - [x] All copy in two editable JSON files, `apps/web/src/i18n/{en,ar}.json`, for new dialects
 - [x] Discreet mode: a dark clock overlay so the page is not conspicuous in-store, capture unaffected
 - [x] Responsive layouts: the visit list becomes cards on a phone, toolbars and forms adapt
+- [x] One evidence photo per visit: uploaded by the participant, shown on the console's evidence trail
+- [x] Console Overview: stat tiles, verdicts per day, and a ranking of the signals that fail most
 - [x] Capture watchdog: a silent `watchPosition` is re-attached, and restarts are shown
 
 Not built:
 
-- [ ] Evidence upload to object storage — deliberately cut, see "Deliberately out of scope"
 
 ---
 
@@ -498,6 +499,14 @@ See `.env.example`. Every value is documented there. The ones worth knowing abou
 
 Stated plainly rather than left to be discovered.
 
+**Evidence photos never expire, while location pings do.** Rule 10 makes the ping TTL a privacy
+control; a photo taken inside a venue is at least as identifying and currently has no retention
+window at all. A TTL index is the wrong fix — it deletes the GridFS file document without
+cascading to `evidence.chunks`, so the bytes would survive in the database permanently and stop
+being reachable through the API that could remove them. The correct shape is a sweep calling
+`bucket.delete()`, reconciled on boot like the ping TTL is. Not built. Related: a session that
+uploads a photo and never submits still leaks it, because the sweep currently runs on submit.
+
 **Authoring exists; deletion does not.** `POST /venues`, `/tasks`, `/assignments` and
 `PATCH /venues/:id` are built, role-guarded and driven from the console's Tasks tab, so the seed
 is no longer the only way work enters the system, and a mistyped geofence can be corrected.
@@ -615,6 +624,8 @@ wearing a number.
 Named so it is clear these are cuts, not omissions:
 
 - Payments and reward disbursement
+- Object storage. The evidence photo lives in MongoDB GridFS, not S3/R2 (D-026) — the interface
+  is narrow enough to swap, but no bucket is provisioned and photos share the 512 MB Atlas tier
 - A full task authoring UI. Venues, tasks and assignments can be created, and a venue can be
   corrected; nothing can be deleted and tasks cannot be edited
 - Participant reputation scoring, which is the strongest long-run verification signal but
