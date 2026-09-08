@@ -625,3 +625,41 @@ green run:
   That is the one thing standing between this and a verified deliverable.
 - No production compose file or deploy target. Nothing is deployed.
 - Still no reaper, no admin surface, and the participant flow is untested on a real phone.
+
+---
+
+### 2026-09-08 - fix/seed-venue-location
+
+**What.** The demo venues can be relocated with `SEED_VENUE_LAT` / `SEED_VENUE_LNG`.
+
+**Why.** The seed defaults to real Kuwait coordinates because that is the client's market. But
+a geofence is 75 m wide and **whoever is testing is usually not standing in it** — from Amman
+the seeded venues are 1,188 km away, so every honest visit scores `proximity -25` and
+`presenceDwell -20` and is rejected. The demo becomes untestable, and it looks like the engine
+is broken when it is working perfectly.
+
+Faking a location does not help and that is the point of the system: a DevTools override emits
+identical consecutive coordinates, trips `jitterFingerprint` at −45, and is also rejected.
+
+**Files.**
+
+- `apps/api/src/db/seed.ts`: `resolveVenues()`, venue upsert changed to `$set` the location
+- `.env.example`, `README.md`: documented, with the reason
+- `apps/api/src/db/review-findings.spec.ts`: 3 tests
+
+**Now true.**
+
+1. **Venue NAMES are stable across relocation, and that is load-bearing.** The upsert is keyed
+   on `(clientOrgId, name)`. The first version renamed the venue when relocating, which created
+   a SECOND venue instead of moving the first — four venues, with assignments still pointing at
+   the original coordinates. Silently. The address carries the location instead.
+2. **The location upsert uses `$set`, not `$setOnInsert`.** Otherwise re-seeding with new
+   coordinates does nothing and the demo keeps rejecting every visit for an invisible reason.
+3. **The environment is read when `seed()` RUNS, not when the module loads.** Module-scope
+   `process.env` requires the caller to set variables before the import — a rule nothing
+   enforces, and it silently did nothing the first time it was tried.
+4. The indoor venue sits ~440 m from the outdoor one: walkable from one spot, geofences do not
+   overlap. A test asserts both properties.
+
+**Open.** This is a seed-time workaround for a missing admin surface. The real answer is
+`POST /venues` and a form, so a venue can be created wherever it actually is.

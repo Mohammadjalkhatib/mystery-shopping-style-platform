@@ -212,6 +212,90 @@ describe('schema-reviewer findings (D-012)', () => {
     });
   });
 
+
+  describe('the demo venues can be relocated for local testing', () => {
+    /**
+     * A geofence is 75 m wide, so testing from outside the client's market rejects every
+     * visit -- correctly, which is what makes it confusing. SEED_VENUE_LAT/LNG moves the
+     * demo venues to wherever the tester is.
+     */
+    afterEach(() => {
+      delete process.env.SEED_VENUE_LAT;
+      delete process.env.SEED_VENUE_LNG;
+    });
+
+    it('MOVES the venues rather than creating a second pair', async () => {
+      // The upsert is keyed on (clientOrgId, name), so an earlier version that renamed the
+      // venue on relocation created four venues and left assignments pointing at the
+      // original coordinates -- silently, which is the worst version of this bug.
+      const uri = mongod.getUri('seed-relocate');
+      await seed(uri);
+
+      process.env.SEED_VENUE_LAT = '31.9539';
+      process.env.SEED_VENUE_LNG = '35.9106';
+      await seed(uri);
+
+      const c = await mongoose.createConnection(uri).asPromise();
+      const venues = await c
+        .model('Venue', VenueSchema)
+        .find()
+        .lean<{ location: { coordinates: [number, number] } }[]>();
+      await c.close();
+
+      expect(venues).toHaveLength(2);
+      for (const v of venues) {
+        const [lng, lat] = v.location.coordinates;
+        expect(lat).toBeCloseTo(31.95, 1);
+        expect(lng).toBeCloseTo(35.91, 1);
+      }
+    });
+
+    it('reads the environment when seed() RUNS, not when the module loads', async () => {
+      // Module-scope process.env reads require the caller to set variables before the
+      // import -- a rule nothing enforces, and it silently did nothing the first time.
+      const uri = mongod.getUri('seed-lazy-env');
+      process.env.SEED_VENUE_LAT = '25.2854';
+      process.env.SEED_VENUE_LNG = '51.5310';
+      await seed(uri);
+
+      const c = await mongoose.createConnection(uri).asPromise();
+      const v = await c
+        .model('Venue', VenueSchema)
+        .findOne()
+        .lean<{ location: { coordinates: [number, number] } }>();
+      await c.close();
+      expect(v!.location.coordinates[1]).toBeCloseTo(25.28, 1);
+    });
+
+    it('keeps the two venues walkably apart, not stacked', async () => {
+      const uri = mongod.getUri('seed-spacing');
+      process.env.SEED_VENUE_LAT = '31.9539';
+      process.env.SEED_VENUE_LNG = '35.9106';
+      await seed(uri);
+
+      const c = await mongoose.createConnection(uri).asPromise();
+      const vs = await c
+        .model('Venue', VenueSchema)
+        .find()
+        .lean<{ location: { coordinates: [number, number] }; radiusM: number }[]>();
+      await c.close();
+
+      const [a, b] = vs.map((v) => v.location.coordinates);
+      const R = 6371000;
+      const rad = (d: number): number => (d * Math.PI) / 180;
+      const dLat = rad(b![1] - a![1]);
+      const dLng = rad(b![0] - a![0]);
+      const h =
+        Math.sin(dLat / 2) ** 2 +
+        Math.sin(dLng / 2) ** 2 * Math.cos(rad(a![1])) * Math.cos(rad(b![1]));
+      const metres = 2 * R * Math.asin(Math.sqrt(h));
+
+      // Far enough that their geofences do not overlap, close enough to walk between.
+      expect(metres).toBeGreaterThan(vs[0]!.radiusM + vs[1]!.radiusM);
+      expect(metres).toBeLessThan(1000);
+    });
+  });
+
   describe('the seeded demo does not reap itself', () => {
     it('re-seeding revives sessions the reaper abandoned', async () => {
       // With $setOnInsert on the clocks, every demo session went terminal 15 minutes after

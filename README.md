@@ -33,20 +33,25 @@ See `docs/DECISIONS.md` D-001 for the full reasoning.
 
 <!-- Keep this current with dev. One line each. -->
 
-- [x] Demo auth: three roles, deny-by-default guards, one test per boundary
-- [x] Demo auth: three roles, deny-by-default guards, one test per boundary
-- [ ] Admin creates a venue with a per-venue geofence radius
-- [ ] Admin creates a task and assigns it to a participant
-- [ ] Participant consent screen, versioned and recorded
-- [ ] Participant starts a visit session, server-authoritative state
-- [ ] Location sampling while the tab is visible, with Screen Wake Lock
-- [ ] Offline buffering to IndexedDB, idempotent flush on reconnect
-- [ ] Participant ends the session and submits a report
-- [ ] Evidence upload to object storage, EXIF read then stripped
-- [ ] Verification engine: score, verdict, signals
-- [ ] Business console live visit feed over SSE, no refresh
-- [ ] Review queue for the ambiguous band
-- [ ] Abandoned session reaper and hard session cap
+Built and working end to end:
+
+- [x] Demo auth: three roles, deny-by-default guards, one test per authorization boundary
+- [x] Participant consent screen, versioned and recorded with a server timestamp
+- [x] Participant starts a visit session, server-authoritative state machine
+- [x] Location sampling while the tab is visible, with Screen Wake Lock
+- [x] Offline buffering, idempotent flush on reconnect
+- [x] Participant ends the session and submits a report
+- [x] Verification engine: score, verdict, signals — each with a human-readable reason
+- [x] Report submission and verification decoupled through an outbox, with a lease
+- [x] Business console live visit feed over SSE, no refresh, replay across reconnects
+- [x] Review queue as a filter on the feed, with a recorded human override
+- [x] Seeded demo data, relocatable for testing outside the client's market
+
+Not built:
+
+- [ ] Admin UI for creating venues, tasks and assignments (seed only — see "What is missing")
+- [ ] Abandoned session reaper and hard session cap (the logic exists; nothing schedules it)
+- [ ] Evidence upload to object storage — deliberately cut, see "Deliberately out of scope"
 - [ ] Arabic pass on participant screens
 
 ---
@@ -214,6 +219,63 @@ See `.env.example`. Every value is documented there. The ones worth knowing abou
 | `VERIFY_AUTO_THRESHOLD` / `VERIFY_REJECT_THRESHOLD` | Verdict banding. Config rather than constants because they are placeholders until there is labelled data to tune them against |
 | `SESSION_HARD_CAP_SECONDS` | Sessions auto-end. Without this you accumulate zombie sessions and keep tracking people who think they are done |
 | `S3_*` | The only values that differ between MinIO locally and R2 in production |
+
+---
+
+## What is missing, and why
+
+Stated plainly rather than left to be discovered.
+
+**There is no admin UI.** Venues, tasks and assignments exist only via `npm run db:seed`.
+The data model, the tenancy boundary and the `admin` role are all in place, and the console
+already reads through them — but there are no `POST /venues`, `POST /tasks` or
+`POST /assignments` endpoints and no form. So a business or admin user cannot create a new
+assignment from the app. The seed creates one org, two venues, two tasks and ten assignments,
+which is enough to demonstrate the whole flow but not to author new work.
+
+**Nothing schedules the reaper.** `dueEvent()` and `SessionsService.apply()` both exist and
+are tested, so `abandoned` and `expired` are reachable in principle and unreachable in
+practice. This is blocked on a real question rather than on effort: an in-process cron does
+not run while a free-tier service is asleep, and `SESSION_ABANDON_AFTER_SECONDS` is 900 —
+exactly the idle window before such a service sleeps. Reaping lazily on read is the cheap
+deterministic answer and is not built.
+
+**The participant flow has never run on a phone.** Everything was exercised over HTTP against
+a real database. The geolocation permission prompt, Screen Wake Lock, and iOS Safari's tab
+suspension are all unverified, and none of them can be tested without an HTTPS origin.
+
+**`docker compose up` is not verified end to end.** All four images build and the stack
+reaches a healthy Mongo, but the run was never completed — see `docs/MEMORY.md`.
+
+**The brand theme is placeholder.** `apps/web/src/theme/theme.ts` still carries invented hex
+values with a comment explaining how to extract the real ones.
+
+---
+
+## Testing away from the client's market
+
+The client is in Kuwait and Bahrain, and the seed defaults to real Kuwait coordinates. A
+geofence is 75 m wide, so **if you test from anywhere else every visit is rejected** — from
+Amman the seeded venues are 1,188 km away, which scores `proximity -25` and
+`presenceDwell -20`. That is the engine working correctly, and it is confusing precisely
+because nothing is broken.
+
+Overriding your location in DevTools does not help either: a fixed override emits identical
+consecutive coordinates, which trips `jitterFingerprint` at −45 and is also rejected. The
+system is designed to refuse exactly that.
+
+So move the venues to you instead. In `.env`:
+
+```
+SEED_VENUE_LAT=31.9539
+SEED_VENUE_LNG=35.9106
+```
+
+Then `npm run db:seed`. Re-seeding **moves** the existing venues rather than creating new
+ones, so assignments keep working. Unset them and re-seed to go back to Kuwait.
+
+The outdoor venue lands on your coordinates; the indoor one is placed about 440 m away so
+both are walkable from one spot without their geofences overlapping.
 
 ---
 
