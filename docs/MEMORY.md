@@ -1152,3 +1152,45 @@ venue form says so before you submit and recognises a pasted Google Maps share l
   false positive, and it is the one signal observed firing wrongly on real data. Changing it
   needs a spoof-adversary pass; NOT changed here.
 - Unchanged: reaper merged? no — `feat/lazy-reaper` is still an unmerged branch. No Arabic pass.
+
+### 2026-09-08 - feat/venue-edit (on fix/venue-coordinate-precision)
+
+**What.** `PATCH /venues/:id` and a Venues table with an Edit action in the Tasks tab. Ping
+ingest now measures against the session's `venueSnapshot` instead of the live venue.
+
+**Why.** D-021. D-020 stopped a bad coordinate being created but left the existing one
+unfixable. Building the edit path exposed the ingest bug, which had to be fixed first.
+
+**Files.**
+
+- `apps/api/src/pings/pings.service.ts`: measures against `session.venueSnapshot`, falling back
+  to the live venue only when it is null.
+- `apps/api/src/admin/admin.service.ts`: `updateVenue`. `dto/update-venue.dto.ts`: all optional,
+  no `clientOrgId`. `admin.controller.ts`: `@Patch('venues/:venueId')`.
+- `apps/api/src/pings/pings.spec.ts`, `admin.spec.ts`: the regression and the edit boundaries.
+- `apps/web/src/pages/TasksTab.tsx`: venues table, form doubles as create-or-correct.
+- `docs/DECISIONS.md`: D-021. `README.md`: endpoint table and what is missing.
+
+**Now true.**
+
+1. **THE BUG WORTH REMEMBERING: D-012 was only half applied.** It pinned `venueSnapshot` and
+   switched the evaluator to it, but ingest kept reading the venue live — so the evaluator used
+   a snapshot venue alongside per-fix `distanceM`/`presence` computed against the live one. One
+   venue edit mid-visit put two vintages of geofence in a single trace. Same shape as every
+   other bug here: a seam between two subsystems that were each correct alone.
+2. **A correction never changes a verdict already reached**, and re-running the evaluator will
+   not change it either. Visits are judged against the fence they ran under. Correct, and
+   counter-intuitive enough to be worth saying out loud to a reviewer.
+3. **A venue cannot change organisation.** `clientOrgId` is absent from `UpdateVenueDto`, so
+   `forbidNonWhitelisted` makes it a 400 rather than a silently dropped field.
+4. **Precision is re-checked against the RESULTING pair.** Tightening the radius alone can fail
+   even though the coordinate did not move, which is the point.
+5. **The snapshot-less fallback in ingest is dead code in production** — every session since
+   D-012 has a snapshot. It is covered by a test and should be deleted when no such sessions
+   remain.
+
+**Verified rather than assumed.** 420 tests pass. The new ingest test fails without the fix: it
+puts the snapshot ~5.5 km from the live venue and asserts a fix at the snapshot reads `inside`.
+
+**Open.** `Lune` still needs correcting in production — do it through the deployed `PATCH`
+endpoint once this is on `main`, which also verifies the endpoint live.

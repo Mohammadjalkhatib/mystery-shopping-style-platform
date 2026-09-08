@@ -897,3 +897,50 @@ recorded venue coordinates sit from where participants actually stand, which is 
 labelled data D-009 wants and this project does not have. The check does not run against
 existing venues, so a bad coordinate already in the database stays bad until someone edits it —
 and there is still no way to edit one.
+
+---
+
+## D-021: Venues can be corrected, and ingest measures against the session's snapshot
+
+**Date:** 2026-09-08
+**Status:** accepted
+
+**Decision.** `PATCH /venues/:id` corrects a venue in place. To make that safe, ping ingest now
+computes `distanceM` and `presence` against the session's `venueSnapshot` rather than the live
+venue, falling back to the live venue only for sessions that predate the field. A venue cannot
+change organisation.
+
+**Context.** D-020 stopped a bad coordinate being created but left the one already in the
+database unusable, with no way to fix it. Adding an edit path exposed a latent bug: D-012 pinned
+`venueSnapshot` at `start` and switched the *evaluator* to it, but ingest was still reading the
+venue live. So the evaluator took the venue from the snapshot while consuming per-fix
+`distanceM` and `presence` values measured against whatever the venue looked like when each fix
+arrived. One edit mid-visit would put two vintages of geofence into a single trace — the exact
+failure D-010 item 5 and D-012 each fixed one half of. Without this, venue editing would have
+been a one-click corruption of any visit in progress.
+
+**Alternatives considered.**
+
+- *Correct the coordinate directly in the database and build no endpoint.* Fixes the immediate
+  problem in one command and adds no surface. Rejected because it makes a database console a
+  required part of operating the product: the next wrong venue — and there will be one, because
+  the coordinate is typed by a human — needs the same intervention.
+- *Delete and recreate the venue instead of editing it.* No new invariants, and create is already
+  precision-checked. Rejected because tasks, assignments and sessions reference `venueId`, so a
+  recreate orphans all of them and the wrong venue stays in the list for ever next to its
+  replacement.
+- *Recompute stored pings when a venue moves.* Would make old traces consistent with the new
+  geofence. Rejected outright: it rewrites evidence after the fact, which is the thing
+  `venueSnapshot` and rule 8 both exist to prevent. A visit is judged against the fence it was
+  run under, and a correction applies from the next visit onward.
+- *Let a venue move between organisations.* Rejected: tasks, assignments and sessions each carry
+  their own `clientOrgId`, so re-homing the venue alone would split one visit across two tenants
+  with nothing downstream noticing. The field is absent from the DTO, so it is a 400 rather than
+  a silently ignored value.
+
+**Consequences.** A correction does not fix visits already run against the wrong fence — their
+verdicts stand, correctly, because they describe what was measured at the time. Re-running the
+evaluator on them would not change anything either, which is right but will surprise someone.
+There is still no venue delete, and no edit for tasks or assignments. The ingest fallback path
+for snapshot-less sessions is untestable in production because every session created since
+D-012 has one; it is covered by a test and should be deleted once no such sessions remain.

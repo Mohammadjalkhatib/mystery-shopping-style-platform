@@ -15,6 +15,7 @@ import { Assignment, Session, Task } from '../db/schemas/task-session.schema.js'
 import type { CreateAssignmentDto } from './dto/create-assignment.dto.js';
 import type { CreateTaskDto } from './dto/create-task.dto.js';
 import type { CreateVenueDto } from './dto/create-venue.dto.js';
+import type { UpdateVenueDto } from './dto/update-venue.dto.js';
 
 export interface VenueRow {
   id: string;
@@ -119,6 +120,83 @@ export class AdminService {
   async listVenues(user: AuthUser): Promise<VenueRow[]> {
     const rows = await this.venues.find(this.orgScope(user)).sort({ name: 1 }).lean();
     return rows.map((v) => this.venueRow(v as unknown as Venue & { _id: unknown }));
+  }
+
+  /**
+   * Correct a venue.
+   *
+   * This exists because a venue was created at `31.98, 35.83` and there was no way to fix it
+   * (D-020). Without an edit path a bad geofence is permanent, and the only workaround is a
+   * second venue plus a second task plus new assignments -- which leaves the wrong one in the
+   * list for ever.
+   *
+   * **Editing cannot change a verdict that has already been reached, and cannot corrupt a
+   * visit in progress.** Both hold because of `venueSnapshot`: it is pinned at `start`, the
+   * evaluator reads it (D-012), and as of D-021 ping ingest measures against it too. A visit
+   * that has begun is therefore judged against the geofence as it was when it began, whatever
+   * happens here afterwards. A `pending` session has no snapshot yet and will pick up the
+   * corrected venue when it starts, which is the entire point.
+   */
+  async updateVenue(user: AuthUser, venueId: string, dto: UpdateVenueDto): Promise<VenueRow> {
+    const venue = await this.venues
+      .findById(venueId)
+      .lean<
+        | {
+            _id: unknown;
+            clientOrgId: string;
+            location: { coordinates: [number, number] };
+            radiusM: number;
+          }
+        | null
+      >();
+    if (!venue) throw new NotFoundException('Venue not found');
+    this.assertCanWrite(user, venue.clientOrgId);
+
+    // Half a coordinate is not a location, and the precision rule needs both halves.
+    if ((dto.lat === undefined) !== (dto.lng === undefined)) {
+      throw new BadRequestException('Send lat and lng together, or neither');
+    }
+
+    // The precision rule is checked against the RESULTING pair, because either half can move
+    // independently of the other: widening a radius can rescue a coarse coordinate, and
+    // tightening one can invalidate a coordinate that was previously fine.
+    const nextLat = dto.lat ?? venue.location.coordinates[1];
+    const nextLng = dto.lng ?? venue.location.coordinates[0];
+    const nextRadius = dto.radiusM ?? venue.radiusM;
+    const precision = checkCoordinatePrecision(nextLat, nextLng, nextRadius);
+    if (!precision.ok) {
+      throw new BadRequestException(
+        `Those coordinates give ${precision.decimals} decimal places, which locates the venue ` +
+          `to about ${Math.round(precision.impliedM)} m. A ${nextRadius} m geofence needs the ` +
+          `centre known to about ${Math.round(precision.requiredM)} m, so this fence could not ` +
+          `be entered from anywhere. Use at least 4 decimal places, like 31.9399, 35.8486.`,
+      );
+    }
+
+    const $set: Record<string, unknown> = {};
+    if (dto.name !== undefined) $set.name = dto.name;
+    if (dto.address !== undefined) $set.address = dto.address;
+    if (dto.lat !== undefined) $set.location = { type: 'Point', coordinates: [nextLng, nextLat] };
+    if (dto.radiusM !== undefined) $set.radiusM = dto.radiusM;
+    if (dto.nearBufferM !== undefined) $set.nearBufferM = dto.nearBufferM;
+    if (dto.indoor !== undefined) $set.indoor = dto.indoor;
+    if (Object.keys($set).length === 0) throw new BadRequestException('Nothing to update');
+
+    try {
+      const updated = await this.venues.findOneAndUpdate(
+        { _id: venueId },
+        { $set },
+        { returnDocument: 'after' },
+      );
+      return this.venueRow(updated as unknown as Venue & { _id: unknown });
+    } catch (e) {
+      if (isDuplicateKey(e)) {
+        throw new ConflictException(
+          `A venue named "${dto.name}" already exists for this organisation`,
+        );
+      }
+      throw e;
+    }
   }
 
   /* ----------------------------------------------------------------- tasks */

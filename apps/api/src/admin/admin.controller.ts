@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import type { AuthUser } from '@msp/shared';
 import { CurrentUser, Roles } from '../auth/auth.decorators.js';
 import {
@@ -10,6 +10,7 @@ import {
 import { CreateAssignmentDto } from './dto/create-assignment.dto.js';
 import { CreateTaskDto } from './dto/create-task.dto.js';
 import { CreateVenueDto } from './dto/create-venue.dto.js';
+import { UpdateVenueDto } from './dto/update-venue.dto.js';
 
 /**
  * Authoring. Venues, tasks and assignments -- the three things the seed used to be the only
@@ -40,6 +41,22 @@ export class AdminController {
   @Get('venues')
   listVenues(@CurrentUser() user: AuthUser): Promise<VenueRow[]> {
     return this.admin.listVenues(user);
+  }
+
+  /**
+   * Correct a venue. PATCH, not PUT: every field is optional and only what is sent changes.
+   *
+   * Safe against visits already under way because `venueSnapshot` pins the geofence at
+   * `start` and both the evaluator and ping ingest read it (D-021).
+   */
+  @Roles('admin', 'business')
+  @Patch('venues/:venueId')
+  updateVenue(
+    @Param('venueId') venueId: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: UpdateVenueDto,
+  ): Promise<VenueRow> {
+    return this.admin.updateVenue(user, venueId, dto);
   }
 
   /* ----------------------------------------------------------------- tasks */

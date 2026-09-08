@@ -179,6 +179,9 @@ export const api = {
   venues: () => req<VenueRow[]>('/venues'),
   createVenue: (body: NewVenue) =>
     req<VenueRow>('/venues', { method: 'POST', body: JSON.stringify(body) }),
+  /** Partial. Only the fields sent are changed; a venue cannot change organisation. */
+  updateVenue: (id: string, body: Partial<Omit<NewVenue, 'clientOrgId'>>) =>
+    req<VenueRow>(`/venues/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   tasks: () => req<TaskRow[]>('/tasks'),
   createTask: (body: {
     venueId: string;

@@ -45,6 +45,12 @@ export class PingsService {
       state: string;
       startedAt: Date | null;
       pingCount: number;
+      venueSnapshot: {
+        lat: number;
+        lng: number;
+        radiusM: number;
+        nearBufferM: number;
+      } | null;
     }>();
     if (!session) throw new NotFoundException('Session not found');
 
@@ -71,16 +77,38 @@ export class PingsService {
       });
     }
 
-    const venue = await this.venues.findById(session.venueId).lean<{
-      location: { coordinates: [number, number] };
-      radiusM: number;
-      nearBufferM: number;
-    }>();
-    if (!venue) throw new NotFoundException('Venue not found');
+    /**
+     * Measure against the SNAPSHOT taken when the visit started, not the live venue.
+     *
+     * D-012 pinned `venueSnapshot` so an admin editing a geofence could not change a verdict
+     * after the fact, and the evaluator was switched over. Ingest was not, which left the fix
+     * half applied: the evaluator took the venue from the snapshot while every fix carried a
+     * `distanceM` and `presence` computed here against whatever the venue looked like at the
+     * moment that fix arrived. Edit a venue mid-visit and one trace ends up holding two
+     * vintages of geofence -- the exact failure D-010 item 5 and D-012 each fixed one half of.
+     *
+     * The snapshot is written at `start` and fixes are only accepted while `active`, so it is
+     * always present for anything ingested today. The fallback is for sessions that began
+     * before the field existed. D-021.
+     */
+    const snap = session.venueSnapshot;
+    let centre: { lat: number; lng: number };
+    let fence: { radiusM: number; nearBufferM: number };
 
-    const [venueLng, venueLat] = venue.location.coordinates;
-    const centre = { lat: venueLat, lng: venueLng };
-    const fence = { radiusM: venue.radiusM, nearBufferM: venue.nearBufferM };
+    if (snap) {
+      centre = { lat: snap.lat, lng: snap.lng };
+      fence = { radiusM: snap.radiusM, nearBufferM: snap.nearBufferM };
+    } else {
+      const venue = await this.venues.findById(session.venueId).lean<{
+        location: { coordinates: [number, number] };
+        radiusM: number;
+        nearBufferM: number;
+      }>();
+      if (!venue) throw new NotFoundException('Venue not found');
+      const [venueLng, venueLat] = venue.location.coordinates;
+      centre = { lat: venueLat, lng: venueLng };
+      fence = { radiusM: venue.radiusM, nearBufferM: venue.nearBufferM };
+    }
 
     const windowStart = session.startedAt ? session.startedAt.getTime() : 0;
     let rejectedOutOfWindow = 0;

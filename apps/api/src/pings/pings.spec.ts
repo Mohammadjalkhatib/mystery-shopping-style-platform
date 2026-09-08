@@ -369,4 +369,51 @@ describe('ping ingest', () => {
       expect(presences).toEqual(['inside', 'outside', 'unknown']);
     });
   });
+
+  describe('the geofence is the SNAPSHOT, not the live venue (D-021)', () => {
+    /**
+     * D-012 pinned `venueSnapshot` at `start` so an admin editing a geofence could not change
+     * a verdict after the fact, and switched the evaluator over. Ingest was left reading the
+     * venue live, so every fix carried a `distanceM` and `presence` measured against whatever
+     * the venue looked like at that moment -- and the evaluator then consumed those per-fix
+     * values alongside a snapshot venue. One edit mid-visit put two vintages of geofence in a
+     * single trace. This is that half of the fix.
+     */
+    it('measures against the snapshot when the live venue is somewhere else entirely', async () => {
+      // ~5.5 km north of the live venue.
+      const SNAP = { lat: VENUE.lat + 0.05, lng: VENUE.lng };
+      const sessionId = await makeSession({
+        venueSnapshot: {
+          lat: SNAP.lat,
+          lng: SNAP.lng,
+          radiusM: 75,
+          nearBufferM: 50,
+          indoor: false,
+          snapshotAt: new Date(),
+        },
+      } as never);
+
+      await post(sessionId, {
+        fixes: [fix({ lat: SNAP.lat, lng: SNAP.lng, accuracyM: 8 })],
+      }).expect(200);
+
+      const stored = await Pings.findOne({ sessionId }).lean<{
+        distanceM: number;
+        presence: string;
+      }>();
+      // Against the snapshot this is metres away and inside. Against the live venue it would
+      // be ~5.5 km and outside, which is exactly the regression this guards.
+      expect(stored!.distanceM).toBeLessThan(75);
+      expect(stored!.presence).toBe('inside');
+    });
+
+    it('falls back to the live venue for a session with no snapshot', async () => {
+      // Sessions that began before the field existed. Still measured, not rejected.
+      const sessionId = await makeSession();
+      await post(sessionId, { fixes: [fix({ accuracyM: 8 })] }).expect(200);
+
+      const stored = await Pings.findOne({ sessionId }).lean<{ presence: string }>();
+      expect(stored!.presence).toBe('inside');
+    });
+  });
 });

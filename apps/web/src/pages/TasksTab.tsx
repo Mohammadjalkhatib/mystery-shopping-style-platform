@@ -46,6 +46,8 @@ export function TasksTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
+  /** The venue currently being corrected, or null when the form is creating a new one. */
+  const [editing, setEditing] = useState<VenueRow | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -97,12 +99,76 @@ export function TasksTab() {
 
       <VenueForm
         isAdmin={user?.role === 'admin'}
+        editing={editing}
+        onCancelEdit={() => setEditing(null)}
         onCreated={(v) => {
           setVenues((prev) => [...prev, v].sort((a, b) => a.name.localeCompare(b.name)));
           announce(`Venue "${v.name}" created with a ${v.radiusM} m geofence.`);
         }}
+        onUpdated={(v) => {
+          setVenues((prev) =>
+            prev.map((x) => (x.id === v.id ? v : x)).sort((a, b) => a.name.localeCompare(b.name)),
+          );
+          setEditing(null);
+          announce(
+            `"${v.name}" corrected to ${v.lat}, ${v.lng} with a ${v.radiusM} m geofence. ` +
+              `Visits already started keep the geofence they began with.`,
+          );
+        }}
         onError={fail}
       />
+
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="h3" sx={{ fontSize: '1rem', mb: 0.5 }}>
+          Venues
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+          Correcting a venue is safe: a visit that has already started is judged against the
+          geofence it began with, so a fix here never changes a verdict already reached.
+        </Typography>
+        <Box sx={{ overflowX: 'auto' }}>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Name</TableCell>
+                <TableCell>Coordinates</TableCell>
+                <TableCell align="right">Fence</TableCell>
+                <TableCell align="right" />
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {venues.map((v) => (
+                <TableRow key={v.id} selected={editing?.id === v.id}>
+                  <TableCell>
+                    {v.name}
+                    {v.indoor && (
+                      <Chip size="small" variant="outlined" label="indoor" sx={{ ml: 1 }} />
+                    )}
+                  </TableCell>
+                  <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                    {v.lat}, {v.lng}
+                  </TableCell>
+                  <TableCell align="right">{v.radiusM} m</TableCell>
+                  <TableCell align="right">
+                    <Button size="small" onClick={() => setEditing(v)}>
+                      Edit
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {venues.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={4}>
+                    <Typography color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>
+                      No venues yet.
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </Box>
+      </Paper>
 
       <TaskForm
         venues={venues}
@@ -173,11 +239,17 @@ export function TasksTab() {
 
 function VenueForm({
   isAdmin,
+  editing,
+  onCancelEdit,
   onCreated,
+  onUpdated,
   onError,
 }: {
   isAdmin: boolean;
+  editing: VenueRow | null;
+  onCancelEdit: () => void;
   onCreated: (v: VenueRow) => void;
+  onUpdated: (v: VenueRow) => void;
   onError: (e: unknown) => void;
 }) {
   const [name, setName] = useState('');
@@ -187,6 +259,21 @@ function VenueForm({
   const [indoor, setIndoor] = useState(false);
   const [clientOrgId, setClientOrgId] = useState('');
   const [busy, setBusy] = useState(false);
+
+  /**
+   * Load the venue being corrected into the form.
+   *
+   * Keyed on the id rather than the object so that re-fetching the list does not stamp over
+   * whatever the user has half-typed.
+   */
+  useEffect(() => {
+    if (!editing) return;
+    setName(editing.name);
+    setAddress(editing.address);
+    setCoords(`${editing.lat}, ${editing.lng}`);
+    setRadiusM(String(editing.radiusM));
+    setIndoor(editing.indoor);
+  }, [editing?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
    * One "lat, lng" field rather than two.
@@ -231,23 +318,43 @@ function VenueForm({
     : null;
   const coarse = decimalsGiven !== null && decimalsGiven < 4;
 
+  const clear = (): void => {
+    setName('');
+    setAddress('');
+    setCoords('');
+  };
+
   const submit = async (): Promise<void> => {
     if (!parsed) return;
     setBusy(true);
     try {
-      const v = await api.createVenue({
-        name,
-        address,
-        lat: parsed.lat,
-        lng: parsed.lng,
-        radiusM: Number(radiusM),
-        indoor,
-        ...(isAdmin && clientOrgId ? { clientOrgId } : {}),
-      });
-      onCreated(v);
-      setName('');
-      setAddress('');
-      setCoords('');
+      if (editing) {
+        // PATCH: send everything the form holds. The server changes only what differs and
+        // re-checks precision against the RESULTING coordinate and radius, so tightening the
+        // fence alone can legitimately fail here.
+        const v = await api.updateVenue(editing.id, {
+          name,
+          address,
+          lat: parsed.lat,
+          lng: parsed.lng,
+          radiusM: Number(radiusM),
+          indoor,
+        });
+        onUpdated(v);
+        clear();
+      } else {
+        const v = await api.createVenue({
+          name,
+          address,
+          lat: parsed.lat,
+          lng: parsed.lng,
+          radiusM: Number(radiusM),
+          indoor,
+          ...(isAdmin && clientOrgId ? { clientOrgId } : {}),
+        });
+        onCreated(v);
+        clear();
+      }
     } catch (e) {
       onError(e);
     } finally {
@@ -260,7 +367,7 @@ function VenueForm({
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
       <Typography variant="h3" sx={{ fontSize: '1rem' }}>
-        1 · New venue
+        {editing ? `Correcting "${editing.name}"` : '1 · New venue'}
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         The geofence radius is per venue, never a global constant — a kiosk and a hypermarket
@@ -330,8 +437,18 @@ function VenueForm({
             Indoor venues legitimately report far worse accuracy, and the engine is told not to
             punish it.
           </Typography>
+          {editing && (
+            <Button
+              onClick={() => {
+                clear();
+                onCancelEdit();
+              }}
+            >
+              Cancel
+            </Button>
+          )}
           <Button variant="contained" disabled={!ready} onClick={() => void submit()}>
-            Create venue
+            {editing ? 'Save correction' : 'Create venue'}
           </Button>
         </Stack>
       </Stack>
