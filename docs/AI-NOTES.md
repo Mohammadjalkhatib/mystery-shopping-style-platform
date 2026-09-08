@@ -98,3 +98,45 @@ reading the output. That is worth remembering for the rest of this build: **a gr
 the parts agree with my assumptions, not that they agree with each other.** Where two
 subsystems were written at different times, the test that matters is the one that starts from
 `npm run db:seed` and ends at the screen.
+
+### 2026-09-08 - I invented a config field that does not exist, and shipped it to main
+
+**What it did.** `render.yaml` carried `dockerTarget: production` on the API service. There is
+no `dockerTarget` in Render's blueprint schema. Render rejected the blueprint with
+"A Blueprint file was found, but there was an issue" — and because that message does not name
+the offending field, it looks like the file is malformed rather than like one key being wrong.
+It blocked the deploy twice and it was already merged to `main` when it was found.
+
+**Why it was wrong.** I wrote the field by analogy. Docker Compose has `build.target`, the
+`docker build` CLI has `--target`, and I had just used both correctly in this repo — so a
+`dockerTarget` in a Docker-runtime service read as obviously right. I never checked it. Worse,
+I wrote a confident comment justifying it ("naming it means a stage added later cannot silently
+become the deployed one") which made an invented field look deliberate and researched.
+
+I did fetch Render's documentation before writing the file, and I did verify the parts I was
+unsure of — the static-site shape, `plan: free`, `region: frankfurt`, the `routes` block, all
+of which turned out to be correct. I verified everything except the one field I had not
+consciously questioned. **The failure was not insufficient research; it was that the field
+never entered the set of things I thought needed checking.**
+
+**What was actually available.** Render publishes a JSON Schema at
+`https://render.com/schema/render.yaml.json`. Downloading it and validating the file takes one
+command, and both `pyyaml` and `jsonschema` were already installed on this machine. Doing that
+gives a precise answer — "1 error, dockerTarget is not allowed" — instead of a dashboard
+message that names nothing. I did this only after the second rejection. It should have been
+the thing I did before committing a config file for a platform I had never deployed to.
+
+**The bit that stings, and generalises.** The commit that introduced this said "Verified
+locally rather than assumed" and listed four real checks — `PORT` precedence, multi-origin
+CORS, the static build command, `VITE_API_BASE_URL` inlining. Every one of those was a genuine
+verification of the *application* code. None of them touched `render.yaml`, which was the only
+file in the commit that could not be exercised locally and was therefore the only one that
+needed an external authority to check. **The verification effort went where it was easy to
+apply, not where the risk was.** Feeling thorough is not the same as covering the risk, and a
+list of things you did verify is not evidence about the thing you did not.
+
+The repeating shape across all three notes in this file: the failure is never in the part being
+examined. It was in the seam between two correct subsystems (D-014, D-015), in the constant
+nobody re-derived, and here in the file that no local test could run. Where something cannot be
+exercised locally, find the authority that can check it — a schema, a validator, the real
+service — rather than reasoning about whether it looks right.
