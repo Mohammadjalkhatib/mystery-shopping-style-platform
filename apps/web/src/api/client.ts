@@ -61,6 +61,10 @@ export interface SessionView {
   pingCount: number;
   /** Why a terminal visit ended, in words. Null while it is still live. */
   terminalReason: string | null;
+  /** The same thing as a code, so the participant screen can say it in Arabic (D-022). */
+  terminalReasonCode: 'never_started' | 'went_quiet' | 'no_report' | 'expired' | null;
+  /** The configured timers, so a localised message can name them. */
+  timeouts: { abandonMinutes: number; hardCapHours: number };
 }
 
 export interface IngestResult {

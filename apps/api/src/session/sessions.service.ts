@@ -29,7 +29,20 @@ export interface SessionView {
    * screen should too.
    */
   terminalReason: string | null;
+  /**
+   * The same thing as a code, so a client can say it in its own language.
+   *
+   * `terminalReason` is English, composed on the server. It is the ONLY server-generated
+   * string a participant sees, so without this the Arabic pass would produce a screen that is
+   * Arabic everywhere except the one sentence explaining what went wrong (D-022). The numbers
+   * travel with it in `timeouts` rather than being baked into the text.
+   */
+  terminalReasonCode: TerminalReasonCode | null;
+  /** The configured timers, so a localised message can name them without a second endpoint. */
+  timeouts: { abandonMinutes: number; hardCapHours: number };
 }
+
+export type TerminalReasonCode = 'never_started' | 'went_quiet' | 'no_report' | 'expired';
 
 /**
  * The HTTP-facing half of the session lifecycle. The pure state machine decides what is
@@ -279,7 +292,30 @@ export class SessionsService {
       endedAt: s.endedAt,
       pingCount: s.pingCount,
       terminalReason: this.terminalReason(s.state, s.startedAt, s.endedAt),
+      terminalReasonCode: this.terminalReasonCode(s.state, s.startedAt, s.endedAt),
+      timeouts: { abandonMinutes: this.abandonMinutes(), hardCapHours: this.hardCapHours() },
     };
+  }
+
+  /** The machine-readable twin of `terminalReason`. Same branches, no prose. */
+  private terminalReasonCode(
+    state: SessionState,
+    startedAt: Date | null,
+    endedAt: Date | null,
+  ): TerminalReasonCode | null {
+    if (state === 'expired') return 'expired';
+    if (state !== 'abandoned') return null;
+    if (startedAt === null) return 'never_started';
+    if (endedAt === null) return 'went_quiet';
+    return 'no_report';
+  }
+
+  private abandonMinutes(): number {
+    return Math.round(Number(this.config.get('SESSION_ABANDON_AFTER_SECONDS') ?? 900) / 60);
+  }
+
+  private hardCapHours(): number {
+    return Math.round(Number(this.config.get('SESSION_HARD_CAP_SECONDS') ?? 10800) / 3600);
   }
 
   /**
@@ -298,12 +334,8 @@ export class SessionsService {
     startedAt: Date | null,
     endedAt: Date | null,
   ): string | null {
-    const mins = Math.round(
-      Number(this.config.get('SESSION_ABANDON_AFTER_SECONDS') ?? 900) / 60,
-    );
-    const hours = Math.round(
-      Number(this.config.get('SESSION_HARD_CAP_SECONDS') ?? 10800) / 3600,
-    );
+    const mins = this.abandonMinutes();
+    const hours = this.hardCapHours();
 
     if (state === 'expired') {
       return `This visit reached the ${hours}-hour limit for a single session and was closed automatically. Location was no longer being recorded.`;

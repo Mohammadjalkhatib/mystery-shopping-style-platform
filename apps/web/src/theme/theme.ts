@@ -123,5 +123,17 @@ const options: ThemeOptions = {
   },
 };
 
-export const theme = createTheme(options);
+/**
+ * The theme, for a given text direction.
+ *
+ * Direction lives in the theme because MUI reads it from there, and it is set from exactly one
+ * place -- the locale provider -- so the strings and the layout cannot disagree about which way
+ * the page runs. `document.dir` is set alongside it and does most of the real work (D-022).
+ */
+export function buildTheme(direction: 'ltr' | 'rtl' = 'ltr') {
+  return createTheme({ ...options, direction });
+}
+
+/** The default LTR theme, for anything outside the participant flow. */
+export const theme = buildTheme('ltr');
 export default theme;
