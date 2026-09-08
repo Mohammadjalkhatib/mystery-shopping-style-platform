@@ -140,10 +140,17 @@ export function VisitPage() {
 
       {current && ['submitted', 'abandoned', 'expired'].includes(current.state) && (
         <Box sx={{ p: 3 }}>
+          {/*
+            A closed visit says WHICH timer closed it, not just that it is closed. The server
+            distinguishes never-started, went-quiet and no-report-filed, and a participant
+            reading "this visit is abandoned" has no way to tell which happened to them or
+            whether it was their fault (D-019).
+          */}
           <Alert severity={current.state === 'submitted' ? 'success' : 'warning'}>
             {current.state === 'submitted'
               ? 'Report submitted. It is being reviewed — you do not need to do anything else.'
-              : `This visit is ${current.state} and can no longer be continued.`}
+              : (current.terminalReason ??
+                `This visit is ${current.state} and can no longer be continued.`)}
           </Alert>
         </Box>
       )}

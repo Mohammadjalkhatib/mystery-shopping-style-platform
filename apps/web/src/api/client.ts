@@ -59,6 +59,8 @@ export interface SessionView {
   startedAt: string | null;
   endedAt: string | null;
   pingCount: number;
+  /** Why a terminal visit ended, in words. Null while it is still live. */
+  terminalReason: string | null;
 }
 
 export interface IngestResult {

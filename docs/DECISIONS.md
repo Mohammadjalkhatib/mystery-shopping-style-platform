@@ -809,3 +809,46 @@ a standalone `mongod` can no longer run the admin surface, and that failure is i
 someone tries. Re-assigning the same task to the same participant is refused by the unique
 index rather than being treated as an update, so there is no way to move an assignment between
 participants; deleting and recreating is the only path, and neither is built.
+
+---
+
+## D-019: The reaper sweeps on participant AND console reads, and says which timer fired
+
+**Date:** 2026-09-08
+**Status:** accepted
+
+**Decision.** `GET /sessions/mine` sweeps that participant's overdue sessions; `GET
+/console/visits` and `/visits/counts` sweep the org's. Both `await` the sweep before reading,
+so the response reflects it. A reaped session carries a `terminalReason` in plain words, and
+`/sessions/mine` keeps showing terminal sessions for 24 hours so the participant can read it.
+
+**Context.** D-016 settled the mechanism — lazy-on-read, not a cron, because on a free tier
+that sleeps a cron stops silently and `SESSION_ABANDON_AFTER_SECONDS` is the same order as the
+idle window. It did not settle which reads trigger it, and that turns out to decide whether the
+feature works at all.
+
+**Alternatives considered.**
+
+- *Participant reads only.* The surgical version: state is corrected exactly where it is
+  observed, and no write ever enters the console's read path. Rejected because it does not
+  work — abandonment IS the participant not coming back, so the trigger never fires for the
+  sessions that most need it. The console would show an `active` visit that died hours ago, and
+  the one thing the reaper exists to prevent is the thing it would fail at.
+- *A small batch swept on every authenticated request.* Nothing can go stale, and it is the
+  closest thing to a cron that is not one. Rejected because it puts a write in the path of ping
+  ingest, the hottest route in the system, and makes reaping latency depend on unrelated
+  traffic — a session's fate would hinge on whether somebody else happened to be using the app.
+- *A generic "this visit has ended" message.* Less copy, and one string to translate for the
+  Arabic pass. Rejected because `dueEvent()` already distinguishes expiry from abandonment, and
+  the document distinguishes three kinds of abandonment — never started, went quiet mid-visit,
+  ended but never filed. Throwing that away leaves a participant unable to tell whether they
+  did something wrong.
+
+**Consequences.** Every console list now costs one extra indexed query, and a business user's
+read performs writes — defensible because the write is to `sessions`, which the console already
+reads, so rule 6 is untouched, but it is a read path with a side effect and that is worth
+knowing. Reaping is only as timely as the next read: a session that nobody looks at stays
+`active` in the database indefinitely, which is correct for a demo and would not be for
+billing or payouts. The sweep is capped at 100 sessions per read, so the first read after a
+long outage may take several passes to settle. And the participant's list now shows dead
+visits for a day, which is a small step towards a history screen this deliberately is not.
