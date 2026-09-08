@@ -1284,3 +1284,35 @@ fixes in 48 minutes, and no way to tell a dead watch from a dark screen.
   is written against a described failure, not a reproduced one.
 - It cannot help while the screen is off, which is probably where most of the drive's 48 minute
   hole came from. This narrows the ambiguity; it does not remove it.
+
+### 2026-09-08 - chore/submission
+
+**What.** Final deliverables pass. The README's self-addressed TODO banner is gone, the
+out-of-scope section reflects what was actually built, and a "what I would build next" section
+names the four things that would most change what the system can claim.
+
+**Why.** README is a graded deliverable (CLAUDE.md section 8) and was still carrying a note
+written to myself, plus an out-of-scope line saying there was no task authoring UI when there is.
+
+**Files.**
+
+- `README.md`: banner removed; out-of-scope corrected on authoring; "What I would build next"
+  added; the documentation table now lists `docs/REQUIREMENTS.md` and `.claude/`.
+- `docs/AI-NOTES.md`: fourth entry — I described venue editing as "safe" before checking whether
+  ingest used the snapshot, which it did not.
+
+**Now true.**
+
+1. **Zero TODOs in the README**, 16 sections, code fences balanced, and every file the
+   documentation table names exists.
+2. **`.claude/` is listed as a deliverable**, which it is: the brief asks how the work was done,
+   and the agents and skills are the answer. They are submitted as they evolved (CLAUDE.md
+   section 1) and must not be tidied.
+3. **The AI-NOTES entry is the honest one.** All 420 tests passed either side of that bug; it
+   was reachable only through a feature that did not exist yet, and nothing in the tooling could
+   have surfaced it. That is the argument the file exists to make.
+
+**Open.** Nothing in the docs. Outstanding in the product: no delete anywhere, the watchdog is
+unverified on an iPhone, RTL has not been looked at on a real screen, and `accuracyRealism`
+still has the false positive from user2's visit — penalising an honest 4 m fix at an indoor
+venue. That last one needs a spoof-adversary pass before anyone touches it.

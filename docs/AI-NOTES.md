@@ -140,3 +140,36 @@ examined. It was in the seam between two correct subsystems (D-014, D-015), in t
 nobody re-derived, and here in the file that no local test could run. Where something cannot be
 exercised locally, find the authority that can check it — a schema, a validator, the real
 service — rather than reasoning about whether it looks right.
+
+### 2026-09-08 - I called venue editing "safe" before checking whether it was
+
+**What it did.** When I finished the admin surface I told the user that venue editing was
+deliberately left out because "every started session pins a `venueSnapshot`, so an edit is safe
+for visits that have not begun and needs a decision about the ones that have." That framing was
+confident, specific, and it made the missing feature sound like a small product question waiting
+on a preference.
+
+**Why it was wrong.** It was half true, which is worse than plainly wrong. `venueSnapshot`
+does protect a completed verdict — the evaluator reads it (D-012). But **ping ingest was still
+reading the venue live**, so each fix's stored `distanceM` and `presence` were computed against
+whatever the venue looked like at the moment that fix arrived. The evaluator then consumed those
+per-fix values alongside a snapshot venue. Editing a venue during an active visit would have put
+two vintages of geofence into one trace: not a preference, a data-corruption bug, and the third
+time this exact seam has bitten this project. I had read the schema comment saying the snapshot
+existed and assumed it was used everywhere it needed to be, rather than checking the one file
+that would have told me.
+
+**What I did instead.** Checked `pings.service.ts` before writing the endpoint — prompted by
+asking "what would make this unsafe?" rather than by any test failing. Switched ingest to the
+snapshot with a fallback for pre-D-012 sessions, and wrote the regression first: put the snapshot
+5.5 km from the live venue and assert a fix at the snapshot reads `inside`. It fails without the
+change. Only then built `PATCH /venues/:id` (D-021).
+
+**Would I have caught this without knowing the domain?** No, and that is the point. All 420
+tests passed before and after; nothing was red. The bug lived in the agreement between two
+subsystems that were each individually correct and individually tested, and it was only reachable
+through a feature that did not exist yet. What surfaced it was domain reasoning — knowing that a
+geofence has a vintage and that mixing vintages is the failure this codebase has already fixed
+twice — not any signal the tooling could produce. The honest lesson is narrower than "check your
+assumptions": when a comment tells you an invariant exists, find every reader of that field
+before you rely on it.
