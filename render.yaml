@@ -3,6 +3,16 @@
 #
 #   Render dashboard -> New -> Blueprint -> pick this repo -> it reads this file.
 #
+# VALIDATE THIS FILE BEFORE COMMITTING IT. Render's schema is published, and its dashboard
+# error ("A Blueprint file was found, but there was an issue") does not name the offending
+# key, so a single wrong field looks like a malformed file:
+#
+#   curl -sL https://render.com/schema/render.yaml.json -o /tmp/render-schema.json
+#   python -c "import json,yaml,sys;from jsonschema import Draft7Validator; #     e=list(Draft7Validator(json.load(open('/tmp/render-schema.json'))).iter_errors( #     yaml.safe_load(open('render.yaml')))); [print(x.message[:200]) for x in e]; #     print('VALID' if not e else 'INVALID')"
+#
+# This file shipped once with a `dockerTarget` key that Render has no such field for. See
+# docs/AI-NOTES.md.
+#
 # Why Render, and what it costs us, is D-016. The short version: Fly and Koyeb no longer have
 # a free compute tier and Railway is credits-only, Cloud Run needs a card on file, and Render
 # does not. The catch is that a free web service sleeps after 15 minutes idle and takes
@@ -26,9 +36,11 @@ services:
     # and @msp/api links @msp/shared. Same reason the local docker build uses `-f`.
     dockerfilePath: ./apps/api/Dockerfile
     dockerContext: .
-    # The multi-stage Dockerfile's last stage is `production` already, but naming it means a
-    # stage added later cannot silently become the deployed one.
-    dockerTarget: production
+    # NOTE: there is no `dockerTarget` in Render's blueprint schema -- it was in this file and
+    # it is why the first two blueprint attempts were rejected. Render builds the FINAL stage
+    # of the Dockerfile, so `production` must stay last in apps/api/Dockerfile. That is a
+    # comment in the Dockerfile rather than a guard here, because Render gives us no way to
+    # name the stage we want.
 
     # Render restarts the service if this stops answering. It is also the URL the keep-alive
     # pinger hits -- do NOT point a pinger at /robots.txt, which Render answers itself while

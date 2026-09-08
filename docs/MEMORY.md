@@ -865,3 +865,41 @@ deny meant every deploy needed the commands run by hand outside the session.
    file is parsed and checked after any edit for that reason, not just eyeballed.
 
 **Open.** Nothing new. Still nothing deployed and verified.
+
+---
+
+### 2026-09-08 - fix/render-blueprint-schema
+
+**What.** Removed `dockerTarget: production` from `render.yaml`. There is no such field in
+Render's blueprint schema and it was rejecting the whole blueprint.
+
+**Why.** Two blueprint attempts failed. Render's message — "A Blueprint file was found, but
+there was an issue" — does not name the offending key, so it reads as a malformed file rather
+than one wrong line. Write-up in `docs/AI-NOTES.md`.
+
+**Files.**
+
+- `render.yaml`: `dockerTarget` removed; header now carries the schema URL and the one-command
+  validation, because the dashboard error names nothing
+- `apps/api/Dockerfile`: the `production` stage is marked MUST STAY LAST
+- `docs/AI-NOTES.md`: entry
+
+**Now true.**
+
+1. **`render.yaml` validates clean against `https://render.com/schema/render.yaml.json`.**
+   Checked with `pyyaml` + `jsonschema`, both already present on this machine. Validate before
+   committing any change to this file — it is the one file in the repo that no local test can
+   exercise.
+2. **Render has NO way to select a Docker build stage.** It builds the FINAL stage of the
+   Dockerfile. `production` must therefore stay last in `apps/api/Dockerfile`; a stage appended
+   after it becomes the deployed API silently, with a green build and a green deploy. The
+   Dockerfile says so at that stage.
+3. **The rest of the blueprint was right and is now confirmed against the schema**, rather than
+   against my memory of the docs: `plan: free` is a valid `serverPlan`, `region: frankfurt` is
+   a valid region, a static site is `type: web` + `runtime: static`, and `routes` entries take
+   `type`/`source`/`destination`. Static sites accept neither `region` nor `plan` — this file
+   sets neither.
+
+**Open.** Unchanged. Nothing is deployed and verified: the Docker build from the repository
+root, SSE through Render's proxy, and a Nest boot inside 512 MB / 0.1 CPU are all still
+untested, as is the participant flow on a phone.
