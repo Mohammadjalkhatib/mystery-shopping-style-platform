@@ -201,7 +201,12 @@
       "updated": "\"{name}\" corrected to {lat}, {lng} with a {radius} m geofence. Visits already started keep the geofence they began with.",
       "mapHint": "Drag the map to put the pin on the venue.",
       "useMap": "Pick on map",
-      "useTyping": "Type coordinates"
+      "useTyping": "Type coordinates",
+      "searchPlaceholder": "Search for a place or address",
+      "searching": "Searching…",
+      "noResults": "Nothing found for that search.",
+      "searchFailed": "Address search is unavailable right now — drag the map instead.",
+      "searchHint": "Search, then fine-tune by dragging."
     },
     "venueList": {
       "title": "Venues",

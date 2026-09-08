@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { ConsoleModule } from './console/console.module.js';
 import { DbModule } from './db/db.module.js';
 import { EvidenceModule } from './evidence/evidence.module.js';
+import { GeocodeModule } from './geocode/geocode.module.js';
 import { PingsModule } from './pings/pings.module.js';
 import { ReportsModule } from './reports/reports.module.js';
 import { SessionsModule } from './session/sessions.module.js';
@@ -34,6 +35,7 @@ import { VerificationModule } from './verification/verification.module.js';
     ConsoleModule,
     AdminModule,
     EvidenceModule,
+    GeocodeModule,
   ],
   controllers: [HealthController],
 })

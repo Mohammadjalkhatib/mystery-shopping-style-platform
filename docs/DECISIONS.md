@@ -1303,3 +1303,48 @@ millimetre from a view where a pixel is forty metres. There is no address search
 venue means panning to it, which is fine for a demo and tedious for a hundred venues —
 geocoding is the obvious next step and is not built. Pinch-zoom is not implemented; the
 +/− buttons are the only zoom control on a phone.
+
+---
+
+## D-030: Address search via Nominatim, proxied through the API
+
+**Date:** 2026-09-09
+**Status:** accepted
+
+**Decision.** The venue map gains a search box backed by OpenStreetMap's Nominatim geocoder,
+called from `GET /geocode` on our own API rather than from the browser. The endpoint is
+role-guarded to `admin` and `business`, serialised to one upstream request per 1.1 s, and caches
+results for ten minutes. The client debounces at 450 ms and aborts in-flight requests.
+
+**Context.** D-029 shipped the map with no way to find anything on it: locating a venue meant
+panning from wherever the map happened to open, which is fine for the one venue you are standing
+next to and useless for anything else.
+
+**Alternatives considered.**
+
+- *Google Places Autocomplete.* The best results, and the thing most people picture. Rejected
+  for the same reasons the map itself is not Google Maps: it needs an API key and an active
+  billing account, and a browser-side key ships in the bundle for anyone to lift. Nominatim is
+  the same data source as the tiles already on screen, needs no key, and costs nothing.
+- *Calling Nominatim directly from the browser.* One less endpoint and no outbound call from our
+  service. Rejected on three counts, the first binding: their usage policy requires a genuine
+  identifying `User-Agent`, and a browser will not let a page set that header. Second, the rate
+  limit is per APPLICATION, and ten admins typing in ten browsers cannot coordinate a shared
+  budget — it can only be honoured where requests converge. Third, it would hand every search
+  term and the user's IP to a third party directly.
+- *No rate limiting, just debounce.* Simpler. Rejected because debounce is per-browser and the
+  limit is global; the server-side serialisation is the only thing that actually bounds it, and
+  exceeding Nominatim's limit gets an application blocked rather than throttled.
+- *Reverse geocoding, to show what is under the pin after dragging.* Genuinely useful. Rejected
+  for now purely on request budget: it would fire on every pan, which is the one thing the rate
+  limit cannot absorb.
+
+**Consequences.** The API now makes outbound calls to a third party, so venue creation has a
+dependency that can be down — the search reports itself unavailable and dragging still works,
+which is why the map was built first and the search added second rather than the reverse.
+Results are capped at six and cached in process, so a multi-instance deployment would hold one
+cache and one rate limiter per instance and could exceed the upstream limit; that is fine at one
+instance and needs a shared limiter before it is not. Nominatim's coverage of small businesses in
+Jordan and the Gulf is thinner than Google's, so some venues will not be findable by name and
+will still have to be located by dragging. The community servers are also not for production
+volume — a paid Nominatim host or a commercial geocoder is the answer if this ships for real.
