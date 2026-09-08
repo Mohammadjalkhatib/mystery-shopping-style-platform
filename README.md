@@ -46,35 +46,98 @@ Built and working end to end:
 - [x] Business console live visit feed over SSE, no refresh, replay across reconnects
 - [x] Review queue as a filter on the feed, with a recorded human override
 - [x] Seeded demo data, relocatable for testing outside the client's market
+- [x] Authoring: create venues, tasks and assignments from the console's Tasks tab
 
 Not built:
 
-- [ ] Admin UI for creating venues, tasks and assignments (seed only — see "What is missing")
 - [ ] Abandoned session reaper and hard session cap (the logic exists; nothing schedules it)
 - [ ] Evidence upload to object storage — deliberately cut, see "Deliberately out of scope"
 - [ ] Arabic pass on participant screens
+- [ ] Capture watchdog — nothing notices if `watchPosition` stops delivering silently
 
 ---
 
 ## Architecture
 
-TODO: embed the diagram. State machine and data flow both belong here.
+Three things are deployed; only one of them runs. The web app is a static bundle, so the API
+is the only process, and it is what holds the SSE connections open.
+
+```
+  PARTICIPANT (phone, HTTPS)                  BUSINESS CONSOLE (browser)
+  consent -> start -> pings -> end            live visit feed, review queue.
+  -> report                                   One GET, then an open SSE
+  pings batched 20, one every 30 s,           connection. It never polls.
+  queued in localStorage while offline
+              |  POST                                     ^  GET + SSE
+              v                                           |
+  ============================================================================
+   msp-api      NestJS 12 (ESM), Mongoose 9      the only process that runs
+  ----------------------------------------------------------------------------
+   session/           pings/              reports/          console/
+   pure state         idempotent upsert   submit is ONE     reads sessions and
+   machine. 409 on    on (sessionId,      transaction:      verificationResults
+   an illegal         clientPingId).      report + state    ONLY. Never the
+   transition, never  Server stamps       + outbox row      ping collection
+   a silent no-op     receivedAt              |                   ^
+                                              | kick on submit,   | verdict
+                                              | plus a 15 s sweep | event
+                                              v                   |
+                                      verification/  -------------+
+                                      PURE. Evidence in, result out.
+                                      score 0-100, verdict, signals, and the
+                                      rollups the console reads: dwellSeconds,
+                                      coverageRatio, minDistanceM
+  ============================================================================
+                                    |  Mongoose
+                                    v
+                        MongoDB Atlas M0  (a replica set, which is what makes
+                                           transactions and TTL indexes work)
+
+     clientOrgs   venues   tasks   assignments   sessions   sessionEvents
+     pings (TTL, a privacy control)   reports   outbox   verificationResults
+     reviewActions
+```
+
+The outbox is the seam that matters. `submit` writes the report, the state change and one
+outbox row in a single transaction and returns; it never waits for a verdict and never fails
+because the evaluator is slow. The evaluator is poked immediately after a submit so the demo
+feels instant, and swept every 15 s so a lost poke, a crash or a redeploy mid-request still
+gets picked up. That is what makes the outbox durable rather than decorative.
+
+### Session state machine
+
+Server-authoritative. The participant asks; the server decides and stamps every timestamp.
+
+```
+                      start              end               submit
+        pending -------------> active ---------> ended -------------> submitted *
+           |                     |                 |
+           | abandon             | abandon         | abandon
+           |                     | expire          |
+           v                     v                 v
+        abandoned *          abandoned *       abandoned *
+                             expired *
+
+        * terminal
+```
+
+Everything not on that diagram is illegal, including every self-transition, and returns 409
+carrying the current state and the events it would have accepted. Two absences are deliberate:
+nothing leaves a terminal state, because verification results are append-only (rule 8) and a
+verdict that could be reopened would break that; and there is no `ended -> expired`, because
+the hard cap bounds how long we *track* someone, and a participant who has ended their visit
+is no longer being tracked.
+
+`abandoned` and `expired` are unreachable in practice today, because `dueEvent()` is
+implemented and tested but nothing calls it. See "What is missing, and why".
+
+### Repository layout
 
 ```
 apps/api          NestJS 12, Mongoose 9, SSE  (ESM package, see D-007)
 apps/web          React 19, Vite 8, MUI v9, React Router 8
 packages/shared   shared DTO types only
 ```
-
-Key structural points:
-
-- `apps/api/src/verification/` is pure. No Mongoose, no I/O. It takes an evidence object and
-  returns a result. This is what makes it cheap to test and it is the most important code here.
-- Report submission and verification are decoupled through an outbox collection. Submit is a
-  fast transactional write, the evaluator runs after and can be retried or re-run with a newer
-  engine version.
-- The business console never reads the ping collection. It reads sessions and verification
-  results, which carry rollups written by the evaluator.
 
 ---
 
@@ -189,13 +252,52 @@ source to log in.
 
 ---
 
+## Authoring work
+
+Sign in as `business` (or `admin`) and open the **Tasks** tab. Three forms in dependency order:
+a venue, a task against that venue, then an assignment to a participant.
+
+**Assigning is what creates a visit.** The server opens a `pending` session in the same
+transaction as the assignment (D-018), so the participant sees it the next time they open the
+app — `/sessions/mine` reads sessions, and an assignment written without one would be invisible
+to the person it was created for.
+
+| Endpoint | Role | Notes |
+|---|---|---|
+| `POST /venues` | admin, business | `lat`/`lng` in, `[lng, lat]` stored. `radiusM` 25–500 |
+| `GET /venues` | admin, business | Scoped to your org |
+| `POST /tasks` | admin, business | Inherits its org from the venue |
+| `GET /tasks` | admin, business | With a live assignment count |
+| `POST /assignments` | admin, business | Creates the pending session too |
+| `GET /participants` | admin, business | The demo roster, for the assign form |
+
+The tenancy rule is the same one the console reads under, applied to writes: a business user's
+organisation comes from their token and naming a different one is a 403. An admin has no
+organisation of their own, so `POST /venues` requires `clientOrgId` and it must exist. Tasks and
+assignments have no such field at all — the parent document is the authority. See D-017.
+
+**This is also the honest way to test away from the client's market.** Rather than re-seeding
+with `SEED_VENUE_LAT`/`LNG`, create a venue at coordinates you can actually stand in, define a
+task against it, and assign it to yourself. The seed relocation still works and is still the
+quickest path for a fresh database, but it moves the demo venues for everybody; a new venue
+does not.
+
+---
+
 ## Deployed URLs
 
 | Surface | URL | Notes |
 |---|---|---|
-| Participant app | TODO | Same URL as the console; the app routes by role |
-| Business console | TODO | Sign in as `business` |
-| API | TODO | `/health` should answer `{"status":"ok","mongo":"up"}` |
+| Participant app | https://msp-web-nc40.onrender.com | Sign in as `user1` … `user10`. Same URL as the console; the app routes by role |
+| Business console | https://msp-web-nc40.onrender.com | Sign in as `business` |
+| API | https://msp-api-ijht.onrender.com | `/health` answers `{"status":"ok","mongo":"up","uptimeS":N}` |
+
+Password for every account is `demo1234`.
+
+The web app is a static site, so it is always instant. The API is a free web service kept awake
+by a 10-minute cron on `/health`; if that cron has lapsed, the first request after 15 minutes
+idle takes 30 to 60 seconds while Render wakes the instance. Hit `/health` first and wait for
+it before signing in — a cold start looks exactly like a broken deployment.
 
 Location features require HTTPS, which all the deployed URLs have. `localhost` is also treated
 as a secure origin, so local development works. **An IP address on your LAN will not** — this
@@ -362,12 +464,14 @@ See `.env.example`. Every value is documented there. The ones worth knowing abou
 
 Stated plainly rather than left to be discovered.
 
-**There is no admin UI.** Venues, tasks and assignments exist only via `npm run db:seed`.
-The data model, the tenancy boundary and the `admin` role are all in place, and the console
-already reads through them — but there are no `POST /venues`, `POST /tasks` or
-`POST /assignments` endpoints and no form. So a business or admin user cannot create a new
-assignment from the app. The seed creates one org, two venues, two tasks and ten assignments,
-which is enough to demonstrate the whole flow but not to author new work.
+**Authoring exists, but nothing can be edited or deleted.** `POST /venues`, `/tasks` and
+`/assignments` are built, role-guarded and driven from the console's Tasks tab, so the seed is
+no longer the only way work enters the system. What is missing is the rest of CRUD: a venue's
+geofence cannot be corrected after a typo, a task cannot be deactivated, and an assignment
+cannot be moved to a different participant — the unique index refuses the duplicate and there
+is no delete. Editing a `radiusM` in particular is deliberately absent rather than merely
+unbuilt: every started session pins a `venueSnapshot`, so an edit is safe for visits that have
+not begun and needs a decision about the ones that have.
 
 **Nothing schedules the reaper.** `dueEvent()` and `SessionsService.apply()` both exist and
 are tested, so `abandoned` and `expired` are reachable in principle and unreachable in
@@ -376,12 +480,40 @@ not run while a free-tier service is asleep, and `SESSION_ABANDON_AFTER_SECONDS`
 exactly the idle window before such a service sleeps. Reaping lazily on read is the cheap
 deterministic answer and is not built.
 
-**The participant flow has never run on a phone.** Everything was exercised over HTTP against
-a real database. The geolocation permission prompt, Screen Wake Lock, and iOS Safari's tab
-suspension are all unverified, and none of them can be tested without an HTTPS origin.
+**Location capture holds while the tab is visible and goes quiet after that.** The flow has now
+run on a real handset — a 50-minute drive around Amman on 8 September 2026, deliberately outside
+the geofence. What it settled, and what it did not, is worth stating precisely because the two
+halves have different answers.
 
-**`docker compose up` is not verified end to end.** All four images build and the stack
-reaches a healthy Mongo, but the run was never completed — see `docs/MEMORY.md`.
+Capture is correct while the page is in front of you. The permission prompt works on the
+deployed origin, and the first 102 seconds produced four fixes at 30, 32 and 33 second
+intervals — `SAMPLE_MS` holding exactly, against a `watchPosition` that fires on movement and
+was firing continuously in a moving car. Reported accuracy converged 36 m → 6 m → 5 m → 4.5 m
+as the receiver locked.
+
+The remaining 48 minutes produced two fixes. Both were isolated: one at 7 minutes, one 34
+seconds before the visit ended. `onVisibility` does re-attach the watch on resume
+(`useVisitTracker.ts`), so a resume should produce a *cadence*; two lone fixes is instead the
+shape of "re-attached, delivered one cached position, then went quiet". A screen that was
+genuinely only on for twenty seconds twice would look identical from the trace, and that
+ambiguity is the point below.
+
+**There is no capture watchdog.** If `watchPosition` stops delivering without raising an error,
+nothing notices and nothing restarts it. Treating a missing fix as a gap rather than a failure
+is right for *scoring* — it is what `coverageRatio` exists to weigh — but it also makes a stuck
+watch indistinguishable from an honest dark screen, both to the system and to anyone reading
+the trace afterwards. Distinguishing them needs a deliberate lock/unlock test, not another
+drive.
+
+**The offline queue is still untested.** This run was expected to exercise it and did not. Every
+fix arrived with 1–2 seconds of clock skew, so none of them ever sat in the buffer: the 43-minute
+hole is a capture gap, not a network gap. Buffering through real signal loss remains unverified.
+
+The engine half needs no such caveat. Against six fixes over 3011 seconds it returned `rejected`
+at score 0, with `coverageRatio` 9.4% — arithmetically exact once both long gaps are truncated
+to the three-interval cap — `minDistanceM` 7083 m matching the real driving route, and
+`jitterFingerprint` at **+2**, correctly reading honest driving GPS as a real receiver rather
+than reaching for a fraud explanation.
 
 **The brand theme is placeholder.** `apps/web/src/theme/theme.ts` still carries invented hex
 values with a comment explaining how to extract the real ones.

@@ -11,11 +11,13 @@ import {
   Drawer,
   LinearProgress,
   Stack,
+  Tab,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableRow,
+  Tabs,
   TextField,
   Toolbar,
   Typography,
@@ -26,6 +28,7 @@ import { api, type VisitDetail, type VisitRow } from '../api/client.js';
 import { useAuth } from '../auth/AuthContext.js';
 import { VerdictChip } from '../components/VerdictChip.js';
 import { useVisitStream, type VisitEvent } from '../hooks/useVisitStream.js';
+import { TasksTab } from './TasksTab.js';
 
 type Filter = 'all' | Verdict;
 
@@ -38,6 +41,7 @@ const FILTERS: { key: Filter; label: string }[] = [
 
 export function Console() {
   const { user, logout } = useAuth();
+  const [tab, setTab] = useState<'visits' | 'tasks'>('visits');
   const [filter, setFilter] = useState<Filter>('all');
   const [rows, setRows] = useState<VisitRow[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -123,6 +127,20 @@ export function Console() {
       </AppBar>
 
       <Container maxWidth="lg" sx={{ py: 3 }}>
+        {/*
+          Two surfaces for the same user: reading verdicts, and authoring the work that
+          produces them. Tabs rather than routes, because App.tsx routes by role and there is
+          no URL worth sharing -- every screen is scoped to the signed-in account anyway.
+        */}
+        <Tabs value={tab} onChange={(_e, v: 'visits' | 'tasks') => setTab(v)} sx={{ mb: 2 }}>
+          <Tab value="visits" label="Visits" />
+          <Tab value="tasks" label="Tasks" />
+        </Tabs>
+
+        {tab === 'tasks' && <TasksTab />}
+
+        {tab === 'visits' && (
+        <>
         <Alert severity="info" sx={{ mb: 2 }}>
           Verdicts describe how much the evidence supports a visit. They are not proof of
           presence — see the reasons on each visit.
@@ -197,6 +215,8 @@ export function Console() {
             </TableBody>
           </Table>
         </Box>
+        </>
+        )}
       </Container>
 
       <Drawer
