@@ -1673,3 +1673,61 @@ things in front of you when you copy.
 `http://minio:9000/visit-evidence` logged the warning, corrected itself, and reached the bucket.
 
 **Open.** Still no hosted bucket provisioned; the deployed demo remains on GridFS.
+
+### 2026-09-09 - fix/verdict-rules
+
+**What.** The task's `expectedDwellSeconds` actually reaches the verdict, and the rules stopped
+failing honest visits — then were hardened twice after the spoof-adversary pass showed the first
+attempt had broken the fraud engine.
+
+**Why.** D-032. Two reports from live use: a task set to 1 minute still said "expected 5 min",
+and a real 5-minute visit scored 68 for having good indoor GPS and starting on arrival.
+
+**Files.** `verification/evaluator.service.ts` (session → assignment → task), `signals.ts`,
+`rollups.ts`, `types.ts`, `engine.spec.ts`, `test/fixtures/scenarios.ts`,
+`reports/visit-lifecycle.spec.ts`.
+
+**Now true.**
+
+1. **`expectedDwellSeconds` is read from the task.** It was authored, stored, shown in the admin
+   form, and never used — every visit was scored against the hard-coded 300 s. Resolved per
+   evaluation, NOT snapshotted, because tasks cannot be edited yet; the moment task editing
+   lands this needs the `venueSnapshot` treatment or an edit will re-score old visits.
+2. **THE LESSON: loosening a rule to fix a false positive re-opened the fraud engine.** The
+   first attempt flipped a fabricated indoor trace from 68 to 88 with the attacker changing
+   nothing. Never change a verification weight without running the spoof-adversary pass — it
+   caught this, and then caught four more bugs in the fix.
+3. **The score ceiling is 88 and the auto threshold is 75, so every trace has a 13-POINT
+   CUSHION.** Any penalty smaller than 13 cannot stop anything on its own. That arithmetic is
+   why the dispersion penalty is −15 and not −10.
+4. **`accuracyRealism` tests dispersion, not level** — and its `values` array must come from
+   USABLE fixes only, because the median does. Drawing them from different populations let one
+   junk `accuracyM: 250` disable both negative branches. It also needs `distinct >= 4`, which is
+   what separates a shim from quantised Android accuracy on a stationary device.
+5. **Corroboration counts intervals that span real time on EITHER clock.** Counting bare
+   intervals was cadence-dependent, and only the honest client is rate-limited (30 s throttle);
+   testing `receivedAt` alone punished the honest offline flush, whose fixes all arrive at once.
+6. **`coverage` full credit needs density, not just ratio.** A fabricator owns `startedAt` and
+   `endedAt`, so a ratio of a window they chose is free. Density, not duration — `presenceDwell`
+   already charges for duration and counting it twice is the mistake the guards elsewhere in
+   that file exist to prevent.
+7. **`approachDeparture` is DELETED.** It punished the behaviour the app instructs, and once the
+   penalty reached 0 it could only add — paying a fabricator who synthesises two extra
+   coordinates and paying the compliant participant nothing.
+8. **The "no decorative signals" test now asks whether a signal can make a verdict STRICTER**,
+   not merely different. `approachDeparture` had been passing the old version for its whole life.
+
+**Verified rather than assumed.** 536 tests pass. Live against compose: a task authored at 120 s
+produced "against an expected 2 min" and auto-verified at 88. Fixture standings — honest 88 / 88
+/ 88, gappy honest 66 / 43 / 32 needs_review, and every forgery below the line: tight-cluster 71,
+laundered 71, four-ping ladder 70, minimal short-task 62, padded 56, frozen override 19 rejected.
+
+**Open.**
+
+- **`presenceFor` treats client-controlled `accuracyM` as a FENCE EXTENSION**, so reporting 90 m
+  accuracy turns a 120 m fence into a 210 m one. Pre-existing, not introduced here, and the
+  cheapest attack in the system: stand across the road, inflate accuracy, score 88. The fix is
+  to make the error ball shrink confidence rather than widen the fence.
+- `clockSkew` is a pure honest-participant tax — an attacker sets `capturedAt = Date.now()` free.
+- `jitterFingerprint` −45 assumes GNSS drift; network positioning legitimately repeats a centroid.
+- `presenceDwell` integrates `receivedAt`, so a fully offline visit still scores as absence.

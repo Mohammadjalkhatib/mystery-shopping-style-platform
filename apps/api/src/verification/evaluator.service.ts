@@ -7,7 +7,7 @@ import {
   OutboxEntry,
   VerificationResultDoc,
 } from '../db/schemas/report-verification.schema.js';
-import { Session, type VenueSnapshot } from '../db/schemas/task-session.schema.js';
+import { Assignment, Session, Task, type VenueSnapshot } from '../db/schemas/task-session.schema.js';
 import { Venue } from '../db/schemas/org-venue.schema.js';
 import { VisitEventsService } from '../console/visit-events.service.js';
 import { evaluate } from './engine.js';
@@ -35,6 +35,8 @@ export class EvaluatorService {
     @InjectModel(VerificationResultDoc.name)
     private readonly results: Model<VerificationResultDoc>,
     @InjectModel(Venue.name) private readonly venues: Model<Venue>,
+    @InjectModel(Assignment.name) private readonly assignments: Model<Assignment>,
+    @InjectModel(Task.name) private readonly tasks: Model<Task>,
     private readonly visitEvents: VisitEventsService,
     configService: ConfigService,
   ) {
@@ -51,6 +53,33 @@ export class EvaluatorService {
       engineVersion:
         configService.get<string>('VERIFY_ENGINE_VERSION') ?? DEFAULT_ENGINE_CONFIG.engineVersion,
     };
+  }
+
+  /**
+   * The task's expected dwell for this visit, falling back to the engine default.
+   *
+   * Two hops -- session -> assignment -> task -- because a session records which ASSIGNMENT it
+   * fulfils, and the task hangs off that. Any missing link falls back rather than throwing: a
+   * verdict computed against the default expectation is far better than an outbox row that
+   * retries for ever because one lookup returned null.
+   */
+  private async dwellExpectationFor(assignmentId: string): Promise<number> {
+    try {
+      const assignment = await this.assignments
+        .findById(assignmentId)
+        .select({ taskId: 1 })
+        .lean<{ taskId: string } | null>();
+      if (!assignment) return this.config.expectedDwellSeconds;
+
+      const task = await this.tasks
+        .findById(assignment.taskId)
+        .select({ expectedDwellSeconds: 1 })
+        .lean<{ expectedDwellSeconds: number } | null>();
+      const value = task?.expectedDwellSeconds;
+      return typeof value === 'number' && value > 0 ? value : this.config.expectedDwellSeconds;
+    } catch {
+      return this.config.expectedDwellSeconds;
+    }
   }
 
   /** Drain the queue. Returns how many rows were processed. */
@@ -151,6 +180,7 @@ export class EvaluatorService {
    */
   async evaluateSession(sessionId: string): Promise<VerificationResultDoc | null> {
     const session = await this.sessions.findById(sessionId).lean<{
+      assignmentId: string;
       clientOrgId: string;
       participantId: string;
       venueId: string;
@@ -168,6 +198,24 @@ export class EvaluatorService {
      * `presence` in exactly the way D-010 item 5 fixed.
      */
     const snap = session.venueSnapshot;
+
+    /**
+     * The dwell expectation comes from THE TASK, not from the engine defaults.
+     *
+     * This was a real bug and a bad one: `expectedDwellSeconds` was authored per task, stored
+     * on the task, shown in the admin form -- and then never read. Every visit was scored
+     * against the hard-coded 300 s default, so a task set to 1 minute still told the
+     * participant "against an expected 5 min" and failed them for it. The setting existed and
+     * did nothing.
+     *
+     * Resolved per evaluation rather than snapshotted on the session. That is a deliberate
+     * difference from `venueSnapshot` (D-012), and the reason is that tasks cannot be edited
+     * at all yet, so there is no second vintage to protect against. The moment task editing
+     * exists this needs the same snapshot treatment, or an edit will silently re-score visits
+     * that already happened.
+     */
+    const expectedDwellSeconds = await this.dwellExpectationFor(session.assignmentId);
+    const config = { ...this.config, expectedDwellSeconds };
 
     const fixes = await this.pings
       .find({ sessionId })
@@ -208,7 +256,7 @@ export class EvaluatorService {
       })),
     };
 
-    const output = evaluate(evidence, this.config);
+    const output = evaluate(evidence, config);
 
     /**
      * Append-only (rule 8). A re-run writes a NEW document; the schema's pre-hook makes an

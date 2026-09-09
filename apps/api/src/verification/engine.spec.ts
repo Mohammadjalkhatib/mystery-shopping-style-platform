@@ -1,8 +1,9 @@
 import type { Verdict } from '@msp/shared';
 import { ALL_SCENARIOS } from '../../test/fixtures/scenarios.js';
+import { buildTrace, everyN, INDOOR_VENUE } from '../../test/fixtures/trace-builder.js';
 import { BASE_SCORE, evaluate } from './engine.js';
 import { computeRollups } from './rollups.js';
-import { ALL_SIGNALS, type SignalFn } from './signals.js';
+import { ALL_SIGNALS, MIN_DWELL_INTERVALS, type SignalFn } from './signals.js';
 import { DEFAULT_ENGINE_CONFIG, type VisitEvidence } from './types.js';
 
 /**
@@ -28,7 +29,7 @@ const TABLE: Case[] = [
   {
     scenario: 'honestOutdoor',
     expected: 'auto_verified',
-    mustFire: ['presenceDwell', 'proximity', 'approachDeparture'],
+    mustFire: ['presenceDwell', 'proximity'],
     mustNotFire: ['jitterFingerprint_negative', 'teleport', 'noUsableEvidence'],
     why: 'the base case: approach, dwell, departure, plausible accuracy',
   },
@@ -40,9 +41,9 @@ const TABLE: Case[] = [
   },
   {
     scenario: 'honestWithGaps',
-    expected: 'auto_verified',
+    expected: 'needs_review',
     mustNotFire: ['teleport'],
-    why: 'a pocketed phone loses evidence; once dwell stops crediting unobserved gaps this is a normal honest visit',
+    why: 'only 58% of this visit was observed, so a human should look — it cleared the auto threshold before D-032 only on the strength of a bonus for being seen arriving, which is not evidence of what happened during the six minutes nobody saw',
   },
   {
     scenario: 'staticSpoof',
@@ -120,7 +121,7 @@ const TABLE: Case[] = [
     // describes, so penalising it heavily sent the modal honest visit to manual review.
     scenario: 'startedAndEndedOnSite',
     expected: 'auto_verified',
-    mustFire: ['approachDeparture'],
+    mustFire: ['presenceDwell'],
     why: 'the documented honest flow: session started on arrival and ended before leaving',
   },
   {
@@ -183,36 +184,43 @@ describe('verification engine', () => {
 
   describe('no decorative signals', () => {
     /**
-     * The spoof-adversary agent's rule, promoted to a merge gate: a signal that never changes
-     * a verdict is worse than no signal, because it creates false confidence in the evidence
-     * trail. Each signal is removed in turn and the whole fixture set is re-scored; if nothing
-     * moves, that signal is decoration and this fails by name.
+     * Rewritten after the spoof-adversary pass (D-032).
+     *
+     * The old assertion was "removing this signal changes at least one verdict, in any
+     * direction". That is satisfied by a signal which only ever RAISES scores -- and a signal
+     * that can only raise a score cannot cause a `needs_review` or a `rejected`, so it can
+     * never do the one job the engine exists for. `approachDeparture` passed the old test for
+     * its entire life and was deleted the moment it was asked this question instead.
+     *
+     * So: every scoring signal must be able to make some verdict STRICTER.
      */
-    const band = (score: number): Verdict =>
-      score >= cfg.autoThreshold
-        ? 'auto_verified'
-        : score < cfg.rejectThreshold
-          ? 'rejected'
-          : 'needs_review';
-
-    const scoreWith = (evidence: VisitEvidence, signals: readonly SignalFn[]): number => {
-      const rollups = computeRollups(evidence, cfg.expectedSampleIntervalSeconds);
-      const raw = signals
-        .map((fn) => fn(evidence, rollups, cfg))
-        .filter((s): s is NonNullable<typeof s> => s !== null)
-        .reduce((acc, s) => acc + s.contribution, BASE_SCORE);
-      return Math.max(0, Math.min(100, Math.round(raw)));
+    const stricter = (a: Verdict, b: Verdict): boolean => {
+      const rank: Record<Verdict, number> = { auto_verified: 2, needs_review: 1, rejected: 0 };
+      return rank[a] < rank[b];
     };
 
-    it.each(ALL_SIGNALS.map((fn, i) => [fn.name || `signal#${i}`, fn] as const))(
-      '%s changes at least one verdict across the fixture set',
-      (_name, signal) => {
-        const without = ALL_SIGNALS.filter((s) => s !== signal);
-        const changed = Object.values(ALL_SCENARIOS).some((make) => {
+    it.each(ALL_SIGNALS.map((fn) => [fn.name || 'anonymous', fn] as [string, SignalFn]))(
+      '%s can make at least one verdict stricter',
+      (_name, fn) => {
+        const without = ALL_SIGNALS.filter((f) => f !== fn);
+        const anyStricter = Object.values(ALL_SCENARIOS).some((make) => {
           const evidence = make();
-          return band(scoreWith(evidence, ALL_SIGNALS)) !== band(scoreWith(evidence, without));
+          const rollups = computeRollups(evidence, cfg.expectedSampleIntervalSeconds);
+          const scoreWith = evaluate(evidence, cfg);
+          const raw = without.reduce(
+            (acc, f) => acc + (f(evidence, rollups, cfg)?.contribution ?? 0),
+            BASE_SCORE,
+          );
+          const bounded = Math.max(0, Math.min(100, Math.round(raw)));
+          const verdictWithout =
+            bounded >= cfg.autoThreshold
+              ? 'auto_verified'
+              : bounded < cfg.rejectThreshold
+                ? 'rejected'
+                : 'needs_review';
+          return stricter(scoreWith.verdict, verdictWithout as Verdict);
         });
-        expect(changed).toBe(true);
+        expect(anyStricter).toBe(true);
       },
     );
   });
@@ -323,6 +331,157 @@ describe('verification engine', () => {
     it('an honest offline flush is not rejected outright', () => {
       // It should cost confidence, not the participant's payment.
       expect(evaluate(ALL_SCENARIOS.batchFlushedHonestVisit!(), cfg).verdict).not.toBe('rejected');
+    });
+  });
+
+  describe('the rules stopped punishing honest behaviour (D-032)', () => {
+    it('auto-verifies an indoor visit on a phone with good GPS, started on arrival', () => {
+      /**
+       * The exact production failure. This trace is a participant standing in the right place
+       * for the full expected dwell with a ~7 m median, who started the session at the door as
+       * the app instructs. It scored 68 and went to review: -12 for having good GPS indoors and
+       * -6 for not being observed walking in.
+       */
+      const r = evaluate(ALL_SCENARIOS.honestIndoorGoodPhone!(), cfg);
+      // 50 base + 2 jitter + 18 dwell + 6 proximity + 10 coverage + 2 accuracy + 0 approach.
+      // The same trace scored 68 before D-032: -12 for good indoor GPS, -6 for compliance.
+      expect(r.verdict).toBe('auto_verified');
+      expect(r.score).toBeGreaterThanOrEqual(cfg.autoThreshold);
+    });
+
+    it('no longer penalises a 4-8 m median indoors', () => {
+      // Modern phones fuse GNSS with Wi-Fi; this is a normal reading, not a suspicious one.
+      const r = evaluate(ALL_SCENARIOS.honestIndoorGoodPhone!(), cfg);
+      const acc = r.signals.find((s) => s.code === 'accuracyRealism');
+      expect(acc && acc.contribution).toBeGreaterThan(0);
+    });
+
+    it('scores nothing at all for whether an approach was observed', () => {
+      /**
+       * `approachDeparture` is gone (D-032). It punished the behaviour the app instructs --
+       * "start the visit as you arrive" -- and once the penalty reached zero it could only
+       * add, which pays a fabricator synthesising two extra coordinates and pays the compliant
+       * participant nothing.
+       */
+      for (const make of Object.values(ALL_SCENARIOS)) {
+        expect(evaluate(make(), cfg).signals.some((s) => s.code === 'approachDeparture')).toBe(
+          false,
+        );
+      }
+    });
+
+    it('scores dwell against the TASK expectation, not a fixed five minutes', () => {
+      /**
+       * The setting existed, was stored, was shown in the admin form, and was never read --
+       * every visit was scored against the hard-coded 300 s default. A task set to one minute
+       * still told the participant "against an expected 5 min" and failed them for it.
+       */
+      const shortVisit = buildTrace(INDOOR_VENUE, [
+        ...everyN(4, 30, (i) => ({ offsetM: 8 + (i % 3) * 3, accuracyM: 7 }), 0),
+      ]);
+      const againstFive = evaluate(shortVisit, { ...cfg, expectedDwellSeconds: 300 });
+      const againstOne = evaluate(shortVisit, { ...cfg, expectedDwellSeconds: 60 });
+
+      const dwellOf = (r: ReturnType<typeof evaluate>): number =>
+        r.signals.find((s) => s.code === 'presenceDwell')?.contribution ?? 0;
+      expect(dwellOf(againstOne)).toBeGreaterThan(dwellOf(againstFive));
+      expect(againstOne.score).toBeGreaterThan(againstFive.score);
+    });
+  });
+
+
+
+
+
+  describe('the loosened rules did not open the door (spoof-adversary, D-032)', () => {
+    it('does not auto-verify a tight-accuracy indoor trace with no approach', () => {
+      // Scored 88 after the first pass at these fixes, with the attacker changing nothing.
+      const r = evaluate(ALL_SCENARIOS.indoorTightAccuracyNoApproach!(), cfg);
+      expect(r.verdict).not.toBe('auto_verified');
+    });
+
+    it('catches a shim by how little its accuracy MOVES, not by how small it is', () => {
+      // The level was the wrong statistic -- it false-positived on three real honest visits.
+      // The shape is the right one: a real receiver's estimate wanders, a generated one does not.
+      const acc = evaluate(ALL_SCENARIOS.indoorTightAccuracyNoApproach!(), cfg).signals.find(
+        (s) => s.code === 'accuracyRealism',
+      );
+      expect(acc?.contribution).toBeLessThan(0);
+    });
+
+    describe('a short task expectation cannot buy full dwell credit', () => {
+      const shortTask = { ...cfg, expectedDwellSeconds: 60 };
+
+      it('refuses to auto-verify three fixes across two minutes', () => {
+        // 88 before the corroboration floor: ONE capped 90 s interval saturated presenceDwell.
+        const r = evaluate(ALL_SCENARIOS.minimalShortTaskSpoof!(), shortTask);
+        expect(r.verdict).not.toBe('auto_verified');
+      });
+
+      it('does not let a padded forgery outrank the honest visit it imitates', () => {
+        // The D-010 invariant, re-asserted under a config an admin can actually author.
+        const padded = evaluate(ALL_SCENARIOS.unobservedDwellPadded!(), shortTask).score;
+        const honest = evaluate(ALL_SCENARIOS.honestWithGaps!(), shortTask).score;
+        expect(padded).toBeLessThan(honest);
+      });
+
+      it('still lets a genuinely short visit pass, given enough observations', () => {
+        // The point of the floor: a short task stays short, it just has to be WATCHED. Six
+        // fixes over 150 s is a real two-and-a-half-minute presence.
+        const realShortVisit = buildTrace(
+          INDOOR_VENUE,
+          everyN(6, 30, (i) => ({ offsetM: 9 + (i % 3) * 4, accuracyM: 5 + (i % 4) * 2.5 })),
+          { sessionSeconds: 150 },
+        );
+        expect(evaluate(realShortVisit, shortTask).verdict).toBe('auto_verified');
+      });
+    });
+
+    it('refuses a four-ping ladder spaced at the dwell cap', () => {
+      // 90 s spacing is the attacker's optimum: fully credited by dwell, fully counted by
+      // coverage, and it used to duck the dispersion check on fix count. Scored 77.
+      expect(evaluate(ALL_SCENARIOS.fourPingLadder!(), cfg).verdict).not.toBe('auto_verified');
+    });
+
+    it('cannot buy corroboration with cadence instead of time', () => {
+      // Six pings in sixty seconds bought a full +18 when intervals were merely counted. The
+      // honest client is throttled to one fix per 30 s and cannot do this; a script can.
+      const shortTask = { ...cfg, expectedDwellSeconds: 60 };
+      const r = evaluate(ALL_SCENARIOS.fastCadenceShortTask!(), shortTask);
+      expect(r.rollups.dwellIntervals).toBeLessThan(MIN_DWELL_INTERVALS);
+      expect(r.verdict).not.toBe('auto_verified');
+    });
+
+    it('cannot launder the accuracy check with one unusable fix', () => {
+      // 250 m is over the usability cap, so it never reached the median -- but it used to
+      // reach the spread, disabling both negative branches for the price of one ping.
+      const r = evaluate(ALL_SCENARIOS.accuracyLaunderedByOneUnusableFix!(), cfg);
+      const acc = r.signals.find((s) => s.code === 'accuracyRealism');
+      expect(acc?.contribution).toBeLessThan(0);
+      expect(r.verdict).not.toBe('auto_verified');
+    });
+
+    it('does not fire the dispersion check on quantised Android accuracy', () => {
+      /**
+       * The ping DTO warns that a stationary device on one unchanging Wi-Fi scan reports a
+       * REPEATING accuracy. Few distinct values, tightly clustered -- which is why the check
+       * requires four or more distinct readings before it will look at the spread at all.
+       */
+      const quantised = buildTrace(
+        INDOOR_VENUE,
+        everyN(12, 30, (i) => ({ offsetM: 15 + (i % 3) * 4, accuracyM: i % 5 === 0 ? 20 : 19 })),
+        { sessionSeconds: 330 },
+      );
+      const acc = evaluate(quantised, cfg).signals.find((s) => s.code === 'accuracyRealism');
+      expect(acc && acc.contribution).toBeGreaterThan(0);
+    });
+
+    it('the dwell interval cap and the corroboration floor cannot silently drift apart', () => {
+      // A cap larger than the expectation makes the cap a no-op. This states the coupling in
+      // one place so the next person changing either has to change this line too.
+      expect(MIN_DWELL_INTERVALS * DEFAULT_ENGINE_CONFIG.expectedSampleIntervalSeconds).toBeGreaterThanOrEqual(
+        DEFAULT_ENGINE_CONFIG.expectedSampleIntervalSeconds * 3,
+      );
     });
   });
 
