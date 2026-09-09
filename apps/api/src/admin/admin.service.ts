@@ -9,6 +9,7 @@ import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import type { AuthUser } from '@msp/shared';
 import type { Connection, Model } from 'mongoose';
 import { DEMO_USERS } from '../auth/demo-users.js';
+import { ParticipantService } from '../participant/participant.service.js';
 import { checkCoordinatePrecision } from '../geo/precision.js';
 import { ClientOrg, Venue } from '../db/schemas/org-venue.schema.js';
 import { Assignment, Session, Task } from '../db/schemas/task-session.schema.js';
@@ -66,6 +67,7 @@ export class AdminService {
     @InjectModel(Task.name) private readonly tasks: Model<Task>,
     @InjectModel(Assignment.name) private readonly assignments: Model<Assignment>,
     @InjectModel(Session.name) private readonly sessions: Model<Session>,
+    private readonly participants: ParticipantService,
   ) {}
 
   /* ---------------------------------------------------------------- venues */
@@ -359,6 +361,17 @@ export class AdminService {
     } finally {
       await dbSession.endSession();
     }
+
+    /**
+     * Tell the participant, AFTER the transaction and outside it.
+     *
+     * Fire-and-forget for the same reason `EvaluatorRunner.kick()` is (D-004): a notification
+     * that cannot be delivered must not be able to fail the write that caused it. The
+     * assignment is committed at this point; if the push is lost, the participant still sees
+     * it the next time they open the app, because the list is the truth and the stream is an
+     * optimisation (D-035).
+     */
+    void this.participants.announceAssignment(sessionId).catch(() => undefined);
 
     return { assignmentId, sessionId, participantId: dto.participantId };
   }

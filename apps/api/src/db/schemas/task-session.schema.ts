@@ -132,6 +132,16 @@ export class Session {
   @Prop({ required: true, unique: true, type: String, ref: 'Assignment' })
   assignmentId!: string;
 
+  /**
+   * KEPT although `{ participantId: 1, createdAtServer: -1 }` below is a superset of it.
+   *
+   * Not an oversight. Mongoose creates indexes and never drops them, so deleting `index: true`
+   * would stop new databases building it and leave `participantId_1` in place on the deployed
+   * one for ever -- the reconciliation would have to be explicit, in the style of
+   * `db/indexes.ts`. That is a deliberate migration, not a side effect of a dashboard branch.
+   * Both keys are immutable after insert, so the cost of keeping it is one insert-time write.
+   * Recorded as open in docs/MEMORY.md rather than left silent.
+   */
   @Prop({ required: true, index: true })
   participantId!: string;
 
@@ -205,6 +215,47 @@ export class Session {
 
   @Prop({ type: Number, default: null, min: 0, max: 100 })
   latestScore!: number | null;
+
+  /**
+   * When the newest verification result was written. Server clock.
+   *
+   * Exists so an `auto_verified` release has a TIMESTAMP. Without one, "has the participant
+   * read the current decision" is unanswerable for every visit no human reviewed -- the only
+   * available marker would be "have they ever looked", and a re-run under a newer
+   * `engineVersion` (which rule 9 explicitly designs for) would then flip the outcome with the
+   * participant never told. Written by the same `updateOne` that already sets the three fields
+   * above, so it costs no extra write. D-035.
+   */
+  @Prop({ type: Date, default: null })
+  latestResultAt!: Date | null;
+
+  /**
+   * When the participant first OPENED this assignment. Server clock, set once.
+   *
+   * This is the entire persisted state behind the "new assignment" notification. The
+   * notification itself is derived from the session (D-035), so what has to be stored is the
+   * one fact that cannot be derived: whether the person has looked. Set once and never
+   * cleared, because a notification that can come back is a nag, not an inbox.
+   */
+  @Prop({ type: Date, default: null })
+  assignmentSeenAt!: Date | null;
+
+  /**
+   * When the participant LAST read a released decision on this visit. Server clock.
+   *
+   * Separate from `assignmentSeenAt` because they mark different events at different ends of
+   * the visit, and a participant who opened the task on Monday has not thereby read the
+   * decision that arrived on Thursday.
+   *
+   * Unlike `assignmentSeenAt` this one MOVES, and that difference is the whole point. An
+   * assignment happens once; a decision can be superseded -- a reviewer files a second
+   * `reviewAction` reversing the first, or a re-run under a newer engine changes the verdict.
+   * A set-once marker answers "have they looked at all" when the question is "have they looked
+   * since the CURRENT decision", so a reversed approval would be released and never announced.
+   * Compared against the release time rather than read as a boolean. D-035.
+   */
+  @Prop({ type: Date, default: null })
+  outcomeSeenAt!: Date | null;
 }
 export type SessionDocument = HydratedDocument<Session>;
 export const SessionSchema = SchemaFactory.createForClass(Session);
@@ -221,6 +272,16 @@ SessionSchema.index({ state: 1, lastSeenAt: 1 });
 SessionSchema.index({ state: 1, startedAt: 1 });
 // The business console lists completed visits for one org, newest first (rule 6).
 SessionSchema.index({ clientOrgId: 1, state: 1, endedAt: -1 });
+/**
+ * The participant's own history, newest first.
+ *
+ * `{ participantId: 1 }` alone served the old `/sessions/mine`, which read a handful of live
+ * sessions. The history screen sorts the participant's WHOLE record by recency, and a single
+ * field index makes that an in-memory sort over every session they have ever run. The sort
+ * key is `createdAtServer` -- when the work was handed to them -- rather than `endedAt`,
+ * because a pending assignment has no `endedAt` and must still appear in the list.
+ */
+SessionSchema.index({ participantId: 1, createdAtServer: -1 });
 
 /**
  * Append-only audit of every state transition. This is exactly what `TransitionResult`

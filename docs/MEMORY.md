@@ -1819,3 +1819,140 @@ writeup and the decision log as distinct artifacts, and the README already had 1
 **Open.** The RTL Arabic pass has still never been looked at on a real device. Evidence photos
 still have no retention rule while pings expire at 30 days; the correct shape is a sweep calling
 `bucket.delete()`, not a TTL index, which on GridFS strands the chunks.
+
+### 2026-09-09 - feat/participant-dashboard
+
+**What.** The participant surface stopped being one screen. It now has a history of every visit
+they have ever been assigned with its released outcome and the reviewer's feedback, an in-app
+notification inbox on its own SSE stream, and a bottom nav between the two. Reviewers write a
+second, participant-facing text. Assigning shows a confirmation dialog instead of only a banner.
+
+**Why.** D-034 (what a participant is told), D-035 (notifications derived from the work). D-035
+reverses the "Not building: Notifications" line in `docs/BACKLOG.md` — recorded rather than done
+quietly, the same shape as D-026 reversing the evidence-upload cut.
+
+**Files.**
+
+- `apps/api/src/participant/outcome.ts` + `.spec.ts`: the release rule, PURE, 21 tests. The
+  mirror of `state-machine.ts` in intent — the code where being wrong is silent.
+- `apps/api/src/participant/participant.service.ts`: every participant read, scoped to the
+  token's subject. Batched `$in` per collection, never per row.
+- `apps/api/src/participant/participant.controller.ts`: `@Controller('me')`. No id in any path.
+- `apps/api/src/participant/participant-events.service.ts`: per-participant pub/sub + replay.
+- `apps/api/src/participant/participant.spec.ts`: 22 tests, boundaries and release-through-HTTP.
+- `apps/api/src/session/terminal-reason.ts`: D-019's derivation extracted from `SessionsService`
+  so the history screen shares it rather than copying the prose.
+- `apps/api/src/db/schemas/task-session.schema.ts`: `assignmentSeenAt`, `outcomeSeenAt`,
+  `latestResultAt`, and `{ participantId: 1, createdAtServer: -1 }`.
+- `apps/api/src/db/schemas/report-verification.schema.ts`: `feedbackToParticipant`, and
+  `{ sessionId: 1, at: 1 }` on `reviewActions`.
+- `apps/api/src/admin/admin.service.ts`, `console/console.service.ts`,
+  `verification/evaluator.service.ts`: three announce call sites, all fire-and-forget.
+- `apps/web/src/participant/ParticipantApp.tsx`, `History.tsx`, `NotificationBell.tsx`,
+  `OutcomeChip.tsx`, `useNotifications.ts`; `VisitPage.tsx` reduced to the runner.
+- `apps/web/src/hooks/useSseStream.ts`: the transport, extracted from `useVisitStream`.
+- `apps/web/src/pages/TasksTab.tsx` (assign dialog), `Console.tsx` (second review field),
+  `i18n/{en,ar}.json` (+32 keys each), `README.md`, `docs/DECISIONS.md`.
+
+**Now true.**
+
+1. **`outcome.ts` decides what a participant may be told, and it is the only thing that does.**
+   Three callers feed it and none of them may shortcut it — `announceOutcome` re-derives the rule
+   rather than trusting the caller, so a push cannot say something the screen would withhold. No
+   score, no signal, no engine version can reach a participant through it, and a test asserts the
+   returned key set to keep it that way.
+2. **`rejected` with no human decision reads as `in_review`, not as a rejection.** The engine's
+   verdict is not the organisation's decision. `auto_verified` DOES release, because otherwise a
+   clean visit sits at "in review" for ever and the honest majority get the worst experience.
+3. **A reviewer now writes two texts.** `note` stays required and internal (D-009's labelled
+   data); `feedbackToParticipant` is optional and is the only part they read. Do not merge them.
+4. **Notifications are DERIVED, never stored.** Only two `*SeenAt` markers persist. This means
+   a notification cannot outlive the thing it describes — starting a visit makes its assignment
+   notification disappear on its own, with nothing to clean up.
+5. **`outcomeSeenAt` is a TIMESTAMP compared against the release time, not a flag.** A reviewer
+   reversing an approval, or a re-run under a newer `engineVersion`, is a NEW decision; a
+   set-once flag would have released it and never told anyone. `assignmentSeenAt` stays set-once
+   because an assignment happens once.
+6. **`.lean()` returns what is IN the document.** `default: null` applies at creation, so any
+   session written before this branch has these fields ABSENT — and `undefined !== null` is
+   true. The first draft therefore reported every existing visit as already seen and returned an
+   empty inbox on the deployed database while passing every test against a fresh volume. Read
+   them with `Boolean(...)`, and type them optional so the compiler cannot be talked out of it.
+7. **A React effect must not fetch from inside a `setState` updater.** The first draft looked
+   up the focused visit inside a `setCurrent` updater and called `load()` there when it missed.
+   Updaters must be pure -- StrictMode invokes them twice, so that was two requests per intent
+   -- and because `sessions` is a dependency that `load()` replaces, an id genuinely absent from
+   `/sessions/mine` (a participant with more live visits than its limit returns) would have
+   re-entered the effect on every response and fetched forever. The lookup now happens in the
+   effect body and the reload is attempted at most once per id.
+8. **Both participant screens stay MOUNTED, one hidden.** `useVisitTracker` lives inside the
+   runner, so unmounting it to show the history would release the geolocation watch and the wake
+   lock — a participant glancing at their record mid-visit would return to stopped capture and a
+   coverage gap they did not cause. Same reason `DiscreetMode` is a sibling overlay.
+9. **The participant stream is a separate service from the console's, deliberately.** They differ
+   in the only thing that matters about either: the tenancy key. A generic `topic: string` would
+   make the subject boundary a parameter, and the worst case here is reading another person's
+   work history rather than a peer org's visit counts.
+10. **Rule 6's discipline holds on this side too.** `ParticipantService` injects no `Ping` model.
+
+**The schema-reviewer pass found two blockers again.** Item 6 above, and item 5 — neither
+visible to a passing test suite, both fatal to the feature on the deployed database. Third pass
+in a row that has earned its cost; run it on schema changes.
+
+**Verified rather than assumed.** 587 tests pass. The whole chain was run against the compose
+stack over real HTTP: assign → notification appears → visit runs → submit → review with
+feedback → the participant sees `approved` and the feedback and NOT the internal note or the
+reviewer id (asserted by string search on the response). The SSE push was confirmed by holding
+the stream open with `curl` and assigning from another shell — the frame arrived. In a browser:
+the bell badge, the bottom sheet, tapping a notification landing on the consent screen for that
+visit, the history accordion with feedback and the echoed report, the whole thing in Arabic with
+RTL, the assign confirmation dialog, and the two-field review form. Test data was destroyed with
+`docker compose down -v` afterwards.
+
+**Open.**
+
+- **In-app only.** No Web Push, no service worker: a participant learns about work when they
+  next open the app. Named in D-035 so the gap is deliberate.
+- **The stream is in-process** (D-013). A second API replica splits it. The list is the truth
+  and the push is an optimisation, so the failure mode is a late notification, not a lost one.
+- **`{ participantId: 1 }` on sessions is now redundant** — the new compound index is a superset.
+  It is KEPT: Mongoose creates indexes and never drops them, so removing the declaration would
+  leave `participantId_1` on the deployed database for ever. Dropping it is a deliberate
+  reconciliation in the style of `db/indexes.ts`, not a side effect of this branch.
+- **`ReviewActionSchema` still has no `enforceAppendOnly` guard**, unlike `verificationResults`
+  and `sessionEvents`. It is append-only by construction today — nothing updates one — but the
+  rule 8 guard is missing and the fixtures that `deleteMany` this collection would have to move
+  first. Raised, not done.
+- **`npm run typecheck` was red on `dev` and is now green.** `review-findings.spec.ts:418` read
+  `after.state` where the next line already wrote `after!.pingCount`; `.lean()` types the result
+  nullable, so the whole `typecheck:tests` script failed. Pre-existing, confirmed by stashing
+  this branch, and fixed here in its own commit rather than carried onto `main` — `main` is the
+  deployed branch and promoting a red typecheck to it is worse than the one-character diff.
+- No pagination on the history: 200 newest, and the screen says so when `assigned` exceeds it.
+- Unchanged: evidence retention, deletion of authored objects, the reaper's timeliness.
+
+### 2026-09-09 - fix/participant-leak-assertion
+
+**What.** The participant dashboard's "no score reaches the participant" test asserted
+`JSON.stringify(row)` did not contain `'88'`, the seeded score. It now asserts the row's exact
+key set instead.
+
+**Why.** It FLAKED, roughly one run in ten. The row is full of ISO timestamps and one ending
+`.588Z` contains `88` — so the assertion's result depended on the wall clock. Caught by running
+the suite again after merging into `dev`, not by the run before it.
+
+**Files.**
+
+- `apps/api/src/participant/participant.spec.ts`: the assertion, plus a comment saying why it
+  is shaped this way so nobody reintroduces the substring search.
+
+**Now true.**
+
+1. **The participant row's contract is asserted as an exact allowlist of 18 keys.** A field
+   added to `ParticipantVisitRow` fails this test until someone puts it on the list, which is
+   the review D-034 wants before anything new reaches a participant's screen. That is a stronger
+   guard than the search it replaces, not just a stabler one.
+2. **A leak check must not be a substring search over serialised output.** Values collide with
+   timestamps, ids and prose. Assert structure.
+
+**Open.** Nothing. Suite run four times to confirm the flake is gone.

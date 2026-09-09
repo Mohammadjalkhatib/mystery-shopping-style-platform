@@ -129,6 +129,11 @@ Built and working end to end:
 - [x] S3-compatible evidence storage (MinIO in compose), hand-signed, with a GridFS fallback
 - [x] Venue coordinates picked on a map, with address search, rather than typed
 - [x] Capture watchdog: a silent `watchPosition` is re-attached, and restarts are shown
+- [x] Participant dashboard: every visit ever assigned, its outcome, and the feedback on it
+- [x] In-app notifications for the participant, over their own SSE stream — a new assignment
+      opens straight into consent and start; a released decision opens the visit it belongs to
+- [x] Reviewers write two texts: an internal reason, and optional feedback the participant reads
+- [x] Assigning shows a confirmation dialog naming the participant and venue, visible on a phone
 
 Not built:
 
@@ -338,7 +343,9 @@ a venue, a task against that venue, then an assignment to a participant.
 **Assigning is what creates a visit.** The server opens a `pending` session in the same
 transaction as the assignment (D-018), so the participant sees it the next time they open the
 app — `/sessions/mine` reads sessions, and an assignment written without one would be invisible
-to the person it was created for.
+to the person it was created for. Since D-035 the participant is also told: a confirmation
+dialog names who was assigned and where, and the assignment is pushed to that participant's
+notification stream so it appears in their app without a refresh.
 
 | Endpoint | Role | Notes |
 |---|---|---|
@@ -349,6 +356,22 @@ to the person it was created for.
 | `GET /tasks` | admin, business | With a live assignment count |
 | `POST /assignments` | admin, business | Creates the pending session too |
 | `GET /participants` | admin, business | The demo roster, for the assign form |
+
+The participant's own surface is the mirror image, and every read on it is scoped to the token's
+subject — there is no id in any of these paths and there must not be one.
+
+| Endpoint | Role | Notes |
+|---|---|---|
+| `GET /me/dashboard` | participant | Their whole history, the totals, and the configured timers, in one round trip |
+| `GET /me/notifications` | participant | Derived from their sessions, never stored as messages (D-035) |
+| `POST /me/notifications/:sessionId/seen` | participant | Acknowledge one. 409 for an outcome that was never released |
+| `GET /me/notifications/stream` | participant | SSE. Carries a nudge to re-read, not the payload |
+
+**A reviewer writes two texts.** `POST /console/visits/:id/review` takes the required internal
+`note` — candid, never shown to the participant, and the labelled data D-009 needs — and an
+optional `feedbackToParticipant`, which is the only part of a review the participant ever reads.
+Approving or rejecting releases the outcome to them; an `auto_verified` visit releases with no
+feedback, because no human had to look. See D-034 for what is deliberately withheld.
 
 The tenancy rule is the same one the console reads under, applied to writes: a business user's
 organisation comes from their token and naming a different one is a 403. An admin has no
@@ -858,6 +881,20 @@ at score 0, with `coverageRatio` 9.4% — arithmetically exact once both long ga
 to the three-interval cap — `minDistanceM` 7083 m matching the real driving route, and
 `jitterFingerprint` at **+2**, correctly reading honest driving GPS as a real receiver rather
 than reaching for a fraud explanation.
+
+**A participant is told an outcome, never a score.** The dashboard shows `approved` /
+`not_approved` / `in_review` and the reviewer's written feedback, and deliberately shows no
+score, no signals and no engine version (D-034) — the signals are the anti-spoof rules, and
+publishing them to the people being checked is a tutorial. The cost is real: a participant who
+disputes an outcome has only the reviewer's sentence to go on, and if the reviewer left the
+optional feedback empty they have nothing. That is the wrong trade the moment this grows an
+appeals process, and the fix then is disclosure through a human, not a field on the screen.
+
+**Notifications are in-app only.** There is no Web Push, no service worker and no notification
+outside an open tab (D-035): a participant learns about new work when they next open the app. The
+stream is in-process like the console's, so a second API replica would split it — the list is the
+truth and the push is an optimisation, so the failure mode is a late notification, not a lost
+one.
 
 **The brand theme is placeholder.** `apps/web/src/theme/theme.ts` still carries invented hex
 values with a comment explaining how to extract the real ones.

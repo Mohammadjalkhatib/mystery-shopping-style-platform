@@ -33,6 +33,7 @@ import { SessionsController } from '../session/sessions.controller.js';
 import { EvidenceService } from '../evidence/evidence.service.js';
 import { GridFsObjectStore } from '../evidence/storage/gridfs.store.js';
 import { OBJECT_STORE } from '../evidence/storage/object-store.js';
+import { ParticipantService } from '../participant/participant.service.js';
 import { ReaperService } from '../session/reaper.service.js';
 import { SessionsService } from '../session/sessions.service.js';
 import { VisitEventsService } from '../console/visit-events.service.js';
@@ -187,6 +188,22 @@ describe('visit lifecycle', () => {
         EvaluatorService,
         EvaluatorRunner,
         VisitEventsService,
+        /**
+         * Stubbed, and only the two announce methods.
+         *
+         * `ParticipantService` is injected purely so a completed visit can be pushed to the
+         * person who did it. What it announces, and what it withholds, is decided by the pure
+         * release rule and covered in `participant/outcome.spec.ts` and
+         * `participant/participant.spec.ts`. Standing up the real service here would drag in
+         * four more models to prove nothing this file asserts.
+         */
+        {
+          provide: ParticipantService,
+          useValue: {
+            announceAssignment: async (): Promise<void> => undefined,
+            announceOutcome: async (): Promise<void> => undefined,
+          },
+        },
         { provide: getConnectionToken(), useValue: conn },
         { provide: getModelToken(Session.name), useValue: Sessions },
         { provide: getModelToken(SessionEventDoc.name), useValue: Events },

@@ -11,6 +11,12 @@ import {
   type VenueSnapshot,
 } from '../db/schemas/task-session.schema.js';
 import { transition } from './state-machine.js';
+import {
+  terminalReasonCode,
+  terminalReasonText,
+  type TerminalReasonCode,
+  type Timeouts,
+} from './terminal-reason.js';
 
 export interface SessionView {
   id: string;
@@ -42,7 +48,9 @@ export interface SessionView {
   timeouts: { abandonMinutes: number; hardCapHours: number };
 }
 
-export type TerminalReasonCode = 'never_started' | 'went_quiet' | 'no_report' | 'expired';
+// Re-exported so existing importers of this module keep working; the definition now lives
+// with the pure helper, because the participant history screen needs it too (D-034).
+export type { TerminalReasonCode };
 
 /**
  * The HTTP-facing half of the session lifecycle. The pure state machine decides what is
@@ -300,23 +308,24 @@ export class SessionsService {
       startedAt: s.startedAt,
       endedAt: s.endedAt,
       pingCount: s.pingCount,
-      terminalReason: this.terminalReason(s.state, s.startedAt, s.endedAt),
-      terminalReasonCode: this.terminalReasonCode(s.state, s.startedAt, s.endedAt),
-      timeouts: { abandonMinutes: this.abandonMinutes(), hardCapHours: this.hardCapHours() },
+      ...this.terminal(s.state, s.startedAt, s.endedAt),
     };
   }
 
-  /** The machine-readable twin of `terminalReason`. Same branches, no prose. */
-  private terminalReasonCode(
+  /** The three terminal fields, from one derivation, so they cannot disagree. */
+  private terminal(
     state: SessionState,
     startedAt: Date | null,
     endedAt: Date | null,
-  ): TerminalReasonCode | null {
-    if (state === 'expired') return 'expired';
-    if (state !== 'abandoned') return null;
-    if (startedAt === null) return 'never_started';
-    if (endedAt === null) return 'went_quiet';
-    return 'no_report';
+  ): { terminalReason: string | null; terminalReasonCode: TerminalReasonCode | null; timeouts: Timeouts } {
+    const timeouts = this.timeouts();
+    const code = terminalReasonCode(state, startedAt, endedAt);
+    return { terminalReason: terminalReasonText(code, timeouts), terminalReasonCode: code, timeouts };
+  }
+
+  /** The configured timers. Read from config so the copy cannot drift from the reaper. */
+  timeouts(): Timeouts {
+    return { abandonMinutes: this.abandonMinutes(), hardCapHours: this.hardCapHours() };
   }
 
   private abandonMinutes(): number {
@@ -325,40 +334,6 @@ export class SessionsService {
 
   private hardCapHours(): number {
     return Math.round(Number(this.config.get('SESSION_HARD_CAP_SECONDS') ?? 10800) / 3600);
-  }
-
-  /**
-   * Plain English for a terminal state.
-   *
-   * Which of the three abandonment cases applies is derived from the document rather than read
-   * back out of `sessionEvents`: a session with no `startedAt` never began, one with a
-   * `startedAt` and no `endedAt` went quiet mid-visit, and one with both finished but never
-   * filed a report. That is the same information without a second query per row.
-   *
-   * The numbers come from config so this text cannot drift away from the timers that produced
-   * it.
-   */
-  private terminalReason(
-    state: SessionState,
-    startedAt: Date | null,
-    endedAt: Date | null,
-  ): string | null {
-    const mins = this.abandonMinutes();
-    const hours = this.hardCapHours();
-
-    if (state === 'expired') {
-      return `This visit reached the ${hours}-hour limit for a single session and was closed automatically. Location was no longer being recorded.`;
-    }
-    if (state === 'abandoned') {
-      if (startedAt === null) {
-        return `This visit was never started, and was closed automatically after ${mins} minutes.`;
-      }
-      if (endedAt === null) {
-        return `No location update arrived for ${mins} minutes, so this visit was closed automatically. Capture stops when the screen locks or the tab is backgrounded.`;
-      }
-      return `This visit was ended but no report was filed within ${mins} minutes, so it was closed automatically.`;
-    }
-    return null;
   }
 
   /** A participant may only act on their own session. Read from the token, never the body. */
