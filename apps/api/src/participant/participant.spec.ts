@@ -309,9 +309,40 @@ describe('participant dashboard', () => {
       expect(row?.outcome).toBe('approved');
       expect(row?.decidedByHuman).toBe(false);
       expect(row?.feedback).toBeNull();
-      expect(JSON.stringify(row)).not.toContain('88');
-      expect(row).not.toHaveProperty('score');
-      expect(row).not.toHaveProperty('signals');
+
+      /**
+       * The whole contract, asserted as an exact key set rather than as a search for values
+       * that should be absent.
+       *
+       * This started as `expect(JSON.stringify(row)).not.toContain('88')` against a score of
+       * 88, and it FLAKED: the row is full of ISO timestamps and one ending `.588Z` contains
+       * the string. A leak check whose result depends on the wall clock is worse than no leak
+       * check, because it teaches whoever hits it that the suite is noisy.
+       *
+       * An allowlist is also the stronger assertion. A future field added to
+       * `ParticipantVisitRow` fails here until someone deliberately adds it to this list, which
+       * is exactly the review D-034 wants before anything new reaches a participant's screen.
+       */
+      expect(Object.keys(row!).sort()).toEqual([
+        'assignedAt',
+        'consentedAt',
+        'decidedAt',
+        'decidedByHuman',
+        'endedAt',
+        'feedback',
+        'outcome',
+        'report',
+        'seen',
+        'sessionId',
+        'startedAt',
+        'state',
+        'submittedAt',
+        'taskBrief',
+        'taskTitle',
+        'terminalReasonCode',
+        'venueAddress',
+        'venueName',
+      ]);
     });
 
     it('a rejected verdict with no human decision reads as in_review, not as a rejection', async () => {

@@ -1930,3 +1930,29 @@ RTL, the assign confirmation dialog, and the two-field review form. Test data wa
   deployed branch and promoting a red typecheck to it is worse than the one-character diff.
 - No pagination on the history: 200 newest, and the screen says so when `assigned` exceeds it.
 - Unchanged: evidence retention, deletion of authored objects, the reaper's timeliness.
+
+### 2026-09-09 - fix/participant-leak-assertion
+
+**What.** The participant dashboard's "no score reaches the participant" test asserted
+`JSON.stringify(row)` did not contain `'88'`, the seeded score. It now asserts the row's exact
+key set instead.
+
+**Why.** It FLAKED, roughly one run in ten. The row is full of ISO timestamps and one ending
+`.588Z` contains `88` — so the assertion's result depended on the wall clock. Caught by running
+the suite again after merging into `dev`, not by the run before it.
+
+**Files.**
+
+- `apps/api/src/participant/participant.spec.ts`: the assertion, plus a comment saying why it
+  is shaped this way so nobody reintroduces the substring search.
+
+**Now true.**
+
+1. **The participant row's contract is asserted as an exact allowlist of 18 keys.** A field
+   added to `ParticipantVisitRow` fails this test until someone puts it on the list, which is
+   the review D-034 wants before anything new reaches a participant's screen. That is a stronger
+   guard than the search it replaces, not just a stabler one.
+2. **A leak check must not be a substring search over serialised output.** Values collide with
+   timestamps, ids and prose. Assert structure.
+
+**Open.** Nothing. Suite run four times to confirm the flake is gone.
