@@ -47,6 +47,16 @@ export const noUsableEvidence: SignalFn = (_e, rollups) => {
 
 /* ------------------------------------------------------------------- dwell */
 
+/**
+ * Separate inside-to-inside observations needed before dwell can score in full.
+ *
+ * Five, because the dwell integrator caps one interval at three sampling periods, so five
+ * intervals is the point at which the elapsed time being claimed cannot come from a single
+ * observation however the task's expectation is authored. It is a corroboration floor, not a
+ * duration: a short task stays short, it just has to be watched rather than asserted.
+ */
+export const MIN_DWELL_INTERVALS = 5;
+
 export const presenceDwell: SignalFn = (_e, rollups, config) => {
   // noUsableEvidence has already spoken. Piling on here would count one fact three times
   // and bury the real reason under two derived ones.
@@ -61,11 +71,32 @@ export const presenceDwell: SignalFn = (_e, rollups, config) => {
       reason: 'No two consecutive fixes both placed the participant inside the venue, so no time on site could be established.',
     };
   }
+  /**
+   * Time AND corroboration. Full credit needs both.
+   *
+   * `expectedDwellSeconds` is authored per task and may legitimately be short -- a drive-through
+   * check really is a one-minute job. But the dwell integrator caps each interval at three
+   * sampling periods (90 s), so any expectation at or below that could be satisfied by a SINGLE
+   * pair of fixes: two pings, two minutes, and the largest positive signal in the engine paid
+   * out in full. The spoof-adversary pass scored that fabrication at 88 against an honest
+   * gappy visit's 75 -- the engine ranking a forgery above a real visit, which is the same
+   * inversion D-010's dwell cap was written to end.
+   *
+   * The fix keeps short tasks authorable and makes them cost more EVIDENCE rather than more
+   * time: saturation requires `MIN_DWELL_INTERVALS` separate inside-to-inside observations.
+   * An honest participant standing still and sampling every 30 s reaches that in about two
+   * and a half minutes; a fabricator has to keep the forgery running just as long.
+   */
   const ratio = Math.min(1, dwellSeconds / expected);
+  const corroboration = Math.min(1, rollups.dwellIntervals / MIN_DWELL_INTERVALS);
+  const contribution = round(-5 + 23 * ratio * corroboration);
+  const thin = corroboration < 1;
   return {
     code: 'presenceDwell',
-    contribution: round(-5 + 23 * ratio),
-    reason: `Spent about ${Math.round(dwellSeconds / 60)} min inside the venue geofence, against an expected ${Math.round(expected / 60)} min.`,
+    contribution,
+    reason: thin
+      ? `Spent about ${Math.round(dwellSeconds / 60)} min inside the venue geofence, but across only ${rollups.dwellIntervals} location update${rollups.dwellIntervals === 1 ? '' : 's'} — too few to corroborate continuous presence.`
+      : `Spent about ${Math.round(dwellSeconds / 60)} min inside the venue geofence, against an expected ${Math.round(expected / 60)} min.`,
   };
 };
 
@@ -75,11 +106,39 @@ export const presenceDwell: SignalFn = (_e, rollups, config) => {
 export const coverage: SignalFn = (_e, rollups) => {
   if (rollups.minDistanceM === null) return null;
   const r = rollups.coverageRatio;
-  if (r >= 0.8) {
+
+  /**
+   * A ratio of a window the attacker chose is not evidence of volume.
+   *
+   * `coverageRatio` is observed time over `endedAt - startedAt`, and a fabricator owns both
+   * boundaries: press Start immediately before the first ping and End immediately after the
+   * last, and coverage is pinned at 1.0 for a four-ping, four-minute forgery -- worth +10,
+   * against an honest pocketed visit's -18. A 28-point swing in the forger's favour, on a
+   * signal that in adversarial terms only ever charged honest participants.
+   *
+   * So full credit now also requires the session to have been observed OFTEN enough, reusing
+   * the same corroboration floor `presenceDwell` uses. Deliberately density and not duration:
+   * `presenceDwell` already scales with how long the visit ran, and charging for that twice
+   * would count one fact in two places -- the mistake `noUsableEvidence`'s guard exists to
+   * prevent elsewhere in this file. Four pings ninety seconds apart is 100% coverage of a
+   * window the fabricator chose; ten pings thirty seconds apart is a watched visit.
+   *
+   * Found by the second spoof-adversary pass.
+   */
+  const wellObserved = rollups.dwellIntervals >= MIN_DWELL_INTERVALS;
+
+  if (r >= 0.8 && wellObserved) {
     return {
       code: 'coverage',
       contribution: 10,
       reason: `Location was sampled across ${Math.round(r * 100)}% of the session, leaving few unobserved gaps.`,
+    };
+  }
+  if (r >= 0.8) {
+    return {
+      code: 'coverage',
+      contribution: 3,
+      reason: `Location was sampled across ${Math.round(r * 100)}% of the session, but across only ${rollups.dwellIntervals} update${rollups.dwellIntervals === 1 ? '' : 's'} inside the venue — too sparse to confirm much.`,
     };
   }
   if (r >= 0.4) {
@@ -192,7 +251,18 @@ export const accuracyRealism: SignalFn = (evidence, rollups) => {
   const fixes = evidence.fixes;
   if (fixes.length < 3) return null;
 
-  const values = fixes.map((f) => f.accuracyM);
+  /**
+   * USABLE fixes only, and this line is a fix for a real hole.
+   *
+   * `medianAccuracyM` is computed from usable fixes; this array used to be computed from ALL
+   * of them. Appending one junk fix with `accuracyM: 250` therefore inflated the spread
+   * without moving the median, and disabled BOTH negative branches at once -- the tight-
+   * cluster fabrication went from 71 to 88, and a frozen-coordinate spoof from 19 (rejected)
+   * to 41 (needs_review), for the price of one extra ping. Found by the second
+   * spoof-adversary pass. The two statistics must be drawn from the same population.
+   */
+  const values = fixes.filter((f) => f.presence !== 'unknown').map((f) => f.accuracyM);
+  if (values.length < 3) return null;
   const distinct = new Set(values).size;
 
   if (distinct === 1) {
@@ -213,11 +283,60 @@ export const accuracyRealism: SignalFn = (evidence, rollups) => {
       reason: `Median accuracy was ${Math.round(median)} m at an outdoor venue, which is poorer than a working GPS fix outdoors normally reports.`,
     };
   }
-  if (indoor && median < 8) {
+  /**
+   * DISPERSION, not level. This is the replacement for the old indoor threshold, and the
+   * difference is the whole point.
+   *
+   * The old branch fired on `indoor && median < 8` for -12, on the premise that indoor fixes
+   * "degrade to tens of metres". That was true of older hardware and is not true now: a current
+   * phone fusing GNSS with Wi-Fi routinely reports 4-8 m inside a shop. It produced a false
+   * positive on three separate real visits, every one an honest participant standing in the
+   * right place with a good phone -- the only evidence this project has ever had about that
+   * signal, and all of it said the threshold was wrong.
+   *
+   * But deleting it outright left NOTHING watching accuracy on an indoor venue, and the
+   * spoof-adversary pass showed why that matters: 4-8 m is exactly the band a hand-written
+   * shim picks, because nobody faking a fix types `accuracy: 47`. So the level was the wrong
+   * statistic and the shape is the right one. A real receiver's estimate wanders as satellites
+   * and access points come and go; a generated one clusters tightly around whatever constant
+   * the author chose. `distinct === 1` above is the degenerate case of exactly this test, and
+   * this generalises it to a continuum.
+   *
+   * Honest fixtures measure 0.55-1.17 on this. A shim emitting `12 + rand()*1` measures 0.08.
+   */
+  /**
+   * Robust spread, and only where quantisation cannot explain it.
+   *
+   * Three guards, each closing something the second adversary pass found:
+   *
+   * - **p10..p90, not max-min.** `(max - min)` is the least robust dispersion statistic there
+   *   is: one outlying value defeats it entirely. Percentiles require the attacker to move a
+   *   fifth of the trace, not one entry.
+   * - **`distinct >= 4`.** This is what separates a shim from an honest Android. The ping DTO
+   *   already warns that a stationary device on one unchanging Wi-Fi scan reports a quantised,
+   *   REPEATING accuracy -- a handful of values, each seen many times. A generated trace has
+   *   many distinct values clustered tightly. Without this guard the branch re-opens exactly
+   *   the false positive that comment exists to prevent, which is how the previous version of
+   *   this signal earned three false positives on real honest visits.
+   * - **eight fixes.** Below that a spread is noise, and a four-fix trace could skip the check
+   *   entirely by staying under the old five-fix guard.
+   */
+  const sorted = [...values].sort((a, b) => a - b);
+  const at = (q: number): number => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))]!;
+  const spread = median > 0 ? (at(0.9) - at(0.1)) / median : 1;
+  if (values.length >= 8 && distinct >= 4 && spread < 0.15) {
     return {
       code: 'accuracyRealism',
-      contribution: -12,
-      reason: `Median accuracy was ${Math.round(median)} m at an indoor venue. Indoor fixes normally degrade to tens of metres, so readings this tight are unusual.`,
+      /**
+       * -15, not -10, and the number is not a taste.
+       *
+       * The maximum reachable score is 88 and the auto threshold is 75, so every trace carries
+       * a 13-point cushion. A penalty of 10 leaves a tight-cluster fabrication at 78 -- still
+       * auto-verified, still nobody looking at it. Any signal meant to actually stop something
+       * has to exceed the cushion, or it is a decoration that reads like a defence.
+       */
+      contribution: -15,
+      reason: `Reported accuracy barely moved across the visit (${at(0.1).toFixed(1)}-${at(0.9).toFixed(1)} m). A real receiver's accuracy estimate wanders as conditions change.`,
     };
   }
   return {
@@ -313,54 +432,25 @@ export const teleport: SignalFn = (evidence, _rollups, config) => {
 /* ------------------------------------------------------ approach/departure */
 
 /**
- * A real visit has fixes outside the fence before and after the dwell. A trace that begins
- * inside and ends inside, with nothing either side, is what you get from an override toggled
- * on and off -- nobody materialises in a shop.
+ * REMOVED. It could not detect anything, and it paid the attacker more than the honest user.
+ *
+ * The signal rewarded a trace that showed the participant arriving from outside the fence and
+ * leaving again. It went -18, then -6, then 0 for the "neither observed" case, each time for
+ * the same reason: the participant screen says "Start the visit as you arrive, and keep this
+ * page open while you are inside", and following that instruction produces start-inside /
+ * end-inside. Every version of the rule was docking people for compliance with our own
+ * onboarding.
+ *
+ * Once the penalty reached 0 the signal could only ever ADD to a score, which the
+ * spoof-adversary pass identified as strictly worse than deleting it: a fabricator
+ * synthesising coordinates adds two entries 250 m out for free and collects the bonus, while
+ * the honest participant who did as they were told collects nothing. A signal whose only
+ * possible effect is the attacker's preferred outcome is not a fraud signal.
+ *
+ * There is no replacement. The thing it claimed to measure -- the journey to and from the
+ * venue -- is not observable by a web client that is told to start on arrival, and pretending
+ * otherwise cost this engine three revisions. See D-032.
  */
-export const approachDeparture: SignalFn = (evidence) => {
-  const usable = evidence.fixes.filter((f) => f.presence !== 'unknown');
-  if (usable.length < 4) return null;
-
-  const first = usable[0] as EvidenceFix;
-  const last = usable[usable.length - 1] as EvidenceFix;
-  const approached = first.presence !== 'inside';
-  const departed = last.presence !== 'inside';
-  const everInside = usable.some((f) => f.presence === 'inside');
-  if (!everInside) return null;
-
-  if (approached && departed) {
-    return {
-      code: 'approachDeparture',
-      contribution: 6,
-      reason: 'The trace shows the participant arriving from outside the geofence and leaving again afterwards, consistent with a real visit.',
-    };
-  }
-  if (!approached && !departed) {
-    /**
-     * Only -6, and worded as "not corroborated" rather than as an accusation.
-     *
-     * This was -18 until the spoof-adversary pass pointed out that CLAUDE.md section 1
-     * describes the honest flow as "starts a visit session, keeps the tab open while on
-     * site, ends the session" -- which is start-inside, end-inside. Penalising that heavily
-     * sent the MODAL HONEST VISIT to manual review. Recording an approach would require the
-     * participant to grant location permission and keep the tab foregrounded on the walk in
-     * from the car park, which nobody does. See D-010.
-     */
-    return {
-      code: 'approachDeparture',
-      contribution: -6,
-      reason: 'Location reporting began and ended on site, so the journey to and from the venue could not be corroborated. This is expected when a session is started after arriving.',
-    };
-  }
-  // One-sided. Weak, but returning null here made the toggle-off spoof completely free.
-  return {
-    code: 'approachDeparture',
-    contribution: -2,
-    reason: approached
-      ? 'An approach to the venue was recorded but no departure, so the end of the visit is uncorroborated.'
-      : 'A departure was recorded but no approach, so the start of the visit is uncorroborated.',
-  };
-};
 
 /** Evaluation order is display order in the console, so most decisive first. */
 export const ALL_SIGNALS: readonly SignalFn[] = [
@@ -371,6 +461,5 @@ export const ALL_SIGNALS: readonly SignalFn[] = [
   proximity,
   coverage,
   accuracyRealism,
-  approachDeparture,
   clockSkew,
 ];

@@ -24,6 +24,8 @@ import {
   SessionEventDoc,
   SessionEventSchema,
   SessionSchema,
+  Task,
+  TaskSchema,
 } from '../db/schemas/task-session.schema.js';
 import { PingsController } from '../pings/pings.controller.js';
 import { PingsService } from '../pings/pings.service.js';
@@ -59,6 +61,7 @@ describe('visit lifecycle', () => {
   let Reports: Model<Report>;
   let Events: Model<SessionEventDoc>;
   let Assignments: Model<Assignment>;
+  let Tasks: Model<Task>;
 
   let venueId: string;
   let token: string;
@@ -146,6 +149,7 @@ describe('visit lifecycle', () => {
     Reports = conn.model(Report.name, ReportSchema) as Model<Report>;
     Events = conn.model(SessionEventDoc.name, SessionEventSchema) as Model<SessionEventDoc>;
     Assignments = conn.model(Assignment.name, AssignmentSchema) as Model<Assignment>;
+    Tasks = conn.model(Task.name, TaskSchema) as Model<Task>;
     await Pings.syncIndexes();
 
     const v = await Venues.create({
@@ -187,6 +191,8 @@ describe('visit lifecycle', () => {
         { provide: getModelToken(Session.name), useValue: Sessions },
         { provide: getModelToken(SessionEventDoc.name), useValue: Events },
         { provide: getModelToken(Assignment.name), useValue: Assignments },
+        // The evaluator resolves the dwell expectation through session -> assignment -> task.
+        { provide: getModelToken(Task.name), useValue: Tasks },
         { provide: getModelToken(Venue.name), useValue: Venues },
         { provide: getModelToken(Ping.name), useValue: Pings },
         { provide: getModelToken(Report.name), useValue: Reports },
