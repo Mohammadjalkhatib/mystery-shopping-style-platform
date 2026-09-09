@@ -1771,3 +1771,51 @@ previously returned 400, and the business console read the photo back byte-ident
 
 **Open.** Unchanged: `presenceFor` still treats client-controlled `accuracyM` as a fence
 extension, which is the cheapest remaining attack on the engine.
+
+---
+
+### 2026-09-09 - docs/reviewer-guide
+
+**What.** The submission's documentation, aimed at someone who has never seen this repo.
+`docs/ASSESSMENT.md` is new: the system design writeup the brief asks for as its own
+deliverable, plus a direct answer to each question it raises and an improvement analysis across
+frontend, backend, security and features. `README.md` gains a "For the reviewer — start here"
+orientation with a code map, real Cloudflare R2 viewing instructions, and one consolidated
+account of how to exercise the flow locally, on Docker and live.
+
+**Why.** The brief lists five deliverables, and three of them were being answered implicitly by
+"read the whole repo". A grader who cannot find the design writeup has not been given one. The
+ASSESSMENT file is separate rather than folded into the README because the brief treats the
+writeup and the decision log as distinct artifacts, and the README already had 18 sections.
+
+**Files.**
+
+- `docs/ASSESSMENT.md`: new. Six sections — what the system is, the three decoupling seams and
+  why each is load-bearing, the brief's questions answered, where the AI got it wrong, the
+  improvement analysis by area, and a deliverables map naming the five decisions worth reading.
+- `README.md`: new reviewer section at the top with the code map; the evidence-storage table
+  corrected from GridFS to R2 with dashboard navigation and the two key shapes explained; the
+  Testing section rewritten to cover the automated suite *and* the manual flow in all three
+  environments; `docs/ASSESSMENT.md` linked from the documentation table.
+
+**Now true.**
+
+1. **The deployed demo stores photos in Cloudflare R2, not GridFS.** Confirmed live rather than
+   assumed: `GET /health` returns `{"evidence":{"backend":"s3","ok":true}}`. The README said
+   GridFS, which stopped being true when the credentials were set. `/health` is the
+   authoritative answer to "which store is this instance using" and is now documented as such.
+2. **`docs/ASSESSMENT.md` is the entry point for a reviewer**, and the README's first section
+   routes there. If the answers there and the code disagree, the code is right and the file is
+   stale — every number in it was checked against the source before it was written.
+3. **The numbers in the docs are verified, not remembered.** 543 tests / 22 suites, 117 in
+   `engine.spec` alone, 8 signals (not 9 — the first draft said nine and the source said
+   otherwise), 6 session states, thresholds 75 / 30, `ACCURACY_CAP_M` 100, `MAX_PINGS_PER_SESSION`
+   4000, 33 decisions, 35 memory entries, 4 AI notes.
+4. **Two limitations are now stated in the graded documentation, not just in code comments:**
+   `presenceFor` treating client-controlled `accuracyM` as a fence extension, and
+   `sophisticatedSpoof` scoring 88. Both are conceded deliberately — the second is the same
+   trace as an honest visit, so anything that moved it would move honest visits too.
+
+**Open.** The RTL Arabic pass has still never been looked at on a real device. Evidence photos
+still have no retention rule while pings expire at 30 days; the correct shape is a sweep calling
+`bucket.delete()`, not a TTL index, which on GridFS strands the chunks.

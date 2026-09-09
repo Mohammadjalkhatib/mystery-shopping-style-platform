@@ -7,6 +7,80 @@ console shows the completed visit appear on its own, with a verification verdict
 
 ---
 
+## For the reviewer — start here
+
+Five minutes, in order:
+
+1. **Read the next section**, "What 'verified' means here". It is the one design commitment
+   everything else follows from, and the rest of the repo does not make sense without it.
+2. **Open the live console** — URLs and demo logins are under **Deployed URLs** and **Demo
+   credentials**. Sign in as the business user, open a completed visit, and read the evidence
+   trail: a score, a verdict, and one plain-language reason per signal.
+3. **Read `docs/ASSESSMENT.md`.** That is the system design writeup, and it answers each
+   question in the brief directly — session state, connection loss, denied permission, what
+   "verified" can honestly mean, what the participant is told, scaling, and what I would push
+   back on about the idea itself. It ends with an improvement analysis across frontend,
+   backend, security and features.
+4. **Skim `docs/DECISIONS.md`.** 33 entries, each with the alternatives and why they lost. If
+   you read five, read D-001, D-005, D-010, D-016 and D-032.
+5. **`docs/AI-NOTES.md`** is where the AI got things wrong, written when it happened rather
+   than reconstructed afterwards. Four entries.
+
+**What is here, in numbers:** 543 tests across 22 suites, 33 recorded decisions, 35 memory
+entries, 71 commits on a `feat/* → dev → main` flow where `main` is the deployed branch.
+
+**The three things I would want looked at**, because they are where the actual work went:
+
+| | Where | Why it matters |
+|---|---|---|
+| The verification engine | `apps/api/src/verification/` | Pure — no database, no I/O, no clock. 117 tests over synthetic traces. Red-teamed twice by a subagent, which found real bugs both times. |
+| The evidence trail in the console | `apps/web/src/pages/Console.tsx` | The product is the reasons, not the number. This is where a business user decides. |
+| The decision log | `docs/DECISIONS.md` | Several decisions here are refusals to build something that was asked for, with the reasoning. |
+
+### Where the code lives
+
+```
+apps/api/src/
+  verification/      THE CORE. Pure scoring engine — no Mongoose, no I/O.
+    signals.ts         the 8 signals, each with the reasoning in comments
+    engine.ts          scoring and verdict banding
+    rollups.ts         dwell, coverage, min distance — computed once, reused
+    evaluator.service.ts  drains the outbox, writes append-only results
+  session/
+    state-machine.ts   pure. the 6 states and the legal transitions
+    sessions.service.ts  compare-and-swap transitions, 409 on illegal
+    reaper.service.ts    lazy-on-read expiry sweep (D-016, D-019)
+  pings/             idempotent ingest on (sessionId, clientPingId); server stamps
+                     receivedAt and computes distance — the client never supplies either
+  geo/
+    haversine.ts       distance + presenceFor(), ACCURACY_CAP_M = 100 m
+    precision.ts       rejects venue coordinates too coarse for their own radius (D-020)
+  evidence/          photo upload
+    storage/           ObjectStore interface: GridFS locally, S3 in production
+    storage/sigv4.ts   AWS SigV4, hand-rolled — the S3 API, never a vendor SDK
+  console/
+    visit-events.service.ts  SSE fan-out with Last-Event-ID replay
+  reports/  admin/  auth/  geocode/  db/    submission, authoring, demo auth, venue search, schemas
+
+apps/web/src/
+  participant/
+    useVisitTracker.ts   the location watch. releases it when the page hides — deliberately
+    offlineQueue.ts      localStorage queue, flushed when the network returns
+    watchdog.ts          re-attaches a silently dead watch (D-023)
+    Consent.tsx          the gated consent screen
+    DiscreetMode.tsx     dark clock overlay (D-025) — conceals from a bystander, never
+                         from the participant
+  pages/               Console, Dashboard, People, TasksTab, Login
+  components/          MapPicker + slippy.ts (Web Mercator tile maths)
+  i18n/                en.json / ar.json, ~145 keys each
+
+packages/shared/       DTO types only — Verdict, Signal, SessionState, Presence
+docs/                  DECISIONS, ASSESSMENT, MEMORY, AI-NOTES, BACKLOG, REQUIREMENTS
+.claude/               agents (3), skills (2), settings — submitted as they actually evolved
+```
+
+---
+
 ## What "verified" means here, and what it does not
 
 The system does not claim to prove that anyone was anywhere. It cannot. From a web browser
@@ -325,22 +399,59 @@ returning a code and parameters instead of a sentence.
 
 ### Evidence photos
 
-Which backend is in use is decided at boot from config and **printed in the log**, so it is
-never a guess:
+Which backend is in use is decided at boot from config, **printed in the log**, and reported by
+the health endpoint — so it is never a guess:
 
 ```
-[ObjectStore] Evidence -> S3 at http://minio:9000/visit-evidence
+[ObjectStore] Evidence -> S3 at https://<account>.r2.cloudflarestorage.com/visit-evidence
 [ObjectStore] Evidence -> MongoDB GridFS (no S3 configured)
 ```
+
+```bash
+curl -s https://msp-api-ijht.onrender.com/health
+# {"status":"ok","mongo":"up","evidence":{"backend":"s3","ok":true},"uptimeS":941}
+```
+
+`backend` is `s3` or `gridfs`; `ok` is whether that store actually answered at boot. The
+endpoint is public because it names no secret — a backend kind and a boolean.
 
 | Where you are | Backend | How to look at the files |
 |---|---|---|
 | `docker compose up` | MinIO | Browser console at http://localhost:9001, login `minioadmin` / `minioadmin`, bucket `visit-evidence` |
-| Deployed (Render + Atlas) | **MongoDB GridFS** | Atlas UI → Collections → `evidence.files`. The bytes are in `evidence.chunks` |
+| Deployed (Render + Atlas) | **Cloudflare R2** | R2 dashboard → **R2 Object Storage** → bucket `visit-evidence` → **Objects** tab |
+| No S3 configured | MongoDB GridFS | Atlas UI → Collections → `evidence.files`; the bytes are in `evidence.chunks` |
 
-The deployed demo has no S3 credentials, so it falls back to GridFS. Setting all four of
-`S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` on the API service
-switches it to a real bucket with no code change (D-028).
+**Reading the R2 bucket.** In the Cloudflare dashboard, objects are laid out one folder per
+session:
+
+```
+sessions/<sessionId>/<uuid>
+```
+
+Click into `sessions/`, then a session id, and the objects inside are that visit's photos.
+Cloudflare shows size, content type and upload time; **Download** on the row fetches the image.
+
+Two things about the naming are worth knowing, because they look inconsistent until you see why
+(D-033):
+
+- The path **in the bucket** contains slashes, as above. That is what makes the dashboard
+  browsable by session.
+- The key **on the report document and in the API URL** is slash-free and dotted —
+  `<sessionId>.<uuid>`. A route parameter cannot contain `/`, so a bucket path used directly as
+  `GET /evidence/:key` would 404 on every photo. `s3.store.ts` converts between the two forms.
+
+So a key in Mongo of `68b1c4....a91f.3f2e8d10-...` is the object at
+`sessions/68b1c4....a91f/3f2e8d10-...` in the bucket. The two are the same file.
+
+The evidence key is validated against `EVIDENCE_KEY_PATTERN` — a conservative character
+allowlist that also rejects `..` — rather than against a MongoDB ObjectId. It was an ObjectId
+check originally, which was true of GridFS keys and false of S3 keys, so configuring a real
+bucket broke every photo submission until this was fixed.
+
+The deployed demo now has R2 credentials set. With all four of `S3_ENDPOINT`, `S3_BUCKET`,
+`S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` absent it falls back to GridFS with no code
+change (D-028) — the API only ever speaks the S3 HTTP API, signed by hand in
+`evidence/storage/sigv4.ts`, so MinIO, R2 and AWS S3 are the same code path.
 
 **In the product**, a photo is on the visit's evidence trail: Console → Visits → click a visit.
 It is fetched with your token, not a public URL — the read route is role-guarded and a business
@@ -384,7 +495,7 @@ db.venues.find({}, { name: 1, location: 1, radiusM: 1 })         // check a geof
 |---|---|---|
 | Participant app | https://msp-web-nc40.onrender.com | Sign in as `user1` … `user10`. Same URL as the console; the app routes by role |
 | Business console | https://msp-web-nc40.onrender.com | Sign in as `business` |
-| API | https://msp-api-ijht.onrender.com | `/health` answers `{"status":"ok","mongo":"up","uptimeS":N}` |
+| API | https://msp-api-ijht.onrender.com | `/health` reports Mongo and the evidence backend |
 
 Password for every account is `demo1234`.
 
@@ -608,17 +719,65 @@ than being rejected for distance. If it is rejected, check the seed logged
 
 ## Testing
 
+### The automated suite
+
 ```bash
-npm test
+npm test              # 543 tests, 22 suites
 npm run test:watch
+npm test -- engine.spec          # just the verification engine (117 tests)
+npm test -- --coverage
 ```
+
+`npm test`, not `npx jest` — the script passes `--experimental-vm-modules`, which the ESM
+setup needs. Anything touching the database runs against `mongodb-memory-server` as a replica
+set, because transactions and TTL indexes both require one; no local Mongo is needed.
 
 We test where the logic is non-obvious and where a bug fails silently: the verification
 engine, the session state machine, idempotent ping ingest, geofence maths, and authorization
-boundaries.
+boundaries — one test per boundary.
 
 We deliberately do not test UI rendering, the map component, the SSE transport, or framework
 behaviour. A wrong verdict is silent and expensive; a broken button is loud and cheap.
+
+### Exercising the actual flow
+
+The same five steps in all three environments. What differs is only the URL and where the data
+lands.
+
+1. Sign in as `business`, create a venue (search for it, or drop the map pin), create a task
+   against it, assign it to a participant.
+2. Sign in as that participant, read the consent screen, start the visit.
+3. Leave the tab open and in the foreground. Fixes are sampled every 30 s. To simulate being
+   on site, use DevTools → ⋮ → **Sensors** → Location → **Manage** and add the venue's
+   coordinates. (That this takes ten seconds is the whole reason there is no boolean
+   `verified` — see the first section.)
+4. End the visit, write the report, optionally attach a photo, submit.
+5. Back in the console the visit appears **on its own, over SSE, with no refresh**. Open it for
+   the score, verdict and per-signal reasons.
+
+| | Setup | URL | Data lands in |
+|---|---|---|---|
+| **Local, no Docker** | `npm install`, `npm run dev`; needs a Mongo replica set — see **Running locally without Docker** | http://localhost:5173 | your local Mongo; photos in GridFS unless you set the S3 vars |
+| **Docker** | `cp .env.example .env && docker compose up` — api, web, mongo and minio, seeded, no other manual steps | http://localhost:5173 | the `mongo` container; photos in MinIO, browsable at http://localhost:9001 |
+| **Live** | nothing to install | https://msp-web-nc40.onrender.com | Atlas M0; photos in Cloudflare R2 |
+
+Two things that will look like bugs and are not:
+
+- **Live, first request after idle takes 30–60 s.** Free-tier cold start. Hit `/health` and
+  wait for it before signing in.
+- **Locally over a LAN IP the location never starts.** The Geolocation API requires a secure
+  origin; `localhost` counts, `192.168.x.x` does not. This is why the phone flow can only be
+  tested against the deployed URL.
+
+To watch a verdict being produced rather than inferring it:
+
+```bash
+# API log, in Docker
+docker compose logs -f api | grep -i "evaluat\|outbox\|ObjectStore"
+
+# The result document itself, newest first
+db.verificationResults.find().sort({ createdAt: -1 }).limit(1).pretty()
+```
 
 ---
 
@@ -788,6 +947,7 @@ Named so it is clear these are cuts, not omissions:
 
 | File | What it is |
 |---|---|
+| **`docs/ASSESSMENT.md`** | **The system design writeup, and direct answers to every question in the brief. Start here after the README.** |
 | `CLAUDE.md` | Working rules and design constraints for Claude Code |
 | `docs/DECISIONS.md` | Engineering decisions with alternatives and why they lost |
 | `docs/MEMORY.md` | Running record of what exists and why, one entry per merged branch |
