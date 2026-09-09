@@ -1473,3 +1473,40 @@ reason a person can read; every forgery is below the threshold — the tight-clu
 71, the four-ping ladder 70, the padded trace 56, the frozen override 19; and under a 60 s task
 the fast-cadence forgery scores 58. `sophisticatedSpoof` remains at 88 and must: it is
 byte-for-byte an honest trace, and any change that moved it would move `honestOutdoor` with it.
+
+---
+
+## D-033: An evidence key is validated against the store's contract, not MongoDB's
+
+**Date:** 2026-09-09
+**Status:** accepted
+
+**Decision.** `CreateReportDto.evidenceKey` is validated with a shape rule owned by the
+`ObjectStore` contract — bounded length, no `/`, no `..` — instead of `@IsMongoId()`.
+
+**Context.** D-026 stored evidence in GridFS, whose keys are ObjectIds, and the DTO validated
+them as such. D-028 added an S3 store whose keys are `<sessionId>.<uuid>`, and the interface
+already declared keys "opaque to every caller". Nothing failed, because the deployed demo had no
+bucket. The moment R2 credentials were set, every upload succeeded and every submission
+carrying its key was rejected with *"evidenceKey must be a mongodb id"* — a config change
+breaking a code path neither the tests nor a local run touched.
+
+**Alternatives considered.**
+
+- *Make the S3 store issue ObjectId-shaped keys.* Would have restored the validator without
+  touching it. Rejected because it inverts the dependency: the storage layer would be
+  constrained by a DTO's idea of an identifier, and the session prefix that makes
+  `listBySession` a cheap native prefix list would have to go with it.
+- *Drop the validation entirely and rely on `assertBelongsTo`.* Defensible — the ownership check
+  is the real control, and a key that does not exist fails there regardless. Rejected because
+  the value reaches a URL path and a `Content-Disposition` header, so a bound on length and
+  charset is worth having before it gets that far. Input hygiene, not authorization.
+- *Keep the rule in the DTO.* Rejected because that is where it went wrong. The rule now lives
+  beside the interface that promises opacity, so the next backend is validated by the same
+  contract it implements rather than by whichever caller was written first.
+
+**Consequences.** The pattern is permissive by design — it describes what a key may not be
+rather than what it must be — so a malformed-but-well-shaped key now fails one step later, at
+`assertBelongsTo`, with "That evidence does not exist" instead of at validation. That is the
+correct place for it and a slightly less specific error. Any future store must issue keys within
+this charset; one that wanted `/` would have to encode it, exactly as the S3 store already does.

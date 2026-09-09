@@ -1731,3 +1731,43 @@ laundered 71, four-ping ladder 70, minimal short-task 62, padded 56, frozen over
 - `clockSkew` is a pure honest-participant tax — an attacker sets `capturedAt = Date.now()` free.
 - `jitterFingerprint` −45 assumes GNSS drift; network positioning legitimately repeats a centroid.
 - `presenceDwell` integrates `receivedAt`, so a fully offline visit still scores as absence.
+
+### 2026-09-09 - fix/opaque-evidence-key
+
+**What.** `evidenceKey` is validated against the object store's contract instead of
+`@IsMongoId()`. Photo upload works again once a real bucket is configured.
+
+**Why.** D-033. Reported from live use: uploading a photo succeeded, then submitting the report
+failed with "evidenceKey must be a mongodb id".
+
+**Files.**
+
+- `apps/api/src/evidence/storage/object-store.ts`: `EVIDENCE_KEY_PATTERN`, defined beside the
+  interface that promises keys are opaque.
+- `apps/api/src/reports/dto/create-report.dto.ts`: `@Matches` instead of `@IsMongoId`.
+- `apps/api/src/reports/dto/create-report.spec.ts`: 7 tests pinning both shipped key shapes.
+- `apps/web/src/api/client.ts`: the key is URL-encoded on the read path.
+
+**Now true.**
+
+1. **THE SEAM: a config change broke a code path no test and no local run touched.** GridFS keys
+   are ObjectIds; S3 keys are `<sessionId>.<uuid>`. Every test ran on GridFS, the deployed demo
+   ran on GridFS, and the DTO's `@IsMongoId()` was true of both — until credentials turned the
+   other store on. The `ObjectStore` interface had said "opaque to every caller" since D-028 and
+   a caller was not honouring it.
+2. **The key-shape rule lives with the interface, not the DTO.** A future backend is then
+   validated by the contract it implements rather than by whichever caller was written first.
+3. **Format validation is hygiene; `assertBelongsTo` is the control.** The pattern only bounds
+   length and charset and forbids `/` and `..`, because the value reaches a URL path and a
+   `Content-Disposition` header. Whether the key may be used is still decided by asking the
+   store which session it was uploaded against.
+4. **Both shipped key shapes are now pinned by tests**, so a third backend cannot silently break
+   submission the way the second one did.
+
+**Verified rather than assumed.** 543 tests pass. Against compose running on the S3 store, the
+exact reported flow: upload returned
+`6a9fbe97966ecc34c3f75f3e.c5bf46d7-f008-496f-95aa-55d9c9528d7d`, submit returned **201** where it
+previously returned 400, and the business console read the photo back byte-identical.
+
+**Open.** Unchanged: `presenceFor` still treats client-controlled `accuracyM` as a fence
+extension, which is the cheapest remaining attack on the engine.

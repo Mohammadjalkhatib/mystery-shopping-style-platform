@@ -235,7 +235,9 @@ export const api = {
    */
   evidenceObjectUrl: async (evidenceKey: string): Promise<string> => {
     const token = tokenStore.get();
-    const res = await fetch(`${BASE}/evidence/${evidenceKey}`, {
+    // Encoded, because the key is opaque by contract: GridFS issues an ObjectId and S3 issues
+    // `<sessionId>.<uuid>`, and the next backend may issue something else again.
+    const res = await fetch(`${BASE}/evidence/${encodeURIComponent(evidenceKey)}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (!res.ok) throw new ApiError(res.status, 'Could not load the photo');
