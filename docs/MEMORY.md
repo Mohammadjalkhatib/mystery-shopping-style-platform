@@ -1956,3 +1956,81 @@ the suite again after merging into `dev`, not by the run before it.
    timestamps, ids and prose. Assert structure.
 
 **Open.** Nothing. Suite run four times to confirm the flake is gone.
+
+### 2026-09-10 - feat/live-presence
+
+**What.** The participant is now told, DURING the visit, when they are not at the venue.
+`POST /sessions/:id/pings` answers with `latestPresence` (`inside | near | outside | unknown`)
+for the newest fix in the batch, and the active-visit screen renders it as a banner above the
+timer. Also closes an IDOR on `GET /sessions/:sessionId` that the red-team pass turned up.
+
+**Why.** D-036, and a direct user report. `docs/BACKLOG.md` listed a "live presence indicator"
+under `feat/participant-flow` and it was never built — so the server classified presence on the
+first fix and told nobody, and a participant could stand in the wrong branch for an hour and
+learn about it days later from a rejection.
+
+**Files.**
+
+- `apps/api/src/pings/pings.service.ts`: `latestPresence` + `latestPresenceAt` on the ingest
+  result, tracked by newest `capturedAt` across the batch.
+- `apps/api/src/pings/pings.spec.ts`: 9 tests, including that the response carries no distance.
+- `apps/api/src/session/sessions.controller.ts` + `sessions.service.ts`: `viewOwned()`, and the
+  route now takes `@CurrentUser()`.
+- `apps/api/src/reports/visit-lifecycle.spec.ts`: the three boundary tests for that route.
+- `apps/web/src/participant/PresenceBanner.tsx`, `useVisitTracker.ts`, `VisitPage.tsx`,
+  `api/client.ts`, `i18n/{en,ar}.json` (+12 keys each).
+- `docs/DECISIONS.md`: D-036. `README.md`: the feature, and three engine defects recorded.
+
+**Now true.**
+
+1. **`GET /sessions/:sessionId` had NO ownership check.** It took no `@CurrentUser()` and read
+   whatever id was in the path, so any participant token could read any session — including the
+   venue's pinned centre, `radiusM`, timestamps and ping count. Every other route on that
+   controller asserted ownership; this was the exception, and the boundary test was missing
+   because the check was. Fixed, and the new test was confirmed to FAIL against the old code
+   before being kept.
+2. **THE FENCE IS ALREADY DISCLOSED TO THE PARTICIPANT.** `SessionView` returns `venue.lat`,
+   `venue.lng` and `venue.radiusM`, and the ready-to-start card prints the radius. This
+   demolished the premise D-036 was going to rest on: withholding metres from the presence
+   answer buys only `nearBufferM`, which an attacker aiming to appear *inside* never needs. The
+   comment in `PresenceBanner.tsx` originally asserted the opposite and was FACTUALLY WRONG;
+   it now says what is actually true. Do not re-derive the old claim from the code.
+3. **Rate-limiting the presence answer alone would be theatre.** It is worth doing only together
+   with coarsening `SessionView`, and that is a product question, not a security one — telling a
+   participant the size of the fence they are judged against may well be the right thing.
+4. **The indicator warns, it never blocks.** Indoor GPS is unreliable by design (the `indoor`
+   flag exists for it), so refusing to end or submit on a bad fix would strand an honest
+   participant standing inside the shop.
+5. **`unknown` and "no answer yet" are different claims and stay separate.** The second lasts up
+   to one 30 s sampling interval at the start of every visit; collapsing them would accuse
+   someone during the ordinary startup window.
+6. **Presence is answered for the newest fix by `capturedAt`, not by array position.** An
+   offline flush arrives in queue order and nothing makes a client sort it, so answering with
+   whichever was last would report where they were ten minutes ago. Duplicates still answer —
+   refusing on a re-flush would blank the indicator exactly when the connection is worst.
+
+**Three engine defects found and deliberately NOT fixed here.** All recorded in the README:
+
+- `dwellSeconds` and `coverageRatio` still integrate `receivedAt` only, so an honest offline
+  flush loses both — while `dwellIntervals` was already patched to accept either clock.
+  Corroboration survives, the seconds that gate it do not. Highest-value thing left in the
+  engine; needs its own decision, fixtures and red-team pass (CLAUDE.md §6).
+- `clockSkew` fires only past a 20 minute delta, which an attacker never incurs and an honest
+  offline flush does. Close to decorative against fraud, and a tax on honesty.
+- `jitterFingerprint` can trip on a genuinely stationary phone whose fused provider repeats a
+  coordinate byte-for-byte.
+
+**Verified rather than assumed.** 599 tests pass, typecheck and build clean. Driven in a real
+browser against the compose stack with a stubbed device location: started a visit 27 km away and
+the banner read "You do not seem to be at …", moved to the venue and it flipped to "You are at
+…" with no refresh; stored fixes confirm 27136 m → `outside` and 0 m → `inside`. Both states
+checked in Arabic with RTL. The IDOR test was confirmed to fail without the fix. Stack destroyed
+with `docker compose down -v` afterwards.
+
+**Open.**
+
+- The three engine defects above.
+- `SessionView` fence disclosure, and the rate limit that only makes sense with it.
+- The cheapest passing attack needs none of this: mock GPS at coordinates from any map, six
+  fixes, ~2.5 minutes. On mobile web there is no positional defence; the answer is behavioural
+  and belongs in the engine.

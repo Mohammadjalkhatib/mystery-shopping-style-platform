@@ -1,6 +1,6 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import type { AuthUser } from '@msp/shared';
+import type { AuthUser, Presence } from '@msp/shared';
 import type { Model } from 'mongoose';
 import { haversineM, presenceFor } from '../geo/haversine.js';
 import { Ping } from '../db/schemas/ping.schema.js';
@@ -18,6 +18,29 @@ export interface IngestResult {
   rejectedOutOfWindow: number;
   pingCount: number;
   remainingBudget: number;
+  /**
+   * Where the participant is, as of the NEWEST fix in this batch. Server-computed, from the
+   * geofence snapshot the visit is being judged against.
+   *
+   * This is the "live presence indicator" the backlog asked for in `feat/participant-flow` and
+   * never got. Until now a participant could stand in the wrong branch for an hour and find
+   * out days later, from a rejection — the system knew from the first fix and did not say.
+   *
+   * **Deliberately the four-state presence and NOT `distanceM`** (D-036). A metre readout is a
+   * live oracle: move, read, adjust, and a spoofer binary-searches the exact centre and radius
+   * in minutes. Presence tells an honest participant everything they can act on — they are in
+   * the wrong place, go to the right one — and tells an attacker roughly what a map already
+   * would, since the task names the venue and its address.
+   *
+   * Null when the batch contained nothing usable: every fix out of window, or an empty flush.
+   */
+  latestPresence: Presence | null;
+  /**
+   * `capturedAt` of the fix that produced `latestPresence`, so a client can tell a current
+   * answer from a stale one. Device clock, and untrusted like every `capturedAt` (rule 3) —
+   * it is used to order fixes and to show an age, never to decide anything.
+   */
+  latestPresenceAt: Date | null;
 }
 
 /**
@@ -114,6 +137,18 @@ export class PingsService {
     let rejectedOutOfWindow = 0;
     let accepted = 0;
     let duplicates = 0;
+    /**
+     * The newest usable fix in this batch, for the presence answer.
+     *
+     * Tracked by `capturedAt` rather than by position in the array: an offline flush arrives
+     * in queue order, but nothing guarantees a client sends them sorted, and answering with
+     * whichever happened to be last would tell a participant where they were ten minutes ago.
+     *
+     * Duplicates count. A re-flush of a fix already stored still describes where the device
+     * was at that moment, and refusing to answer because the batch was a retry would blank the
+     * indicator exactly when the connection is worst.
+     */
+    let newest: { capturedAt: Date; presence: Presence } | null = null;
 
     for (const fix of dto.fixes) {
       /**
@@ -149,6 +184,10 @@ export class PingsService {
       // Server-computed. Never accepted from the client, and not derivable by it either.
       const distanceM = haversineM({ lat: fix.lat, lng: fix.lng }, centre);
       const presence = presenceFor(distanceM, fix.accuracyM, fence);
+
+      if (!newest || capturedMs > newest.capturedAt.getTime()) {
+        newest = { capturedAt, presence };
+      }
 
       /**
        * Idempotent on (sessionId, clientPingId), FIRST-WRITE-WINS (rule 4, D-010).
@@ -217,6 +256,8 @@ export class PingsService {
       rejectedOutOfWindow,
       pingCount: updated.pingCount,
       remainingBudget: MAX_PINGS_PER_SESSION - updated.pingCount,
+      latestPresence: newest?.presence ?? null,
+      latestPresenceAt: newest?.capturedAt ?? null,
     };
   }
 }

@@ -19,6 +19,7 @@ import { api, type SessionView } from '../api/client.js';
 import { Consent, CONSENT_VERSION } from './Consent.js';
 import { DiscreetMode } from './DiscreetMode.js';
 import { EvidencePicker } from './EvidencePicker.js';
+import { PresenceBanner } from './PresenceBanner.js';
 import { clearQueue } from './offlineQueue.js';
 import { useVisitTracker } from './useVisitTracker.js';
 
@@ -279,6 +280,20 @@ function ActiveVisit({
         stop capture — the exact opposite of what the feature is for.
       */}
       {discreet && <DiscreetMode onExit={() => setDiscreet(false)} />}
+
+      {/*
+        FIRST, above the timer.
+        
+        The elapsed clock is the thing a participant looks at, so anything below it competes
+        with a number that changes every second. "You are not where you think you are" is the
+        one message on this screen that is worth interrupting for, and it is only useful while
+        the visit is still open — which is exactly the window this screen owns.
+      */}
+      <PresenceBanner
+        presence={t.presence}
+        presenceAt={t.presenceAt}
+        venueName={session.venue.name}
+      />
 
       <Card sx={{ mb: 2 }}>
         <CardContent>

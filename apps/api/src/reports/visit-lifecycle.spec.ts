@@ -585,6 +585,38 @@ describe('visit lifecycle', () => {
         .send({ notes: 'An admin should not be able to do this.', rating: 5 })
         .expect(403);
     });
+
+    /**
+     * The boundary that was missing, and the reason it was missing.
+     *
+     * `GET /sessions/:sessionId` took no `@CurrentUser()` and read whatever id was in the
+     * path, so any participant token could read any session. There was no test because there
+     * was no check — the route was the only one on the controller that did not assert
+     * ownership, and nothing on the happy path ever noticed.
+     *
+     * What leaked is not trivial: `SessionView` carries the venue's pinned centre and
+     * `radiusM`, so this was also the cheapest route to another visit's geofence. Found by the
+     * `spoof-adversary` pass on the presence indicator, which went looking for how an attacker
+     * learns the fence and found an endpoint that hands it over. D-036.
+     */
+    it("forbids READING another participant's session", async () => {
+      const id = await makeSession('u-participant-2');
+      await request(app.getHttpServer()).get(`/sessions/${id}`).set(auth()).expect(403);
+    });
+
+    it('rejects an unauthenticated read', async () => {
+      const id = await makeSession();
+      await request(app.getHttpServer()).get(`/sessions/${id}`).expect(401);
+    });
+
+    it('still lets a participant read their OWN session', async () => {
+      const id = await makeSession();
+      const res = await request(app.getHttpServer())
+        .get(`/sessions/${id}`)
+        .set(auth())
+        .expect(200);
+      expect((res.body as { id: string }).id).toBe(id);
+    });
   });
 
   describe('the client is untrusted (rule 2)', () => {
