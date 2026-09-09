@@ -38,6 +38,135 @@ export const honestIndoorDegraded = (): VisitEvidence =>
     { atSeconds: 750, offsetM: 360, accuracyM: 18 },
   ]);
 
+/**
+ * The visit that was failing in production, reproduced.
+ *
+ * A participant standing inside an indoor venue for the full expected dwell, on a modern phone
+ * that fuses GNSS with Wi-Fi and therefore reports ~7 m indoors, who started the session on
+ * arrival and ended it before leaving -- exactly what the app's own instructions ask for.
+ *
+ * Before the D-032 fixes this scored 68 and went to manual review: -12 from `accuracyRealism`
+ * for having good GPS indoors, and -6 from `approachDeparture` for following the onboarding.
+ * It is the honest modal case and it must clear the auto threshold.
+ */
+export const honestIndoorGoodPhone = (): VisitEvidence =>
+  buildTrace(INDOOR_VENUE, [
+    // Starts inside: "Start the visit as you arrive."
+    ...everyN(11, 30, (i) => ({ offsetM: 8 + (i % 4) * 3, accuracyM: 6 + (i % 4) * 1.5 }), 0),
+  ]);
+
+/**
+ * The 68 -> 88 flip the spoof-adversary pass caught. A fabrication that changed NOTHING while
+ * the rules changed twice underneath it: `accuracyRealism`'s indoor branch went -12 to +2, and
+ * `approachDeparture` went -6 to 0.
+ *
+ * Tight, plausible accuracy is exactly what a hand-written shim emits -- nobody faking a fix
+ * types `accuracy: 47`. This must not auto-verify.
+ */
+export const indoorTightAccuracyNoApproach = (): VisitEvidence =>
+  buildTrace(
+    INDOOR_VENUE,
+    everyN(11, 30, (i) => ({
+      offsetM: 17 + (i % 4) * 5,
+      // 4.2-7.8 m, but clustered: spread/median is ~0.6 of what an honest receiver wanders.
+      accuracyM: 5.6 + (i % 5) * 0.18,
+    })),
+    { sessionSeconds: 300 },
+  );
+
+/**
+ * The floor a short task used to permit: three fixes, two minutes, auto-verified.
+ *
+ * With `expectedDwellSeconds: 60` this scored 88, because one capped 90 s interval saturated
+ * `presenceDwell`. It is the cheapest fabrication the engine has ever allowed and it exists to
+ * hold the corroboration floor in place.
+ */
+export const minimalShortTaskSpoof = (): VisitEvidence =>
+  buildTrace(
+    OUTDOOR_VENUE,
+    [
+      { atSeconds: 0, offsetM: 28, accuracyM: 9.4 },
+      { atSeconds: 60, offsetM: 24, accuracyM: 12.1 },
+      { atSeconds: 120, offsetM: 31, accuracyM: 8.7 },
+    ],
+    { sessionSeconds: 120 },
+  );
+
+/**
+ * Inside the fence every time it was looked at, and looked at almost never.
+ *
+ * Eight fixes spread 400 s apart: dwell saturates and the corroboration floor is met, so every
+ * other signal is happy. Only `coverage` objects, and it should -- 29% observation of a
+ * forty-minute session is not a watched visit. This fixture exists because the spoof-adversary
+ * pass showed the suite had NO case where coverage alone decided a verdict, which meant the
+ * "no decorative signals" test could not tell whether coverage was doing anything at all.
+ */
+export const sparselyObservedButInside = (): VisitEvidence =>
+  buildTrace(
+    OUTDOOR_VENUE,
+    everyN(8, 400, (i) => ({ offsetM: 18 + (i % 4) * 7, accuracyM: 8 + (i % 5) * 3 })),
+    { sessionSeconds: 2900 },
+  );
+
+/**
+ * Four pings, 90 s apart, and the attacker owns both session boundaries.
+ *
+ * 90 s is not incidental -- it is the optimum. It is the largest gap `dwellSeconds` still
+ * credits in full (the cap is 3x the sampling period) AND that `coverageRatio` still counts as
+ * observed. Four fixes also used to slip under the dispersion test's fix-count guard. Do not
+ * "tidy" the spacing; it is the whole point of the fixture.
+ */
+export const fourPingLadder = (): VisitEvidence =>
+  buildTrace(
+    OUTDOOR_VENUE,
+    [
+      { atSeconds: 0, offsetM: 21, accuracyM: 9.3 },
+      { atSeconds: 90, offsetM: 26, accuracyM: 11.6 },
+      { atSeconds: 180, offsetM: 23, accuracyM: 8.4 },
+      { atSeconds: 270, offsetM: 29, accuracyM: 10.9 },
+    ],
+    { sessionSeconds: 270 },
+  );
+
+/**
+ * Six pings inside sixty seconds, against a task authored at the 60 s minimum.
+ *
+ * The counter-example to counting bare intervals: the honest client is throttled to one fix
+ * per 30 s by `useVisitTracker`, so it CANNOT produce five intervals in a minute, while
+ * anything POSTing to the ingest endpoint directly can. Corroboration measured in intervals
+ * charged the honest participant time and the fabricator one extra request.
+ */
+export const fastCadenceShortTask = (): VisitEvidence =>
+  buildTrace(
+    OUTDOOR_VENUE,
+    [
+      { atSeconds: 0, offsetM: 18, accuracyM: 8.1 },
+      { atSeconds: 12, offsetM: 24, accuracyM: 11.4 },
+      { atSeconds: 24, offsetM: 20, accuracyM: 9.2 },
+      { atSeconds: 36, offsetM: 27, accuracyM: 12.8 },
+      { atSeconds: 48, offsetM: 22, accuracyM: 10.3 },
+      { atSeconds: 60, offsetM: 25, accuracyM: 12.0 },
+    ],
+    { sessionSeconds: 60 },
+  );
+
+/**
+ * The tight-cluster fabrication with ONE junk fix appended to launder the accuracy check.
+ *
+ * A single `accuracyM: 250` fix is `unknown` (over the 100 m cap) so it never reached the
+ * median, but it used to reach the spread -- inflating it enough to disable both negative
+ * branches for the price of one ping.
+ */
+export const accuracyLaunderedByOneUnusableFix = (): VisitEvidence =>
+  buildTrace(
+    INDOOR_VENUE,
+    [
+      ...everyN(11, 30, (i) => ({ offsetM: 17 + (i % 4) * 5, accuracyM: 5.6 + (i % 5) * 0.18 })),
+      { atSeconds: 330, offsetM: 20, accuracyM: 250 },
+    ],
+    { sessionSeconds: 360 },
+  );
+
 /** Honest, but the phone went in a pocket for six minutes. D-005: gaps are normal. */
 export const honestWithGaps = (): VisitEvidence =>
   buildTrace(
@@ -248,6 +377,13 @@ export const batchFlushedHonestVisit = (): VisitEvidence =>
 export const ALL_SCENARIOS: Record<string, () => VisitEvidence> = {
   honestOutdoor,
   honestIndoorDegraded,
+  honestIndoorGoodPhone,
+  indoorTightAccuracyNoApproach,
+  minimalShortTaskSpoof,
+  sparselyObservedButInside,
+  fourPingLadder,
+  fastCadenceShortTask,
+  accuracyLaunderedByOneUnusableFix,
   honestWithGaps,
   staticSpoof,
   teleportIn,

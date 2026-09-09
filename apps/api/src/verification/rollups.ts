@@ -29,16 +29,56 @@ const median = (xs: number[]): number | null => {
  * We did not observe the middle, so we do not claim more than one sampling window of it.
  */
 export function dwellSeconds(fixes: EvidenceFix[], maxGapSeconds: number): number {
+  return dwellDetail(fixes, maxGapSeconds).seconds;
+}
+
+/**
+ * Dwell, and HOW MANY separate observations produced it.
+ *
+ * The count is the part that matters for fraud. Time alone says nothing about corroboration:
+ * ninety seconds of dwell from one pair of fixes and ninety from four pairs are the same number
+ * and completely different evidence. The spoof-adversary pass found that a task authored with a
+ * 60 s expectation let a SINGLE capped interval saturate the dwell signal -- two fixes, two
+ * minutes, and the strongest positive signal in the engine paid out in full.
+ */
+export function dwellDetail(
+  fixes: EvidenceFix[],
+  maxGapSeconds: number,
+  minIntervalSeconds = 0,
+): { seconds: number; intervals: number } {
   const maxGapMs = maxGapSeconds * 1000;
   let total = 0;
+  let intervals = 0;
   for (let i = 1; i < fixes.length; i++) {
     const prev = fixes[i - 1] as EvidenceFix;
     const cur = fixes[i] as EvidenceFix;
     if (prev.presence === 'inside' && cur.presence === 'inside') {
-      total += Math.min(Math.max(0, cur.receivedAt - prev.receivedAt), maxGapMs) / 1000;
+      const gapMs = Math.max(0, cur.receivedAt - prev.receivedAt);
+      total += Math.min(gapMs, maxGapMs) / 1000;
+      /**
+       * An interval only COUNTS as corroboration if it spans real time -- on EITHER clock.
+       *
+       * Counting bare intervals made corroboration a function of cadence, not duration, and
+       * the honest client is the only party bound by a cadence: `useVisitTracker` throttles to
+       * one fix per 30 s, while anything POSTing to the ingest endpoint directly can send six
+       * in a minute. The second spoof-adversary pass showed that buying five intervals in
+       * sixty seconds restored a full +18.
+       *
+       * But testing `receivedAt` alone punished the honest OFFLINE FLUSH, which is a feature
+       * this system advertises: twelve fixes captured 30 s apart down a basement arrive
+       * milliseconds apart when the queue drains, so every interval would fail the test and a
+       * genuine on-site visit would score as absence. So the wider of the two gaps counts.
+       *
+       * `capturedAt` is untrusted (rule 3) and could in principle be spaced out to buy
+       * corroboration cheaply -- but doing that opens a device/server delta that grows with
+       * every fix, which is precisely what `clockSkew` measures. The evasion is not free, and
+       * it is paid for in the signal built to charge for it.
+       */
+      const capturedGapMs = Math.max(0, cur.capturedAt - prev.capturedAt);
+      if (Math.max(gapMs, capturedGapMs) >= minIntervalSeconds * 1000) intervals++;
     }
   }
-  return Math.round(total);
+  return { seconds: Math.round(total), intervals };
 }
 
 /**
@@ -88,7 +128,10 @@ export function computeRollups(
 
   return {
     fixCount: fixes.length,
-    dwellSeconds: dwellSeconds(fixes, expectedIntervalSeconds * 3),
+    dwellSeconds: dwellDetail(fixes, expectedIntervalSeconds * 3).seconds,
+    // Half the expected cadence: every honest interval clears it, no burst of pings does.
+    dwellIntervals: dwellDetail(fixes, expectedIntervalSeconds * 3, expectedIntervalSeconds / 2)
+      .intervals,
     coverageRatio: coverageRatio(evidence, expectedIntervalSeconds),
     // reduce, not Math.min(...spread): a long offline flush would blow the argument limit
     // and throw RangeError, which would stall the outbox retrying forever.

@@ -1393,3 +1393,83 @@ is specific about the alternative explanations rather than a generic disclaimer.
 fixed at 30 days with no control, and there is no per-venue breakdown, which is the cut that
 most limits its diagnostic value: a participant who fails only at one venue is the single
 clearest sign that the venue, not the person, is the problem.
+
+---
+
+## D-032: The task's dwell expectation is read, and the rules stop punishing honest behaviour
+
+**Date:** 2026-09-09
+**Status:** accepted
+
+**Decision.** Four changes to verification. `expectedDwellSeconds` is resolved from the task
+instead of the engine default. `accuracyRealism` tests the *dispersion* of reported accuracy
+rather than its *level*. `presenceDwell` requires five separate inside-to-inside observations
+before it pays in full. `approachDeparture` is deleted outright.
+
+**Context.** Two reports from live use. A task authored with a one-minute dwell still told the
+participant "against an expected 5 min" and failed them for it. And a real five-minute visit,
+standing in the venue on a modern phone, scored 68 and went to review: −12 for reporting 7 m
+accuracy indoors, −6 for starting the session on arrival. Both are the engine punishing people
+for doing the job correctly.
+
+**Alternatives considered.**
+
+- *Leave `expectedDwellSeconds` on the engine default and delete it from the task form.* Honest
+  about what the code did. Rejected because per-task dwell is the right model — a drive-through
+  check and a full store audit are not the same job — and the field was already authored,
+  stored, and displayed. The bug was that it was never read.
+- *Keep the indoor accuracy threshold and just lower the penalty.* Least disruptive. Rejected
+  because the threshold was measuring the wrong thing: level. Modern phones fuse GNSS with
+  Wi-Fi and report 4–8 m indoors routinely, which is why it false-positived on three separate
+  real honest visits — the only evidence this project has ever had about that signal, all of it
+  saying the same thing. Dispersion catches what the branch was actually reaching for: a real
+  receiver's estimate wanders, a generated one does not.
+- *Keep `approachDeparture` as a bonus-only signal.* What the first attempt did: 0 for the
+  "neither observed" case, +6 when both were. Rejected after the spoof-adversary pass showed it
+  was then **strictly worse than deleting it** — a signal that can only add cannot cause a
+  `needs_review` or a `rejected`, so it can never do the job the engine exists for, and a
+  fabricator synthesising coordinates collects the bonus for free while the participant who
+  followed our own instruction to start on arrival collects nothing. It paid the attacker more
+  reliably than the honest user.
+- *Raise the minimum `expectedDwellSeconds` to 240 s so the dwell cap cannot be out-run.* The
+  adversary pass's own suggestion, and the simplest fix. Rejected because it answers a business
+  question with an evidentiary constant: it would ban the one-minute task outright, which is a
+  legitimate thing to want. The corroboration floor gets the same protection by making a short
+  task cost more *observations* rather than more *time* — the visit stays short, it just has to
+  be watched rather than asserted.
+
+**Consequences.** `honestWithGaps` — a phone pocketed for six of twelve minutes, 58 % observed —
+now lands in `needs_review` rather than `auto_verified`, and the fixture's expectation was
+changed to say so. That is the honest answer for a visit two thirds of which nobody saw; it was
+only clearing the threshold before on the strength of a bonus for being seen to arrive, which is
+not evidence about the minutes that went unobserved. A genuinely short visit now needs about two
+and a half minutes of sampling to earn full dwell credit, so a task authored at 60 s cannot be
+satisfied by two pings — deliberate, and it means `expectedDwellSeconds` no longer controls the
+evidentiary bar on its own. The dispersion test is a new false-positive surface: a stationary
+Android reporting quantised accuracy could cluster tightly, which is the same failure mode the
+ping DTO already warns about for rounding. And the engine still cannot stop a competent
+forgery — `sophisticatedSpoof` sits at 88 — which D-001 conceded from the start; what it can do
+is keep the incompetent forgery below the line, and these changes were checked against that
+standard rather than against an impossible one.
+
+**How this was checked.** The spoof-adversary pass was run TWICE, and both passes found real
+holes in this work rather than confirming it.
+
+The first pass found that the initial version of these changes flipped a fabricated indoor trace
+from 68 to **88** without the attacker altering anything, and that a 60 s task let a three-fix,
+two-minute forgery reach 88 as well. That produced the corroboration floor, the dispersion test
+and the deletion of `approachDeparture`.
+
+The second pass found four bugs in *those* fixes: `accuracyRealism` drew its spread from all
+fixes while its median came from usable ones, so one junk `accuracyM: 250` disabled both negative
+branches for the price of one ping; `(max − min)` is the least robust spread statistic there is
+and one outlier defeated it; corroboration counted bare intervals, which is cadence-dependent, so
+six pings in sixty seconds bought full credit while the honest client is throttled to one fix per
+30 s; and `coverageRatio` is a ratio of a window the fabricator chooses, so four pings pinned it
+at 100 %. Each is now closed, and the fixture set carries the attack that proves it.
+
+Final standings: every honest fixture auto-verifies at 88 or lands in `needs_review` for a
+reason a person can read; every forgery is below the threshold — the tight-cluster fabrication
+71, the four-ping ladder 70, the padded trace 56, the frozen override 19; and under a 60 s task
+the fast-cadence forgery scores 58. `sophisticatedSpoof` remains at 88 and must: it is
+byte-for-byte an honest trace, and any change that moved it would move `honestOutdoor` with it.

@@ -86,6 +86,19 @@ export interface VisitRollups {
   fixCount: number;
   /** Seconds with presence `inside`, integrated over the trace. */
   dwellSeconds: number;
+  /**
+   * How many separate inside-to-inside observations produced that dwell.
+   *
+   * Time without corroboration is not evidence: 90 s from one pair of fixes and 90 s from four
+   * pairs are the same number and different facts.
+   *
+   * ENGINE-INTERNAL. The `verificationResults.rollups` subdocument does not declare it, so
+   * Mongoose drops it on write and the console never sees it -- deliberately, because the
+   * count on its own invites misreading and `presenceDwell`'s reason string already says
+   * "across only N location updates" in words. Adding it to the schema would be a persisted
+   * field with no reader.
+   */
+  dwellIntervals: number;
   /** 0..1. Fraction of the session for which we have usable evidence. */
   coverageRatio: number;
   /** Closest the participant provably got. Null when no fix was usable. */
