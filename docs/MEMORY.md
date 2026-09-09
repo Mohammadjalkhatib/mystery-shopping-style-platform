@@ -1640,3 +1640,36 @@ S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY`; a wrong `S3_BUCKET` gives `UNREACHABLE
 **Open.** No hosted bucket is provisioned, so the deployed demo still runs on GridFS and the S3
 path is exercised only by compose. R2 asks for a payment method even on its free tier; Supabase
 Storage does not, which is why the README lists it.
+
+### 2026-09-09 - fix/r2-endpoint-guard
+
+**What.** The S3 endpoint is normalised at construction: if it already ends with the bucket
+name, the bucket is stripped and a warning is logged. Plus README detail on which two R2 values
+are actually the credentials.
+
+**Why.** Prompted by a real setup attempt. R2's bucket page shows the **Account ID** and an
+**S3 endpoint with the bucket already appended** — neither is a credential, and both are the
+things in front of you when you copy.
+
+**Files.**
+
+- `apps/api/src/evidence/storage/s3.store.ts`: exported `normaliseEndpoint`, called from the
+  constructor. `s3-endpoint.spec.ts`: 7 tests. `README.md`.
+
+**Now true.**
+
+1. **`S3_ENDPOINT` ending in the bucket name is corrected, not obeyed.** Pasting R2's displayed
+   endpoint produced `…/visit-evidence/visit-evidence/…`, every request 404'd, and the 404 said
+   "bucket does not exist" while the bucket was fine.
+2. **It fixes AND warns.** Silently correcting configuration is how the next person inherits a
+   setting that does not mean what it says.
+3. **Only a whole final segment is stripped.** `…/my-visit-evidence` with bucket
+   `visit-evidence` is left alone, and Supabase's `/storage/v1/s3` survives a bucket named `s3`.
+4. **R2's Account ID is not a variable this app reads** — it is already inside the endpoint
+   hostname. The credentials come from *Manage R2 API Tokens*, and the "Token value" shown there
+   is a Cloudflare API token, NOT the S3 secret.
+
+**Verified rather than assumed.** 524 tests pass. Against real MinIO, an endpoint of
+`http://minio:9000/visit-evidence` logged the warning, corrected itself, and reached the bucket.
+
+**Open.** Still no hosted bucket provisioned; the deployed demo remains on GridFS.
