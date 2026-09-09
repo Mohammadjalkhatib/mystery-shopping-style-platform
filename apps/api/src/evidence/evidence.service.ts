@@ -5,7 +5,7 @@ import {
   NotFoundException,
   PayloadTooLargeException,
 } from '@nestjs/common';
-import { Inject } from '@nestjs/common';
+import { Inject, Logger, type OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import type { AuthUser } from '@msp/shared';
 import type { Model } from 'mongoose';
@@ -45,7 +45,9 @@ export interface EvidenceStream {
  * path where a caller names an object and is trusted about which visit it belongs to.
  */
 @Injectable()
-export class EvidenceService {
+export class EvidenceService implements OnModuleInit {
+  private readonly logger = new Logger('EvidenceService');
+
   constructor(
     @Inject(OBJECT_STORE) private readonly objects: ObjectStore,
     @InjectModel(Session.name) private readonly sessions: Model<Session>,
@@ -55,6 +57,36 @@ export class EvidenceService {
   /** Which backend is live. Surfaced so "where are the photos" is never a guess. */
   get backend(): string {
     return this.objects.kind;
+  }
+
+  /**
+   * Result of the boot-time reachability probe, cached.
+   *
+   * Cached deliberately: `/health` is hit every ten minutes by the keep-alive pinger, and a
+   * live round trip to the bucket on each one would spend the free tier's request budget on
+   * saying "yes, still there".
+   */
+  private verified: { ok: boolean; detail: string } | null = null;
+
+  async onModuleInit(): Promise<void> {
+    this.verified = await this.objects.verify().catch((e: unknown) => ({
+      ok: false,
+      detail: e instanceof Error ? e.message : 'verify threw',
+    }));
+    const line = `Evidence store (${this.objects.kind}): ${this.verified.detail}`;
+    // A failure is logged and NOT thrown. Evidence is an optional feature; taking the whole
+    // API down because a bucket is misconfigured would turn a degraded photo upload into an
+    // outage of the visit flow.
+    if (this.verified.ok) this.logger.log(line);
+    else this.logger.error(`UNREACHABLE — ${line}`);
+  }
+
+  get storeStatus(): { backend: string; ok: boolean; detail: string } {
+    return {
+      backend: this.objects.kind,
+      ok: this.verified?.ok ?? false,
+      detail: this.verified?.detail ?? 'not checked yet',
+    };
   }
 
   /**

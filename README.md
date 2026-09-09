@@ -493,6 +493,75 @@ Once Render has assigned the hostnames (something like `msp-api-a1b2.onrender.co
 
 Redeploy both. Then check `https://<api host>/health`.
 
+### Pointing the deployed API at a real bucket
+
+**The MinIO in `docker-compose.yml` cannot be used for this.** `http://minio:9000` is a
+container hostname on your own machine; Render has no route to it. The deployed API needs a
+bucket with a public HTTPS endpoint.
+
+Any S3-compatible host works, because the code speaks the S3 API and no vendor SDK (D-028):
+
+| Host | Free tier | Endpoint form | Notes |
+|---|---|---|---|
+| **Cloudflare R2** | 10 GB | `https://<account-id>.r2.cloudflarestorage.com` | The documented target. `S3_REGION=auto`. Enabling R2 asks for a payment method even on the free tier |
+| **Backblaze B2** | 10 GB | `https://s3.<region>.backblazeb2.com` | `S3_REGION` must be the bucket's real region, e.g. `eu-central-003` |
+| **Supabase Storage** | 1 GB | `https://<project>.supabase.co/storage/v1/s3` | No card required, which is why it is listed |
+
+#### Steps
+
+1. **Create a bucket.** Call it `visit-evidence`. Keep it **private** — the API serves photos
+   through its own role-guarded route, and a public bucket would make every photo readable by
+   anyone holding a URL.
+2. **Create an access key** scoped to that bucket, with read and write. Copy the key id and the
+   secret; most hosts show the secret exactly once.
+3. **Set four variables on the `msp-api` service** in Render → Environment. All four, or none —
+   a partial set logs an error and falls back to GridFS on purpose:
+
+   ```
+   S3_ENDPOINT           https://<account-id>.r2.cloudflarestorage.com
+   S3_BUCKET             visit-evidence
+   S3_ACCESS_KEY_ID      <key id>
+   S3_SECRET_ACCESS_KEY  <secret>
+   S3_REGION             auto          # R2. B2/AWS need the real region
+   S3_FORCE_PATH_STYLE   true
+   ```
+
+   `S3_ENDPOINT` is the **account** endpoint, without the bucket name — the bucket comes from
+   `S3_BUCKET` and the code joins them.
+
+4. **Redeploy**, then check it worked:
+
+   ```bash
+   curl https://msp-api-ijht.onrender.com/health
+   # {"status":"ok","mongo":"up","evidence":{"backend":"s3","ok":true},"uptimeS":12}
+   ```
+
+   `backend` tells you which store is live and `ok` tells you whether it answered. The API
+   probes the bucket **once at boot** with a signed empty list, so a mistake is visible
+   immediately rather than at the first participant's upload. The service log is more specific:
+
+   ```
+   [EvidenceService] Evidence store (s3): https://….r2.cloudflarestorage.com/visit-evidence
+   [EvidenceService] UNREACHABLE — … 403 … check S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY, and that S3_REGION matches the bucket
+   [EvidenceService] UNREACHABLE — … 404 … bucket "visit-evidence" does not exist, or S3_FORCE_PATH_STYLE is wrong for this provider
+   ```
+
+   403 means the credentials or the region; 404 means the bucket name or the endpoint style.
+   A failure **does not stop the API booting** — evidence is optional, and taking the visit flow
+   down over a photo bucket would be the wrong trade.
+
+#### What does not migrate
+
+Photos already stored in GridFS **stay in GridFS** and stay readable, because their key is
+recorded on the report. Switching the backend changes where NEW photos go; there is no
+migration command, and writing one is only worth it if there is something worth moving.
+
+#### Testing the S3 path without a hosted bucket
+
+`docker compose up` already runs MinIO and the API against it — that is the same code path the
+deployed service takes, so a bug in signing or key handling shows up locally. The MinIO console
+is at http://localhost:9001 (`minioadmin` / `minioadmin`).
+
 ### 5. Stop the API sleeping
 
 A free Render web service spins down after 15 minutes idle and takes 30-60 seconds to wake,

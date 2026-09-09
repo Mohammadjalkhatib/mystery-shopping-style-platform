@@ -161,6 +161,43 @@ export class S3ObjectStore implements ObjectStore {
     }
   }
 
+  /**
+   * A signed, empty LIST against the bucket.
+   *
+   * Chosen over a HEAD on the bucket because the failure modes are distinguishable: 403 means
+   * the credentials or the signature are wrong, 404 means the bucket name is, and a network
+   * error means the endpoint is. All three look identical at the first failed upload, which is
+   * where this would otherwise surface.
+   */
+  async verify(): Promise<{ ok: boolean; detail: string }> {
+    const url = `${this.url()}?list-type=2&max-keys=1`;
+    try {
+      const headers = this.sign('GET', url, sha256Hex(''));
+      const res = await fetch(url, { method: 'GET', headers });
+      if (res.ok) {
+        return { ok: true, detail: `${this.config.endpoint}/${this.config.bucket}` };
+      }
+      if (res.status === 403) {
+        return {
+          ok: false,
+          detail: `403 from ${this.config.endpoint} — check S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY, and that S3_REGION matches the bucket`,
+        };
+      }
+      if (res.status === 404) {
+        return {
+          ok: false,
+          detail: `404 from ${this.config.endpoint} — bucket "${this.config.bucket}" does not exist, or S3_FORCE_PATH_STYLE is wrong for this provider`,
+        };
+      }
+      return { ok: false, detail: `${res.status} from ${this.config.endpoint}` };
+    } catch (e) {
+      return {
+        ok: false,
+        detail: `cannot reach ${this.config.endpoint} — ${e instanceof Error ? e.message : 'network error'}`,
+      };
+    }
+  }
+
   private metaFromHeaders(h: Headers): Partial<ObjectMetadata> {
     return {
       contentType: h.get('content-type') ?? undefined,

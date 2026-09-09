@@ -110,6 +110,14 @@ export class GridFsObjectStore implements ObjectStore {
     }
   }
 
+  /** GridFS is reachable exactly when Mongo is, which /health already reports separately. */
+  async verify(): Promise<{ ok: boolean; detail: string }> {
+    const db = this.connection.db;
+    if (!db) return { ok: false, detail: 'no database connection' };
+    await this.ensureIndex();
+    return { ok: true, detail: `MongoDB GridFS bucket "${EVIDENCE_BUCKET}"` };
+  }
+
   private async findFile(key: string): Promise<
     | {
         _id: mongoose.Types.ObjectId;

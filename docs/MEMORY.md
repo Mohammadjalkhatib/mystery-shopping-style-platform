@@ -1593,3 +1593,50 @@ no token 401.
 - Pass rate is unweighted, so one visit at 100% sorts with twenty at 100%. Visit count is shown
   beside it for that reason.
 - Window fixed at 30 days, no control.
+
+### 2026-09-09 - feat/s3-hosted-setup
+
+**What.** Everything needed to point the DEPLOYED API at a real bucket: the `S3_*` variables
+declared in `render.yaml`, a boot-time reachability probe with diagnostic messages, and
+`/health` reporting which backend is live and whether it answered.
+
+**Why.** Asked directly: "how to connect the s3 minio to the hosted version". The answer is
+that you cannot — `http://minio:9000` is a container hostname on a laptop and Render has no
+route to it — so the useful work was making a hosted bucket a config-only step you can verify.
+
+**Files.**
+
+- `apps/api/src/evidence/storage/object-store.ts`: `verify()` on the interface.
+  `s3.store.ts` / `gridfs.store.ts`: implementations.
+- `apps/api/src/evidence/evidence.service.ts`: `onModuleInit` probe, cached in `storeStatus`.
+- `apps/api/src/health/health.controller.ts`: `evidence: { backend, ok }`.
+- `render.yaml`: the six `S3_*` entries, four of them `sync: false`.
+- `README.md`: "Pointing the deployed API at a real bucket".
+
+**Now true.**
+
+1. **`GET /health` now answers "where do photos go".** `{"evidence":{"backend":"s3","ok":true}}`.
+   `detail` is deliberately NOT exposed on the public endpoint — it contains the endpoint URL.
+   The service log has the detail.
+2. **The probe runs ONCE at boot, not per request.** The keep-alive pinger hits `/health` every
+   ten minutes; a live round trip to the bucket on each would spend the free tier's request
+   budget confirming the bucket still exists.
+3. **The two failure modes are distinguishable, and that is the point.** 403 says credentials or
+   region; 404 says bucket name or path-style. At the first failed upload they look identical.
+   Both messages name the exact environment variables to check.
+4. **A bad bucket does NOT stop the API booting.** Evidence is optional; taking the visit flow
+   down over a photo store would be the wrong trade. It logs ERROR and falls back to serving
+   everything else.
+5. **`render.yaml` validated against `https://render.com/schema/render.yaml.json` before commit**
+   — the house rule, and the file that has blocked a deploy twice. VALID.
+6. **Nothing migrates.** Photos already in GridFS stay there and stay readable; their key is on
+   the report. Switching backends changes where NEW photos go.
+
+**Verified rather than assumed.** 517 tests pass. Against compose: a good MinIO config gives
+`{"backend":"s3","ok":true}`; a wrong `S3_SECRET_ACCESS_KEY` gives `UNREACHABLE — 403 … check
+S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY`; a wrong `S3_BUCKET` gives `UNREACHABLE — 404 … bucket
+"no-such-bucket" does not exist`. The API booted and served in all three.
+
+**Open.** No hosted bucket is provisioned, so the deployed demo still runs on GridFS and the S3
+path is exercised only by compose. R2 asks for a payment method even on its free tier; Supabase
+Storage does not, which is why the README lists it.
