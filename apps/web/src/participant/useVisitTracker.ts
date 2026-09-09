@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { Presence } from '@msp/shared';
 import { api } from '../api/client.js';
 import { drainQueue, enqueue, queueSize, type QueuedFix } from './offlineQueue.js';
 import { shouldRestart } from './watchdog.js';
@@ -25,6 +26,21 @@ export interface TrackerState {
    * fact -- which is exactly the ambiguity the 50 minute drive could not resolve.
    */
   restarts: number;
+  /**
+   * Where the SERVER says this participant is, from the last batch it accepted.
+   *
+   * Never computed here. The client has no geofence — no centre, no `radiusM`, no
+   * `nearBufferM` — and giving it one would put the boundary the system measures against into
+   * the hands of the party being measured (rule 2, rule 7). This is the server's answer,
+   * relayed.
+   *
+   * Null until the first batch has been sent AND acknowledged, which is a real state and lasts
+   * up to a sampling interval: "we have not heard back yet" is not the same as "you are not
+   * there", and the screen must not run them together.
+   */
+  presence: Presence | null;
+  /** Device clock of the fix behind `presence`. For showing an age, never for a decision. */
+  presenceAt: number | null;
 }
 
 const SAMPLE_MS = 30_000;
@@ -52,6 +68,8 @@ export function useVisitTracker(sessionId: string, active: boolean): TrackerStat
     wakeLock: false,
     error: null,
     restarts: 0,
+    presence: null,
+    presenceAt: null,
   });
 
   const watchId = useRef<number | null>(null);
@@ -69,10 +87,28 @@ export function useVisitTracker(sessionId: string, active: boolean): TrackerStat
     if (flushing.current || !navigator.onLine) return;
     flushing.current = true;
     try {
+      /**
+       * Keep the presence from the newest batch the server answered.
+       *
+       * `drainQueue` sends in queue order and may make several requests, so the LAST answer is
+       * the current one. A batch that contained nothing usable answers null, and null here
+       * must not overwrite a good previous answer — otherwise one out-of-window fix blanks the
+       * indicator and the screen silently downgrades to "we do not know".
+       */
+      let answer: { presence: Presence | null; at: string | null } | null = null;
       await drainQueue(sessionId, async (batch) => {
-        await api.postPings(sessionId, batch);
+        const res = await api.postPings(sessionId, batch);
+        if (res.latestPresence) {
+          answer = { presence: res.latestPresence, at: res.latestPresenceAt };
+        }
       });
-      setState((s) => ({ ...s, pending: 0 }));
+      const settled = answer as { presence: Presence | null; at: string | null } | null;
+      setState((s) => ({
+        ...s,
+        pending: 0,
+        presence: settled?.presence ?? s.presence,
+        presenceAt: settled?.at ? new Date(settled.at).getTime() : s.presenceAt,
+      }));
     } catch {
       // Left in the queue. Rule 4 makes a retry safe: the clientPingId is generated once,
       // stored with the fix, and the server upsert is first-write-wins, so flushing the same

@@ -164,6 +164,20 @@
       "approvalRate": "Approved",
       "noRate": "No results yet",
       "averageRating": "Your average rating"
+    },
+    "presence": {
+      "checking": "Checking where you are…",
+      "checkingHint": "Your first location reading is on its way. This takes up to half a minute.",
+      "inside": "You are at {venue}",
+      "insideHint": "Stay on site and keep this page open until you are done.",
+      "near": "You are close to {venue}, but not inside it",
+      "nearHint": "Move closer, or further in. Right now this would not count as a visit at the venue.",
+      "outside": "You do not seem to be at {venue}",
+      "outsideHint": "Check you are at the right branch. Nothing is wrong yet — the visit is still open and this will change as soon as you arrive.",
+      "unknown": "Your location is not accurate enough to tell",
+      "unknownHint": "This is normal indoors and is not counted against you. Near a window or a door usually helps.",
+      "stale": "Last checked {mins} min ago",
+      "staleNow": "Just checked"
     }
   },
   "console": {

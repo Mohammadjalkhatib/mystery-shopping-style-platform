@@ -267,6 +267,20 @@ export class SessionsService {
     return this.view(sessionId);
   }
 
+  /**
+   * The owner-checked entry point. Every HTTP read of a single session must come through here.
+   *
+   * `view()` stays unchecked because it is the internal projection — `start`, `end` and
+   * `mine` all call it after having established ownership by other means, and `mine` only ever
+   * passes ids it selected by `participantId` in the first place. Splitting the two makes the
+   * check impossible to forget at a route without also making the internal callers pay for it
+   * twice.
+   */
+  async viewOwned(sessionId: string, user: AuthUser): Promise<SessionView> {
+    await this.assertOwned(sessionId, user);
+    return this.view(sessionId);
+  }
+
   async view(sessionId: string): Promise<SessionView> {
     const s = await this.sessions.findById(sessionId).lean<{
       _id: unknown;

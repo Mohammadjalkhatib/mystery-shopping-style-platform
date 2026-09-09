@@ -1,4 +1,4 @@
-import type { NotificationKind, Signal, Verdict, VisitOutcome } from '@msp/shared';
+import type { NotificationKind, Presence, Signal, Verdict, VisitOutcome } from '@msp/shared';
 
 const BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000';
 const TOKEN_KEY = 'msp.token';
@@ -134,6 +134,14 @@ export interface IngestResult {
   rejectedOutOfWindow: number;
   pingCount: number;
   remainingBudget: number;
+  /**
+   * Where the server says the participant is, as of the newest fix in the batch it just
+   * received. Never computed here: the client does not know the geofence and must not (rule 2,
+   * rule 7). Null when the batch held nothing usable.
+   */
+  latestPresence: Presence | null;
+  /** `capturedAt` of the fix behind that answer, so the screen can tell fresh from stale. */
+  latestPresenceAt: string | null;
 }
 
 export interface VisitRow {

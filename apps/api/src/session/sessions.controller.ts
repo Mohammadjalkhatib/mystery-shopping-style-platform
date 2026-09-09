@@ -46,10 +46,25 @@ export class SessionsController {
     return this.sessions.consent(sessionId, user, dto.consentVersion);
   }
 
+  /**
+   * One of the caller's own visits.
+   *
+   * `viewOwned`, not `view`. This route took no `@CurrentUser()` at all and read whatever id
+   * was in the path, so ANY participant token could read ANY session — its venue centre and
+   * geofence, its timestamps, its ping count. Every other route on this controller asserts
+   * ownership; this one was the exception, and the boundary test that would have caught it did
+   * not exist because the check did not.
+   *
+   * Found by the `spoof-adversary` pass on the presence indicator, which went looking for how
+   * an attacker learns the geofence and found a route that simply hands it over. D-036.
+   */
   @Roles('participant')
   @Get(':sessionId')
-  get(@Param('sessionId') sessionId: string): Promise<SessionView> {
-    return this.sessions.view(sessionId);
+  get(
+    @Param('sessionId') sessionId: string,
+    @CurrentUser() user: AuthUser,
+  ): Promise<SessionView> {
+    return this.sessions.viewOwned(sessionId, user);
   }
 
   @Roles('participant')
