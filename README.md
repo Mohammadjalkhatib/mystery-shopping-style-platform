@@ -129,6 +129,7 @@ Built and working end to end:
 - [x] S3-compatible evidence storage (MinIO in compose), hand-signed, with a GridFS fallback
 - [x] Venue coordinates picked on a map, with address search, rather than typed
 - [x] Capture watchdog: a silent `watchPosition` is re-attached, and restarts are shown
+- [x] Live presence: the participant is told during the visit when they are not at the venue
 - [x] Participant dashboard: every visit ever assigned, its outcome, and the feedback on it
 - [x] In-app notifications for the participant, over their own SSE stream — a new assignment
       opens straight into consent and start; a released decision opens the visit it belongs to
@@ -882,6 +883,23 @@ to the three-interval cap — `minDistanceM` 7083 m matching the real driving ro
 `jitterFingerprint` at **+2**, correctly reading honest driving GPS as a real receiver rather
 than reaching for a fraud explanation.
 
+**The honest offline flush still loses its dwell and its coverage.** `dwellIntervals` was
+patched to accept the wider of the `receivedAt` and `capturedAt` gaps, so corroboration survives
+a queue draining all at once. `dwellSeconds` and `coverageRatio` were not — both still integrate
+`receivedAt` gaps only (`apps/api/src/verification/rollups.ts`). A participant who genuinely
+stood inside a venue for five minutes underground, then surfaced and flushed twelve fixes
+milliseconds apart, has their dwell round toward zero and their coverage collapse, and
+`clockSkew` can charge them for the queue latency on top. That is the exact scenario rule 4
+advertises as safe, and it penalises the one party who cannot cheat. Found by the
+`spoof-adversary` pass during D-036; **not fixed there**, because changing what the engine
+integrates over changes verdicts and needs its own decision entry, its own fixtures and its own
+red-team pass (CLAUDE.md §6). It is the highest-value thing left in the engine.
+
+The same pass rated `clockSkew` close to decorative against fraud — it fires only past a 20
+minute delta, which an attacker setting `capturedAt = now` never incurs and an honest offline
+flush does — and flagged that a genuinely stationary phone returning byte-identical coordinates
+can trip `jitterFingerprint`'s spoof branch. Both are recorded, neither is changed.
+
 **A participant is told an outcome, never a score.** The dashboard shows `approved` /
 `not_approved` / `in_review` and the reviewer's written feedback, and deliberately shows no
 score, no signals and no engine version (D-034) — the signals are the anti-spoof rules, and
@@ -889,6 +907,17 @@ publishing them to the people being checked is a tutorial. The cost is real: a p
 disputes an outcome has only the reviewer's sentence to go on, and if the reviewer left the
 optional feedback empty they have nothing. That is the wrong trade the moment this grows an
 appeals process, and the fix then is disclosure through a human, not a field on the screen.
+
+**The participant is told where they are, in states and not in metres.** During a visit the
+screen says `inside` / `near` / `outside` / `unknown`, computed on the server against the
+geofence the visit is pinned to. It warns and never blocks — indoor GPS is unreliable by design,
+so refusing to let someone submit on a bad fix would strand an honest participant standing in
+the shop. Distance is withheld (D-036), though the red-team pass established that this buys less
+than it appears: `GET /sessions/:id` already returns the venue centre and `radiusM` to the
+participant, so the only thing the metre readout would add is `nearBufferM`. Rate-limiting the
+presence answer is therefore pointless on its own; it is worth doing only alongside coarsening
+that payload, which is a product call — printing the size of the fence you are judged against is
+arguably the honest thing to do.
 
 **Notifications are in-app only.** There is no Web Push, no service worker and no notification
 outside an open tab (D-035): a participant learns about new work when they next open the app. The

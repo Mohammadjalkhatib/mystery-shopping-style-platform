@@ -1607,3 +1607,59 @@ splits it; the list is the truth and the push is an optimisation, so the failure
 notification rather than a lost one. Deriving means `GET /me/notifications` costs a page of
 history on every call rather than an indexed read of unread rows, which is fine at demo scale
 and is the first thing to reconsider if a participant ever has thousands of visits.
+
+---
+
+## D-036: Tell the participant where they are, in states rather than metres
+
+**Date:** 2026-09-10
+**Status:** accepted
+
+**Decision.** `POST /sessions/:id/pings` returns `latestPresence` — the four-state
+`inside | near | outside | unknown` for the newest fix in the batch, computed on the server
+against the session's pinned geofence snapshot — and the active-visit screen renders it as a
+banner above the timer. It does **not** return `distanceM`, `nearBufferM` or a bearing. The
+indicator warns and never blocks: being `outside` does not stop a participant ending the visit
+or submitting a report.
+
+**Context.** `docs/BACKLOG.md` listed a "live presence indicator" under `feat/participant-flow`
+and it was never built. The server classified presence on the very first fix and told nobody:
+a participant could stand in the wrong branch of a chain for an hour and learn about it days
+later from a rejection. Raised by the user in exactly those terms.
+
+**Alternatives considered.**
+
+- *Show the distance in metres.* The most useful thing for an honest participant who is 30 m
+  outside a 25 m fence. Rejected: it is a live oracle. Move, read, adjust — and with
+  attacker-chosen `accuracyM` driving `presenceFor`'s tolerance term to nearly zero, each probe
+  is a clean ternary on the boundary. See the consequences below for why this argument turned
+  out to be weaker than it looks, and why the decision stands anyway.
+- *Block the visit while outside.* Refuse to end or submit. Rejected: indoor GPS is unreliable
+  by design — the `indoor` flag exists precisely because indoor venues report far worse accuracy
+  — so blocking on a bad fix strands an honest participant standing inside the shop. The engine
+  already scores where they were; the screen's job is to inform, not to adjudicate.
+- *Collapse `unknown` into "not there".* Simpler copy, three states instead of five counting
+  the not-yet-answered one. Rejected: `unknown` means the fix was too coarse to place, which is
+  normal indoors and which the engine is explicitly told not to punish. Rendering it as absence
+  would accuse people of a GPS problem, and would do it during the ordinary first-30-seconds
+  window when no answer has come back at all.
+
+**Consequences.** The `spoof-adversary` pass demolished the premise this entry was originally
+going to rest on, and the honest version is narrower: **the fence is already disclosed.**
+`GET /sessions/:id` returns `venue.lat`, `venue.lng` and `venue.radiusM` to the participant,
+and the ready-to-start card prints the radius. So withholding metres buys only `nearBufferM`,
+which an attacker aiming to appear *inside* never needs — and the cheapest passing attack
+(mock GPS at coordinates read straight from the session view, six fixes, ~2.5 minutes, no oracle
+involved) is unaffected either way. Withholding distance is therefore kept because it costs
+nothing to withhold, not because it is load-bearing.
+
+Two things follow, both recorded rather than done here. **Rate-limiting the oracle alone would
+be theatre** while `SessionView` ships the fence; it is worth doing only together with
+coarsening that payload, which is a product question — telling a participant the size of the
+fence they are judged against is arguably the honest thing to do. And the same pass found that
+`GET /sessions/:id` had **no ownership check at all**, so any participant token could read any
+session's centre, radius and timestamps; that one was not deferred — it is fixed on this branch
+with the boundary test that was missing because the check was missing.
+
+The remaining cost is ordinary: presence only updates when a batch reaches the server, so an
+offline participant sees a stale answer. The banner shows its age rather than pretending.

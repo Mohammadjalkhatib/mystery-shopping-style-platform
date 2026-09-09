@@ -416,4 +416,142 @@ describe('ping ingest', () => {
       expect(stored!.presence).toBe('inside');
     });
   });
+
+  /**
+   * The live presence answer (D-036).
+   *
+   * A wrong answer here is silent and expensive in the opposite direction to a wrong verdict:
+   * it does not mis-score anyone, it sends an honest participant away from a venue they are
+   * standing in, or lets one stay put believing they are somewhere they are not.
+   */
+  describe('the live presence answer (D-036)', () => {
+    const presenceOf = async (
+      sessionId: string,
+      fixes: object[],
+    ): Promise<{ latestPresence: string | null; latestPresenceAt: string | null }> => {
+      const res = await post(sessionId, { fixes }).expect(200);
+      return res.body as { latestPresence: string | null; latestPresenceAt: string | null };
+    };
+
+    it('answers with the presence of the newest fix, and its capturedAt', async () => {
+      const sessionId = await makeSession();
+      const at = new Date().toISOString();
+      const body = await presenceOf(sessionId, [fix({ capturedAt: at, accuracyM: 8 })]);
+
+      expect(body.latestPresence).toBe('inside');
+      expect(body.latestPresenceAt).toBe(at);
+    });
+
+    /**
+     * The claim that makes this useful at all: the participant is told while the visit is
+     * still open, not after a rejection days later.
+     */
+    it('says outside for a fix a kilometre away', async () => {
+      const sessionId = await makeSession();
+      const body = await presenceOf(sessionId, [fix({ lat: VENUE.lat + 0.01, accuracyM: 9 })]);
+      expect(body.latestPresence).toBe('outside');
+    });
+
+    it('says near inside the buffer but outside the fence', async () => {
+      const sessionId = await makeSession();
+      // 75 m fence, 50 m buffer. ~111 m north, with tight accuracy so tolerance cannot reach.
+      const body = await presenceOf(sessionId, [fix({ lat: VENUE.lat + 0.001, accuracyM: 5 })]);
+      expect(body.latestPresence).toBe('near');
+    });
+
+    it('says unknown when the fix is too coarse to place, rather than guessing', async () => {
+      const sessionId = await makeSession();
+      const body = await presenceOf(sessionId, [fix({ accuracyM: 5000 })]);
+      expect(body.latestPresence).toBe('unknown');
+    });
+
+    /**
+     * Order in the array is not order in time. An offline flush arrives in queue order and
+     * nothing makes a client sort it, so answering with whichever fix happened to be last
+     * would tell someone where they were ten minutes ago.
+     */
+    it('picks the newest by capturedAt, not the last in the array', async () => {
+      const sessionId = await makeSession();
+      const older = new Date(Date.now() - 10 * 60_000).toISOString();
+      const newer = new Date().toISOString();
+
+      const body = await presenceOf(sessionId, [
+        // Newest first in the array, and it is the one that must win.
+        fix({ capturedAt: newer, accuracyM: 8 }),
+        fix({ capturedAt: older, lat: VENUE.lat + 0.01, accuracyM: 9 }),
+      ]);
+
+      expect(body.latestPresence).toBe('inside');
+      expect(body.latestPresenceAt).toBe(newer);
+    });
+
+    /**
+     * A re-flush still describes where the device was. Refusing to answer on a duplicate would
+     * blank the indicator exactly when the connection is worst, which is when a participant is
+     * most likely to be somewhere unexpected.
+     */
+    it('answers on a duplicate flush, which accepts nothing', async () => {
+      const sessionId = await makeSession();
+      const f = fix({ accuracyM: 8 });
+      await post(sessionId, { fixes: [f] }).expect(200);
+
+      const body = await presenceOf(sessionId, [f]);
+      expect(body.latestPresence).toBe('inside');
+    });
+
+    it('answers null when every fix was out of window, rather than inventing one', async () => {
+      const sessionId = await makeSession();
+      const body = await presenceOf(sessionId, [
+        fix({ capturedAt: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString() }),
+      ]);
+      expect(body.latestPresence).toBeNull();
+      expect(body.latestPresenceAt).toBeNull();
+    });
+
+    /**
+     * D-036's negative claim, asserted structurally. The response may say WHICH state, never
+     * HOW FAR: a metre readout is a live oracle a spoofer can binary-search against, and this
+     * is the one endpoint a participant can call repeatedly while moving.
+     */
+    it('never returns a distance, a radius or a centre', async () => {
+      const sessionId = await makeSession();
+      const res = await post(sessionId, { fixes: [fix({ accuracyM: 8 })] }).expect(200);
+
+      expect(Object.keys(res.body as object).sort()).toEqual([
+        'accepted',
+        'duplicates',
+        'latestPresence',
+        'latestPresenceAt',
+        'pingCount',
+        'rejectedOutOfWindow',
+        'remainingBudget',
+      ]);
+    });
+
+    it('measures against the session snapshot, like the stored fix does', async () => {
+      const SNAP = { lat: VENUE.lat + 0.05, lng: VENUE.lng };
+      const sessionId = await makeSession();
+      await Sessions.updateOne(
+        { _id: sessionId },
+        {
+          $set: {
+            venueSnapshot: {
+              lat: SNAP.lat,
+              lng: SNAP.lng,
+              radiusM: 75,
+              nearBufferM: 50,
+              indoor: false,
+              snapshotAt: new Date(),
+            },
+          },
+        },
+      );
+
+      // At the snapshot: inside. At the live venue it would be ~5.5 km away and outside.
+      const atSnapshot = await presenceOf(sessionId, [
+        fix({ lat: SNAP.lat, lng: SNAP.lng, accuracyM: 8 }),
+      ]);
+      expect(atSnapshot.latestPresence).toBe('inside');
+    });
+  });
 });
