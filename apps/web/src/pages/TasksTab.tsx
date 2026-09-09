@@ -4,6 +4,11 @@ import {
   Button,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   Divider,
   FormControlLabel,
   MenuItem,
@@ -631,15 +636,26 @@ function AssignForm({
   const [taskId, setTaskId] = useState('');
   const [participantId, setParticipantId] = useState('');
   const [busy, setBusy] = useState(false);
+  /**
+   * The confirmation, held here rather than announced only at the top of the page.
+   *
+   * The banner is still written -- it belongs in the page's running log of what has been
+   * created -- but on a phone the form is below the fold by the time it is filled in, so the
+   * banner appears somewhere the person who pressed the button is not looking. Assigning work
+   * to a real person is the one action on this screen with a consequence outside the screen,
+   * and it was the one giving the weakest acknowledgement. A dialog cannot be missed at any
+   * viewport, and it also has somewhere to say what the participant will now see.
+   */
+  const [confirmed, setConfirmed] = useState<{ who: string; venue: string } | null>(null);
 
   const submit = async (): Promise<void> => {
     setBusy(true);
     try {
+      const task = tasks.find((x) => x.id === taskId);
+      const who = participants.find((p) => p.id === participantId)?.displayName ?? participantId;
       await api.createAssignment(taskId, participantId);
-      onAssigned(
-        taskId,
-        participants.find((p) => p.id === participantId)?.displayName ?? participantId,
-      );
+      onAssigned(taskId, who);
+      setConfirmed({ who, venue: task?.venueName ?? '' });
       setParticipantId('');
     } catch (e) {
       onError(e);
@@ -695,6 +711,41 @@ function AssignForm({
           {t('admin.assignForm.assign')}
         </Button>
       </Stack>
+
+      {/*
+        `fullWidth` with `xs` max width so it is a readable card on a laptop and close to full
+        bleed on a phone, which is where the banner it replaces was invisible.
+      */}
+      <Dialog
+        open={confirmed !== null}
+        onClose={() => setConfirmed(null)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>{t('admin.assignForm.dialogTitle')}</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            {t('admin.assignForm.dialogBody', {
+              who: confirmed?.who ?? '',
+              venue: confirmed?.venue ?? '',
+            })}
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          {/*
+            Two ways out, because there are two things a person does next and neither should
+            need a second thought: assign the next one, or stop. "Assign another" leaves the
+            task selected and the participant cleared, which is the state `submit` already put
+            the form in.
+          */}
+          <Button onClick={() => setConfirmed(null)}>
+            {t('admin.assignForm.dialogAgain')}
+          </Button>
+          <Button variant="contained" onClick={() => setConfirmed(null)} autoFocus>
+            {t('admin.assignForm.dialogClose')}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Paper>
   );
 }

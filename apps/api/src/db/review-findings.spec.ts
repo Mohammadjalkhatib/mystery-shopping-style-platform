@@ -415,7 +415,7 @@ describe('schema-reviewer findings (D-012)', () => {
         .model('Session', SessionSchema)
         .findById(target!._id)
         .lean<{ state: string; pingCount: number }>();
-      expect(after.state).toBe('abandoned');
+      expect(after!.state).toBe('abandoned');
       expect(after!.pingCount).toBe(4);
       await c2.close();
     });

@@ -1510,3 +1510,100 @@ rather than what it must be — so a malformed-but-well-shaped key now fails one
 `assertBelongsTo`, with "That evidence does not exist" instead of at validation. That is the
 correct place for it and a slightly less specific error. Any future store must issue keys within
 this charset; one that wanted `/` would have to encode it, exactly as the S3 store already does.
+
+---
+
+## D-034: A participant is told an outcome and a person's feedback, never a score or a signal
+
+**Date:** 2026-09-09
+**Status:** accepted
+
+**Decision.** Participants get their own dashboard showing every visit they have been assigned
+and, for finished ones, a released **outcome** (`approved` / `not_approved` / `in_review` / …)
+plus the reviewer's written feedback. They are never shown the score, the signals or the engine
+version. The release rule is a pure function (`participant/outcome.ts`): a human decision
+releases in either direction, `auto_verified` releases as approved with no feedback because
+nobody had to look, and `needs_review` or `rejected` with no human decision stays `in_review`.
+Reviewer feedback is a NEW optional field `reviewActions.feedbackToParticipant`, separate from
+the existing required internal `note`.
+
+**Context.** Direct user request: the participant should be able to track what they were
+assigned and see the result and feedback once the business confirms. That forced two real
+questions — how much of the verification result a checked person may see, and whether the
+existing reviewer note becomes participant-facing. Both were put to the user; both went this
+way.
+
+**Alternatives considered.**
+
+- *Show the score, or the score and the signals.* Genuinely more useful to an honest
+  participant whose GPS was bad, and it is the same data the console already renders. Rejected
+  because the signals ARE the anti-spoof rules: "your coverage ratio was 0.43" turns every
+  attack the `spoof-adversary` agent has found into a cheaper one, and a numeric score is a
+  gradient a spoofer can climb by trial. It also invites "why 61 and not 70", which D-009 admits
+  the weights cannot answer.
+- *Map `rejected` straight to `not_approved`.* One fewer state and it matches the engine.
+  Rejected because the engine's verdict is not the organisation's decision — rule 1 says there
+  is no boolean `verified`, and the corollary is that there is no automatic accusation either.
+  An unappealable rejection nobody signed is the worst thing this system could tell someone.
+- *Hold `auto_verified` until a human confirms.* Matches the request literally. Rejected
+  because no human ever reviews a clean visit, so the honest majority would sit at "in review"
+  for ever — the worst experience going to the people who did nothing wrong.
+- *Reuse the existing `note` as the feedback.* Zero schema change. Rejected because candour is
+  the first thing lost when the subject can read it, and D-009 needs that note candid as
+  labelled data. Every note already stored was written under the old assumption, so reusing it
+  would retroactively publish them.
+
+**Consequences.** A participant who disputes an outcome has only the reviewer's sentence to go
+on, and if the reviewer left it empty they have nothing — the system knows why and will not
+say. That is a deliberate trade of transparency for spoof resistance, and it is the wrong one
+if this ever grows an appeals process; the fix then is a disclosure on request through a human,
+not a field on the screen. `feedbackToParticipant` is optional, so it will often be empty, and
+the screen has to say "no written feedback was left" rather than pretend. Two text boxes on the
+review form is more friction per review than one.
+
+---
+
+## D-035: Notifications are derived from the work, not stored as messages
+
+**Date:** 2026-09-09
+**Status:** accepted; reverses the "Not building: Notifications" line in docs/BACKLOG.md
+
+**Decision.** A participant is notified when work is assigned and when a decision is released.
+There is no notification collection: `GET /me/notifications` DERIVES the list from the
+participant's own sessions, and the only persisted state is two markers on the session,
+`assignmentSeenAt` and `outcomeSeenAt`. Delivery is a per-participant SSE stream that carries a
+nudge to re-read, not the payload. `assignmentSeenAt` is set once; `outcomeSeenAt` is compared
+against the release time so a superseded decision becomes unread again.
+
+**Context.** `docs/BACKLOG.md` lists Notifications under "Not building". The user asked for
+them directly, so this reverses that line rather than quietly ignoring it — same shape as D-026
+reversing the evidence-upload cut.
+
+**Alternatives considered.**
+
+- *A `notifications` collection with a row per event.* The conventional answer, and the one
+  that survives multiple API replicas. Rejected because it is a second copy of the truth that
+  can drift from it: a stored "you were assigned Venue X" outlives the venue being renamed, the
+  assignment being reassigned and the visit being completed, and then contradicts the screen
+  underneath it. Deriving cannot go stale, and it made the whole feature two nullable dates.
+- *Polling `/me/notifications` on a timer.* Simpler than a stream and survives replicas.
+  Rejected because CLAUDE.md §4 says SSE and not polling, and the argument applies harder here
+  than on the console: this stream is idle almost always — a participant is assigned work every
+  few days — so a poll frequent enough to feel like a notification is a request every few
+  seconds, all day, on a phone, to be told nothing changed.
+- *A single set-once "seen" flag per session.* What the first draft did. Rejected during the
+  `schema-reviewer` pass: a decision can be superseded by a second `reviewAction` or an
+  evaluator re-run under a newer `engineVersion` (which rule 9 explicitly designs for), and a
+  set-once flag means the reversal is released and the participant is never told.
+- *Web Push / real device notifications.* What "notification" usually means. Not built: it
+  needs a service worker, VAPID keys, a subscription store and a permission prompt, and it does
+  not work at all unless the app is installed. Out of proportion to a thin slice, and named here
+  so the gap is deliberate rather than assumed.
+
+**Consequences.** Notifications only arrive while the app is open — this is an in-app inbox,
+not a push notification, and a participant who closes the tab learns about new work the next
+time they open it. The stream is in-process like the console's (D-013), so a second API replica
+splits it; the list is the truth and the push is an optimisation, so the failure mode is a late
+notification rather than a lost one. Deriving means `GET /me/notifications` costs a page of
+history on every call rather than an indexed read of unread rows, which is fine at demo scale
+and is the first thing to reconsider if a participant ever has thousands of visits.

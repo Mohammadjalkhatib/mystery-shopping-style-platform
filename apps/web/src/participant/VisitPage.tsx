@@ -1,7 +1,6 @@
 import {
   Alert,
   Snackbar,
-  AppBar,
   Box,
   Button,
   Card,
@@ -12,13 +11,11 @@ import {
   Rating,
   Stack,
   TextField,
-  Toolbar,
   Typography,
 } from '@mui/material';
-import { useCallback, useEffect, useState } from 'react';
-import { useLocale, useT } from '../i18n/LocaleContext.js';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useT } from '../i18n/LocaleContext.js';
 import { api, type SessionView } from '../api/client.js';
-import { useAuth } from '../auth/AuthContext.js';
 import { Consent, CONSENT_VERSION } from './Consent.js';
 import { DiscreetMode } from './DiscreetMode.js';
 import { EvidencePicker } from './EvidencePicker.js';
@@ -26,21 +23,32 @@ import { clearQueue } from './offlineQueue.js';
 import { useVisitTracker } from './useVisitTracker.js';
 
 /**
- * The participant surface. Mobile-first, because this is the screen a reviewer opens on a
- * phone and the only one that has to work one-handed in a shop.
+ * The visit RUNNER: consent, capture, end, report. Mobile-first, because this is the screen a
+ * reviewer opens on a phone and the only one that has to work one-handed in a shop.
  *
  * Deliberately honest throughout: it never claims to be tracking continuously, it shows the
  * gaps as gaps, and the primary action is always the largest thing on screen.
+ *
+ * The chrome around it -- the bar, the language toggle, the notification bell and the tab that
+ * switches to the history screen -- lives in `ParticipantApp`. This component owns one visit at
+ * a time and nothing else, which is what keeps the tracker's lifecycle simple: `useVisitTracker`
+ * lives inside `ActiveVisit`, so anything that unmounts this subtree stops capture.
  */
-export function VisitPage() {
-  const { user, logout } = useAuth();
+export function VisitPage({
+  focusSessionId,
+  onChanged,
+}: {
+  /** A visit to open, set when a notification was tapped. Null means "the newest one". */
+  focusSessionId?: string | null;
+  /** Called after anything that changes what the history screen or the inbox would show. */
+  onChanged?: () => void;
+}) {
   const [sessions, setSessions] = useState<SessionView[] | null>(null);
   const [current, setCurrent] = useState<SessionView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const t = useT();
-  const { toggle } = useLocale();
 
   const load = useCallback(async () => {
     try {
@@ -55,6 +63,37 @@ export function VisitPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /**
+   * Open the visit a notification pointed at.
+   *
+   * Reloads once when the id is not in the list yet, because the push arrives before this
+   * component has re-read `/sessions/mine` and on the very first assignment the list is
+   * genuinely stale -- which is the case the feature exists for.
+   *
+   * TWO things here are deliberate and were wrong in the first draft:
+   *
+   * 1. **The lookup happens in the effect, not inside a `setCurrent` updater.** An updater
+   *    must be pure. React invokes it twice under StrictMode, so firing `load()` from inside
+   *    one issues two requests for every one intended.
+   * 2. **The reload is attempted at most once per id** (`reloadedFor`). `sessions` is a
+   *    dependency and `load()` replaces it, so an id that is genuinely absent -- a
+   *    participant with more live visits than the endpoint's limit returns -- would otherwise
+   *    re-enter this effect on every response and fetch forever. A notification pointing at
+   *    something that is not there must fail quietly, not spin.
+   */
+  const reloadedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focusSessionId) return;
+    const found = sessions?.find((s) => s.id === focusSessionId);
+    if (found) {
+      setCurrent((c) => (c?.id === focusSessionId ? c : found));
+      return;
+    }
+    if (reloadedFor.current === focusSessionId) return;
+    reloadedFor.current = focusSessionId;
+    void load();
+  }, [focusSessionId, sessions, load]);
 
   const act = async (fn: () => Promise<SessionView>): Promise<void> => {
     setBusy(true);
@@ -77,45 +116,7 @@ export function VisitPage() {
   }
 
   return (
-    <Box
-      sx={{
-        minHeight: '100dvh',
-        bgcolor: 'background.default',
-        pb: 'calc(env(safe-area-inset-bottom, 0px) + 48px)',
-      }}
-    >
-      <AppBar position="sticky">
-        <Toolbar sx={{ gap: 1, minHeight: { xs: 56, sm: 64 } }}>
-          <Typography
-            variant="h3"
-            sx={{ fontSize: { xs: '1rem', sm: '1.05rem' }, flexGrow: 1, minWidth: 0 }}
-            noWrap
-          >
-            {t('participant.yourVisit')}
-          </Typography>
-          {/* The name is what a signed-in participant least needs told; it goes first. */}
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            sx={{ display: { xs: 'none', sm: 'block' } }}
-            noWrap
-          >
-            {user?.displayName}
-          </Typography>
-          {/*
-            The language toggle lives here because this is the only screen a participant is
-            guaranteed to reach, and it shows the language it switches TO, not the current one
-            -- a button reading "العربية" while the page is already Arabic is a coin flip.
-          */}
-          <Button size="small" onClick={toggle}>
-            {t('common.language')}
-          </Button>
-          <Button size="small" onClick={logout}>
-            {t('common.signOut')}
-          </Button>
-        </Toolbar>
-      </AppBar>
-
+    <Box>
       {error && (
         <Alert severity="error" sx={{ m: 2 }} onClose={() => setError(null)}>
           {error}
@@ -163,6 +164,8 @@ export function VisitPage() {
           onSubmitted={() => {
             clearQueue(current.id);
             setSubmitted(true);
+            // The history screen and the inbox both change on a submit.
+            onChanged?.();
             /**
              * Advance the local state immediately as well as reloading.
              *

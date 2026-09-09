@@ -10,6 +10,7 @@ import {
 import { Assignment, Session, Task, type VenueSnapshot } from '../db/schemas/task-session.schema.js';
 import { Venue } from '../db/schemas/org-venue.schema.js';
 import { VisitEventsService } from '../console/visit-events.service.js';
+import { ParticipantService } from '../participant/participant.service.js';
 import { evaluate } from './engine.js';
 import { DEFAULT_ENGINE_CONFIG, type EngineConfig, type EvidenceFix, type VisitEvidence } from './types.js';
 
@@ -38,6 +39,7 @@ export class EvaluatorService {
     @InjectModel(Assignment.name) private readonly assignments: Model<Assignment>,
     @InjectModel(Task.name) private readonly tasks: Model<Task>,
     private readonly visitEvents: VisitEventsService,
+    private readonly participants: ParticipantService,
     configService: ConfigService,
   ) {
     // Thresholds are config, not constants, because they are placeholders until there is
@@ -286,6 +288,11 @@ export class EvaluatorService {
           latestResultId: String(written!._id),
           latestVerdict: output.verdict,
           latestScore: output.score,
+          // The release time for an `auto_verified` outcome, which no human ever signs. See
+          // Session.latestResultAt: without it, "has the participant read the CURRENT
+          // decision" has no timestamp to compare against and a re-run under a newer engine
+          // changes the verdict with nobody told. Free -- this write was happening anyway.
+          latestResultAt: new Date(),
         },
       },
     );
@@ -310,6 +317,19 @@ export class EvaluatorService {
       participantId: session.participantId,
       endedAt: session.endedAt.toISOString(),
     });
+
+    /**
+     * And announce it to the PARTICIPANT, if there is anything to announce.
+     *
+     * `announceOutcome` applies the release rule (D-034) and stays silent unless the outcome
+     * is actually released -- which here means `auto_verified`, the one verdict a human never
+     * has to sign. A `needs_review` or `rejected` result publishes nothing: the engine's
+     * opinion is not the organisation's until someone signs it, and pushing "your visit was
+     * rejected" off the back of a scoring run would be an accusation nobody made.
+     *
+     * Fire-and-forget, and after the console event, so it cannot delay or fail the evaluator.
+     */
+    void this.participants.announceOutcome(sessionId).catch(() => undefined);
 
     this.logger.log(
       `Session ${sessionId}: ${output.verdict} (${output.score}) via ${output.engineVersion}`,

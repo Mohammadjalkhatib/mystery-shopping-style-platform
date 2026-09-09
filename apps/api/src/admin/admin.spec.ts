@@ -20,6 +20,7 @@ import {
   Task,
   TaskSchema,
 } from '../db/schemas/task-session.schema.js';
+import { ParticipantService } from '../participant/participant.service.js';
 import { AdminController } from './admin.controller.js';
 import { AdminService } from './admin.service.js';
 
@@ -37,6 +38,16 @@ describe('admin surface', () => {
   let Tasks: Model<Task>;
   let Assignments: Model<Assignment>;
   let Sessions: Model<Session>;
+
+  /**
+   * Recorded, not stubbed away.
+   *
+   * Creating an assignment now announces it to the participant, and that announcement is
+   * fire-and-forget OUTSIDE the transaction -- so the one thing worth asserting here is that
+   * it fires for a successful assignment and does not fire for a refused one. What it is
+   * allowed to say is the release rule's business, tested in participant/outcome.spec.ts.
+   */
+  const announced: string[] = [];
 
   let adminToken: string;
   let bizToken: string;
@@ -116,6 +127,15 @@ describe('admin surface', () => {
       controllers: [AdminController],
       providers: [
         AdminService,
+        {
+          provide: ParticipantService,
+          useValue: {
+            announceAssignment: async (sessionId: string): Promise<void> => {
+              announced.push(sessionId);
+            },
+            announceOutcome: async (): Promise<void> => undefined,
+          },
+        },
         { provide: getConnectionToken(), useValue: conn },
         { provide: getModelToken(ClientOrg.name), useValue: Orgs },
         { provide: getModelToken(Venue.name), useValue: Venues },
@@ -364,6 +384,38 @@ describe('admin surface', () => {
       expect(session!.startedAt).toBeNull();
       expect(session!.pingCount).toBe(0);
       expect(session!.createdAtServer).toBeInstanceOf(Date);
+    });
+
+    /**
+     * The participant is TOLD. Assigning work that never reaches the person who has to do it
+     * is the gap this closes, and it is easy to break silently: the call is deliberately
+     * fire-and-forget outside the transaction, so nothing in the response would change if it
+     * stopped happening.
+     */
+    it('creating an assignment announces it to the participant', async () => {
+      announced.length = 0;
+      const taskId = await seedTask(ORG, await seedVenue(ORG));
+      const res = await request(app.getHttpServer())
+        .post('/assignments')
+        .set(auth(bizToken))
+        .send({ taskId, participantId: 'u-participant-7' })
+        .expect(201);
+
+      const { sessionId } = res.body as { sessionId: string };
+      expect(announced).toEqual([sessionId]);
+    });
+
+    it('a REFUSED assignment announces nothing', async () => {
+      const taskId = await seedTask(ORG, await seedVenue(ORG));
+      const body = { taskId, participantId: 'u-participant-8' };
+      await request(app.getHttpServer()).post('/assignments').set(auth(bizToken)).send(body).expect(201);
+
+      announced.length = 0;
+      // The duplicate is rejected by the unique index inside the transaction, so no session
+      // exists to announce -- and announcing one anyway would push a notification to a visit
+      // the participant can never open.
+      await request(app.getHttpServer()).post('/assignments').set(auth(bizToken)).send(body).expect(409);
+      expect(announced).toEqual([]);
     });
 
     it('assigning the same task to the same participant twice is a 409, not a second session', async () => {

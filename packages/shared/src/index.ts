@@ -88,3 +88,47 @@ export const SESSION_EVENTS = [
   'expire',
 ] as const;
 export type SessionEvent = (typeof SESSION_EVENTS)[number];
+
+/* ----------------------------------------------------------- visit outcome */
+
+/**
+ * What a PARTICIPANT is told about their own visit.
+ *
+ * Deliberately a different vocabulary from `Verdict`. A verdict is the engine's claim to the
+ * business (`auto_verified | needs_review | rejected`); an outcome is what the person who did
+ * the work is entitled to know. The two are not the same statement and must not be conflated:
+ * `needs_review` is a queue position, not a judgement, and telling a participant they were
+ * "rejected" when a human has not looked yet would be both wrong and unappealable.
+ *
+ * See D-034 for the release rule and for why score and signals are NOT part of this.
+ */
+export const VISIT_OUTCOMES = [
+  /** Assigned, consented or not, never started. */
+  'not_started',
+  /** On site, capturing. */
+  'in_progress',
+  /** Ended, report not filed yet. */
+  'awaiting_report',
+  /** Report filed. No decision has been released to the participant yet. */
+  'in_review',
+  /** Released: a human approved it, or the engine auto-verified it and no human was needed. */
+  'approved',
+  /** Released: a human rejected it. The engine alone never produces this. */
+  'not_approved',
+  /** Abandoned or expired. `terminalReasonCode` says which timer fired. */
+  'closed',
+] as const;
+export type VisitOutcome = (typeof VISIT_OUTCOMES)[number];
+
+/**
+ * A thing the participant has not seen yet. Derived from session state, never stored as a
+ * message: a notification is a VIEW of the work, so it cannot drift from it. Only the
+ * "have they seen it" marker is persisted. D-035.
+ */
+export const NOTIFICATION_KINDS = [
+  /** A task was assigned and has not been opened. */
+  'assignment',
+  /** A decision on a submitted visit was released. */
+  'outcome',
+] as const;
+export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];

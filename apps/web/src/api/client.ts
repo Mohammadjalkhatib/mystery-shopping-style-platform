@@ -1,4 +1,4 @@
-import type { Signal, Verdict } from '@msp/shared';
+import type { NotificationKind, Signal, Verdict, VisitOutcome } from '@msp/shared';
 
 const BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000';
 const TOKEN_KEY = 'msp.token';
@@ -67,6 +67,67 @@ export interface SessionView {
   timeouts: { abandonMinutes: number; hardCapHours: number };
 }
 
+/**
+ * One row of the participant's own history.
+ *
+ * Note what is NOT here: no score, no signals, no engine version. A participant is told the
+ * OUTCOME of their visit and the reviewer's feedback, and nothing about the rules that
+ * produced it -- the signals are the anti-spoof rules and publishing them is a tutorial for
+ * beating the engine (D-034). The console keeps the full picture.
+ */
+export interface ParticipantVisit {
+  sessionId: string;
+  state: SessionView['state'];
+  outcome: VisitOutcome;
+  taskTitle: string;
+  taskBrief: string;
+  venueName: string;
+  venueAddress: string;
+  assignedAt: string;
+  consentedAt: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  submittedAt: string | null;
+  /** The reviewer's words, or null. Never the internal note. */
+  feedback: string | null;
+  decidedAt: string | null;
+  /** True when a person signed this, false when the engine released it with nobody needed. */
+  decidedByHuman: boolean;
+  report: { notes: string; rating: number } | null;
+  terminalReasonCode: SessionView['terminalReasonCode'];
+  seen: { assignment: boolean; outcome: boolean };
+}
+
+export interface ParticipantSummary {
+  /** Lifetime, counted server-side. */
+  assigned: number;
+  /** How many of the newest visits the rest of these numbers cover. */
+  countedOver: number;
+  submitted: number;
+  approved: number;
+  notApproved: number;
+  inReview: number;
+  openNow: number;
+  closed: number;
+  approvalRate: number | null;
+  averageRating: number | null;
+}
+
+export interface ParticipantDashboard {
+  summary: ParticipantSummary;
+  visits: ParticipantVisit[];
+  timeouts: { abandonMinutes: number; hardCapHours: number };
+}
+
+export interface ParticipantNotification {
+  kind: NotificationKind;
+  sessionId: string;
+  taskTitle: string;
+  venueName: string;
+  at: string;
+  outcome: VisitOutcome;
+}
+
 export interface IngestResult {
   accepted: number;
   duplicates: number;
@@ -97,7 +158,14 @@ export interface VisitDetail extends VisitRow {
     unusableFixCount: number;
   } | null;
   report: { notes: string; rating: number; submittedAt: string; evidenceKey: string | null } | null;
-  review: { decision: string; note: string; reviewerId: string; at: string } | null;
+  review: {
+    decision: string;
+    note: string;
+    reviewerId: string;
+    at: string;
+    /** What the participant was told, or null. The `note` above stays internal. */
+    feedbackToParticipant: string | null;
+  } | null;
   venue: { name: string; radiusM: number; indoor: boolean } | null;
 }
 
@@ -252,10 +320,38 @@ export const api = {
   participantStats: (days = 30) =>
     req<ParticipantStats[]>(`/console/participants?days=${days}`),
   visit: (id: string) => req<VisitDetail>(`/console/visits/${id}`),
-  review: (id: string, decision: 'approve' | 'reject', note: string) =>
+  /**
+   * Record an override.
+   *
+   * Two texts, deliberately. `note` is the internal reason and stays required; the optional
+   * `feedbackToParticipant` is the only part of this the participant will ever read (D-034).
+   */
+  review: (
+    id: string,
+    decision: 'approve' | 'reject',
+    note: string,
+    feedbackToParticipant?: string,
+  ) =>
     req<{ ok: true }>(`/console/visits/${id}/review`, {
       method: 'POST',
-      body: JSON.stringify({ decision, note }),
+      body: JSON.stringify({
+        decision,
+        note,
+        ...(feedbackToParticipant?.trim() ? { feedbackToParticipant: feedbackToParticipant.trim() } : {}),
+      }),
+    }),
+
+  /* the participant's own record */
+
+  /** History, totals and the configured timers, in one round trip. */
+  myDashboard: (limit?: number) =>
+    req<ParticipantDashboard>(`/me/dashboard${limit ? `?limit=${limit}` : ''}`),
+  myNotifications: () => req<ParticipantNotification[]>('/me/notifications'),
+  /** Acknowledge one notification. The read timestamp is the server's (rule 2). */
+  markNotificationSeen: (sessionId: string, kind: NotificationKind) =>
+    req<{ ok: true }>(`/me/notifications/${sessionId}/seen`, {
+      method: 'POST',
+      body: JSON.stringify({ kind }),
     }),
 
   /* authoring -- venues, tasks, assignments */

@@ -10,6 +10,7 @@ import {
 } from '../db/schemas/report-verification.schema.js';
 import { findDemoUserById } from '../auth/demo-users.js';
 import { Session } from '../db/schemas/task-session.schema.js';
+import { ParticipantService } from '../participant/participant.service.js';
 
 export interface VisitRow {
   sessionId: string;
@@ -67,7 +68,14 @@ export interface VisitDetail extends VisitRow {
     /** The key only. The image itself is served by a separate, separately-authorized route. */
     evidenceKey: string | null;
   } | null;
-  review: { decision: string; note: string; reviewerId: string; at: Date } | null;
+  review: {
+    decision: string;
+    note: string;
+    reviewerId: string;
+    at: Date;
+    /** What the participant was told, or null. Shown back so a reviewer can see it. */
+    feedbackToParticipant: string | null;
+  } | null;
   venue: { name: string; radiusM: number; indoor: boolean } | null;
 }
 
@@ -91,6 +99,7 @@ export class ConsoleService {
     @InjectModel(Report.name) private readonly reports: Model<Report>,
     @InjectModel(ReviewAction.name) private readonly reviews: Model<ReviewAction>,
     @InjectModel(Venue.name) private readonly venues: Model<Venue>,
+    private readonly participants: ParticipantService,
   ) {}
 
   /**
@@ -167,7 +176,18 @@ export class ConsoleService {
     const review = await this.reviews
       .findOne({ sessionId })
       .sort({ at: -1 })
-      .lean<{ decision: string; note: string; reviewerId: string; at: Date }>();
+      // Projected explicitly rather than passed through whole. The lean document also carries
+      // `_id`, `clientOrgId` and `verificationResultId`, none of which this view uses, and a
+      // spread of an unprojected document is how a field added later reaches a screen nobody
+      // decided to put it on.
+      .select({ decision: 1, note: 1, reviewerId: 1, at: 1, feedbackToParticipant: 1 })
+      .lean<{
+        decision: string;
+        note: string;
+        reviewerId: string;
+        at: Date;
+        feedbackToParticipant: string | null;
+      }>();
 
     const venue = await this.venues
       .findById(session.venueId)
@@ -192,7 +212,15 @@ export class ConsoleService {
             evidenceKey: report.evidenceKey ?? null,
           }
         : null,
-      review: review ?? null,
+      review: review
+        ? {
+            decision: review.decision,
+            note: review.note,
+            reviewerId: review.reviewerId,
+            at: review.at,
+            feedbackToParticipant: review.feedbackToParticipant ?? null,
+          }
+        : null,
       venue: venue ? { name: venue.name, radiusM: venue.radiusM, indoor: venue.indoor } : null,
     };
   }
@@ -208,7 +236,7 @@ export class ConsoleService {
   async review(
     sessionId: string,
     user: AuthUser,
-    body: { decision: 'approve' | 'reject'; note: string },
+    body: { decision: 'approve' | 'reject'; note: string; feedbackToParticipant?: string },
   ): Promise<{ ok: true }> {
     const session = await this.sessions
       .findById(sessionId)
@@ -230,8 +258,22 @@ export class ConsoleService {
       reviewerId: user.id,
       decision: body.decision,
       note: body.note,
+      /**
+       * The participant-facing half, and the ONLY part of this document they will ever read.
+       * Empty is stored as null rather than '' so "wrote nothing" and "wrote whitespace" are
+       * the same fact (D-034).
+       */
+      feedbackToParticipant: body.feedbackToParticipant?.trim() || null,
       at: new Date(),
     });
+
+    /**
+     * Tell the participant a decision has been released. Fire-and-forget and outside the write
+     * for the same reason the assignment announcement is: a push that fails must not fail the
+     * review. `announceOutcome` re-derives the release rule itself rather than trusting this
+     * call site, so it is not possible to push something `outcome.ts` would have withheld.
+     */
+    void this.participants.announceOutcome(sessionId).catch(() => undefined);
 
     return { ok: true };
   }

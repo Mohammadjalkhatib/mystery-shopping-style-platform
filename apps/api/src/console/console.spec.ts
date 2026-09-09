@@ -18,6 +18,7 @@ import {
 } from '../db/schemas/report-verification.schema.js';
 import { Session, SessionSchema } from '../db/schemas/task-session.schema.js';
 import { ReaperService } from '../session/reaper.service.js';
+import { ParticipantService } from '../participant/participant.service.js';
 import { ConsoleController } from './console.controller.js';
 import { ConsoleService } from './console.service.js';
 import { VisitEventsService } from './visit-events.service.js';
@@ -142,6 +143,23 @@ describe('business console', () => {
          * its own suite; the wiring is proved by the build and by the live check.
          */
         { provide: ReaperService, useValue: { reapForOrg: async (): Promise<number> => 0 } },
+        /**
+         * Stubbed, and only the two announce methods.
+         *
+         * `ParticipantService` is injected purely so a completed visit can be pushed to the
+         * person who did it. What it announces, and what it withholds, is decided by the pure
+         * release rule and covered in `participant/outcome.spec.ts` and
+         * `participant/participant.spec.ts`. Standing up the real service here would drag in
+         * four more models to prove nothing this file asserts.
+         */
+        {
+          provide: ParticipantService,
+          useValue: {
+            announceAssignment: async (): Promise<void> => undefined,
+            announceOutcome: async (): Promise<void> => undefined,
+          },
+        },
+
         { provide: getModelToken(Session.name), useValue: Sessions },
         { provide: getModelToken(VerificationResultDoc.name), useValue: Results },
         { provide: getModelToken(Venue.name), useValue: Venues },

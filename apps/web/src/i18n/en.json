@@ -111,6 +111,59 @@
       "tooLarge": "That photo is too large. Maximum 6 MB.",
       "wrongType": "Only JPEG, PNG or WebP images can be attached.",
       "uploadFailed": "Could not upload that photo"
+    },
+    "nav": {
+      "visit": "Visit",
+      "history": "My visits",
+      "notifications": "Updates"
+    },
+    "notifications": {
+      "title": "Updates",
+      "none": "Nothing new right now.",
+      "newAssignment": "New visit assigned",
+      "outcomeApproved": "Your visit was approved",
+      "outcomeNotApproved": "Your visit was not approved",
+      "open": "Open",
+      "openVisit": "Open this visit",
+      "viewResult": "See the result",
+      "badge": "{count} new",
+      "live": "Updates are live",
+      "offline": "Reconnecting…"
+    },
+    "history": {
+      "title": "My visits",
+      "empty": "Nothing here yet. Assigned visits and their results will appear here.",
+      "assignedOn": "Assigned {date}",
+      "submittedOn": "Report filed {date}",
+      "decidedOn": "Decided {date}",
+      "yourReport": "What you filed",
+      "yourRating": "Your rating: {rating} of 5",
+      "feedback": "Feedback from the business",
+      "noFeedback": "No written feedback was left on this visit.",
+      "autoApproved": "Approved automatically. Nobody needed to review it.",
+      "reviewedByPerson": "Reviewed by a person at the business.",
+      "pendingExplain": "Your report is with the business. You will be told here when they decide.",
+      "openAction": "Open",
+      "countedOver": "Totals cover your {count} most recent visits.",
+      "showing": "Showing {count} of {total}"
+    },
+    "outcome": {
+      "not_started": "Not started",
+      "in_progress": "In progress",
+      "awaiting_report": "Report not filed",
+      "in_review": "With the business",
+      "approved": "Approved",
+      "not_approved": "Not approved",
+      "closed": "Closed"
+    },
+    "stats": {
+      "assigned": "Assigned",
+      "approved": "Approved",
+      "inReview": "With the business",
+      "openNow": "To do",
+      "approvalRate": "Approved",
+      "noRate": "No results yet",
+      "averageRating": "Your average rating"
     }
   },
   "console": {
@@ -157,7 +210,10 @@
       "approve": "Approve",
       "reject": "Reject",
       "failed": "Review failed",
-      "recorded": "{decision} by {reviewer} — {note}"
+      "recorded": "{decision} by {reviewer} — {note}",
+      "feedback": "Feedback for the participant (optional)",
+      "feedbackHint": "The participant reads this. Your reason above stays internal.",
+      "feedbackSent": "Shared with the participant"
     },
     "dashboard": {
       "title": "Overview",
@@ -252,7 +308,11 @@
       "taskFirst": "Create a task first",
       "participant": "Participant",
       "assign": "Assign",
-      "assigned": "Assigned to {who}. Their visit is now waiting in the participant app."
+      "assigned": "Assigned to {who}. Their visit is now waiting in the participant app.",
+      "dialogTitle": "Assigned",
+      "dialogBody": "{who} now has a pending visit at {venue}. It is waiting in their app and they have been notified.",
+      "dialogClose": "Done",
+      "dialogAgain": "Assign another"
     },
     "taskList": {
       "title": "Tasks",
