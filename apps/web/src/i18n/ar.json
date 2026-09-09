@@ -111,6 +111,59 @@
       "tooLarge": "هذه الصورة كبيرة جدًا. الحد الأقصى ٦ ميغابايت.",
       "wrongType": "يمكن إرفاق صور JPEG أو PNG أو WebP فقط.",
       "uploadFailed": "تعذّر رفع الصورة"
+    },
+    "nav": {
+      "visit": "الزيارة",
+      "history": "زياراتي",
+      "notifications": "التحديثات"
+    },
+    "notifications": {
+      "title": "التحديثات",
+      "none": "لا يوجد جديد الآن.",
+      "newAssignment": "زيارة جديدة مُسندة إليك",
+      "outcomeApproved": "تمت الموافقة على زيارتك",
+      "outcomeNotApproved": "لم تتم الموافقة على زيارتك",
+      "open": "فتح",
+      "openVisit": "افتح هذه الزيارة",
+      "viewResult": "عرض النتيجة",
+      "badge": "{count} جديد",
+      "live": "التحديثات مباشرة",
+      "offline": "جارٍ إعادة الاتصال…"
+    },
+    "history": {
+      "title": "زياراتي",
+      "empty": "لا يوجد شيء بعد. ستظهر هنا الزيارات المُسندة إليك ونتائجها.",
+      "assignedOn": "أُسندت في {date}",
+      "submittedOn": "أُرسل التقرير في {date}",
+      "decidedOn": "صدر القرار في {date}",
+      "yourReport": "ما أرسلته",
+      "yourRating": "تقييمك: {rating} من ٥",
+      "feedback": "ملاحظات من الجهة",
+      "noFeedback": "لم تُترك ملاحظات مكتوبة على هذه الزيارة.",
+      "autoApproved": "تمت الموافقة تلقائيًا. لم تكن هناك حاجة لمراجعة بشرية.",
+      "reviewedByPerson": "راجعها شخص من الجهة.",
+      "pendingExplain": "تقريرك لدى الجهة. سيصلك القرار هنا.",
+      "openAction": "فتح",
+      "countedOver": "المجاميع تغطي آخر {count} زيارة.",
+      "showing": "عرض {count} من {total}"
+    },
+    "outcome": {
+      "not_started": "لم تبدأ",
+      "in_progress": "جارية",
+      "awaiting_report": "لم يُرسل التقرير",
+      "in_review": "لدى الجهة",
+      "approved": "مقبولة",
+      "not_approved": "غير مقبولة",
+      "closed": "مغلقة"
+    },
+    "stats": {
+      "assigned": "المُسندة",
+      "approved": "المقبولة",
+      "inReview": "لدى الجهة",
+      "openNow": "للتنفيذ",
+      "approvalRate": "نسبة القبول",
+      "noRate": "لا توجد نتائج بعد",
+      "averageRating": "متوسط تقييمك"
     }
   },
   "console": {
@@ -157,7 +210,10 @@
       "approve": "قبول",
       "reject": "رفض",
       "failed": "تعذّرت المراجعة",
-      "recorded": "{decision} بواسطة {reviewer} — {note}"
+      "recorded": "{decision} بواسطة {reviewer} — {note}",
+      "feedback": "ملاحظات للمشارك (اختياري)",
+      "feedbackHint": "المشارك يقرأ هذا النص. أما السبب أعلاه فيبقى داخليًا.",
+      "feedbackSent": "تمت مشاركتها مع المشارك"
     },
     "dashboard": {
       "title": "نظرة عامة",
@@ -252,7 +308,11 @@
       "taskFirst": "أنشئ مهمة أولًا",
       "participant": "المشارك",
       "assign": "إسناد",
-      "assigned": "تم الإسناد إلى {who}. زيارته الآن بانتظاره في تطبيق المشارك."
+      "assigned": "تم الإسناد إلى {who}. زيارته الآن بانتظاره في تطبيق المشارك.",
+      "dialogTitle": "تم الإسناد",
+      "dialogBody": "{who} لديه الآن زيارة معلّقة في {venue}. الزيارة بانتظاره في التطبيق وقد تم إشعاره.",
+      "dialogClose": "تم",
+      "dialogAgain": "إسناد زيارة أخرى"
     },
     "taskList": {
       "title": "المهام",

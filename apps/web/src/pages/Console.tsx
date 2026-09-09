@@ -352,6 +352,16 @@ export function Console() {
 function VisitDetailPanel({ sessionId, onDone }: { sessionId: string; onDone: () => void }) {
   const [d, setD] = useState<VisitDetail | null>(null);
   const [note, setNote] = useState('');
+  /**
+   * Written FOR the participant, and the only part of a review they will ever read (D-034).
+   *
+   * Held separately from `note` all the way through, rather than being one box with a
+   * checkbox. The reviewer needs to know which audience they are addressing while they type,
+   * not after: `note` is the internal reason and stays candid because it is what makes a
+   * review queue useful six months later, and candour is the first thing lost when the subject
+   * can read it.
+   */
+  const [feedback, setFeedback] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const t = useT();
@@ -369,8 +379,9 @@ function VisitDetailPanel({ sessionId, onDone }: { sessionId: string; onDone: ()
     setBusy(true);
     setError(null);
     try {
-      await api.review(sessionId, decision, note);
+      await api.review(sessionId, decision, note, feedback);
       setNote('');
+      setFeedback('');
       load();
       onDone();
     } catch (e) {
@@ -470,6 +481,19 @@ function VisitDetailPanel({ sessionId, onDone }: { sessionId: string; onDone: ()
             reviewer: d.review.reviewerId,
             note: d.review.note,
           })}
+          {/*
+            Shown back, and labelled as shared. A reviewer returning to a visit needs to be
+            able to tell what the participant was told from what stayed internal -- otherwise
+            the only way to find out is to ask them.
+          */}
+          {d.review.feedbackToParticipant && (
+            <Box sx={{ mt: 1 }}>
+              <Typography variant="caption" color="text.secondary">
+                {t('console.review.feedbackSent')}
+              </Typography>
+              <Typography variant="body2">{d.review.feedbackToParticipant}</Typography>
+            </Box>
+          )}
         </Alert>
       ) : (
         <>
@@ -483,6 +507,22 @@ function VisitDetailPanel({ sessionId, onDone }: { sessionId: string; onDone: ()
             label={t('console.review.note')}
             value={note}
             onChange={(e) => setNote(e.target.value)}
+            multiline
+            minRows={2}
+            fullWidth
+            sx={{ mb: 1.5 }}
+          />
+          {/*
+            Optional on purpose. A reviewer with nothing useful to say to the participant should
+            leave this empty rather than pad it, which is the opposite of the required note
+            above -- an override with no stated internal reason is the thing that makes the
+            queue useless later.
+          */}
+          <TextField
+            label={t('console.review.feedback')}
+            helperText={t('console.review.feedbackHint')}
+            value={feedback}
+            onChange={(e) => setFeedback(e.target.value)}
             multiline
             minRows={2}
             fullWidth

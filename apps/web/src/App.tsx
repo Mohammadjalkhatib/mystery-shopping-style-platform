@@ -2,7 +2,7 @@ import { Box, CircularProgress } from '@mui/material';
 import { AuthProvider, useAuth } from './auth/AuthContext.js';
 import { Console } from './pages/Console.js';
 import { Login } from './pages/Login.js';
-import { VisitPage } from './participant/VisitPage.js';
+import { ParticipantApp } from './participant/ParticipantApp.js';
 
 /**
  * Routing by role rather than by URL.
@@ -25,7 +25,7 @@ function Router() {
   if (!user) return <Login />;
   // Two surfaces, chosen by role. A participant has no permission to read the console and
   // a business user has no visit to run, so there is nothing to route between.
-  if (user.role === 'participant') return <VisitPage />;
+  if (user.role === 'participant') return <ParticipantApp />;
   return <Console />;
 }
 

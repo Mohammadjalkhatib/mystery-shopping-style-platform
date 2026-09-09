@@ -230,11 +230,39 @@ export class ReviewAction {
   @Prop({ required: true, trim: true, maxlength: 1000 })
   note!: string;
 
+  /**
+   * Feedback written FOR the participant, and the only part of a review they ever read.
+   *
+   * Deliberately a second field rather than reusing `note`. The two have different audiences
+   * and the reviewer knows which they are writing: `note` is the internal reason, kept candid
+   * because it is the labelled data D-009 needs, and candour is the first thing lost when the
+   * subject can read it. Every note already stored was written under the old assumption that
+   * nobody outside the org would see it, so reusing it would retroactively publish them.
+   *
+   * Optional, because a reviewer with nothing useful to say should leave it empty rather than
+   * pad it -- unlike `note`, which is required precisely so that no override is unexplained.
+   * D-034.
+   */
+  @Prop({ type: String, default: null, trim: true, maxlength: 1000 })
+  feedbackToParticipant!: string | null;
+
   @Prop({ required: true, type: Date })
   at!: Date;
 }
 export type ReviewActionDocument = HydratedDocument<ReviewAction>;
 export const ReviewActionSchema = SchemaFactory.createForClass(ReviewAction);
+
+/**
+ * The newest decision per session, and per PAGE of sessions.
+ *
+ * `{ sessionId: 1 }` from the prop supplies the `$in` bounds but has no `at` component, so
+ * `find({ sessionId: { $in: [...] } }).sort({ at: 1 })` -- the participant dashboard's read,
+ * up to 200 sessions wide -- lands a blocking in-memory SORT stage on top of it. With this the
+ * planner explodes the `$in` into one bounded scan per id and merge-sorts them. It also makes
+ * the single-field index a strict prefix; that one is kept for the same reason the equivalent
+ * on `sessions` is (see task-session.schema.ts).
+ */
+ReviewActionSchema.index({ sessionId: 1, at: 1 });
 
 /**
  * Append-only, ENFORCED (rule 8).
@@ -259,3 +287,15 @@ function enforceAppendOnly(schema: typeof VerificationResultSchema, label: strin
 }
 
 enforceAppendOnly(VerificationResultSchema, 'verificationResults');
+
+/**
+ * `ReviewActionSchema` intentionally does NOT get `enforceAppendOnly`.
+ *
+ * Not an oversight and worth stating, because the schema above it says rule 8 out loud: a
+ * review action is already append-only by construction -- nothing in the codebase updates one,
+ * a second opinion is a second document, and `console.service.review()` only ever calls
+ * `create`. Adding the guard here would be free protection, and it is the right change; it is
+ * NOT this branch's change, because the guard blocks `deleteMany` too and the test fixtures
+ * that clean this collection between cases are outside the scope of a participant dashboard.
+ * Raised rather than done quietly.
+ */
