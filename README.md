@@ -526,8 +526,20 @@ Any S3-compatible host works, because the code speaks the S3 API and no vendor S
    S3_FORCE_PATH_STYLE   true
    ```
 
-   `S3_ENDPOINT` is the **account** endpoint, without the bucket name — the bucket comes from
-   `S3_BUCKET` and the code joins them.
+   **`S3_ENDPOINT` is the ACCOUNT endpoint, without the bucket name** — the bucket comes from
+   `S3_BUCKET` and the code joins them. Cloudflare's bucket page shows the two already joined
+   (`https://<account-id>.r2.cloudflarestorage.com/visit-evidence`), which is the string in
+   front of you when you copy; pasting that produces a doubled path and a 404 that reads as
+   "the bucket does not exist". The API detects it, strips the bucket and logs a warning, but
+   it is worth getting right.
+
+   **On Cloudflare R2 specifically, the two values on the bucket page are NOT the credentials.**
+   The bucket page shows the **Account ID** and the **S3 endpoint**; the Account ID is not a
+   variable this app reads at all, because it is already inside the endpoint hostname. The keys
+   come from a separate step: **R2 → Manage R2 API Tokens → Create API Token**, with *Object
+   Read & Write* on this bucket. That screen shows an **Access Key ID** and a **Secret Access
+   Key** — those two, not the "Token value" above them, which is a Cloudflare API token and
+   will not authenticate against S3.
 
 4. **Redeploy**, then check it worked:
 

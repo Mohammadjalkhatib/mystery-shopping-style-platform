@@ -31,11 +31,41 @@ export interface S3Config {
  * object carries who it belongs to, and authorization is re-derived from the object rather than
  * asserted by the caller.
  */
+/**
+ * Strip the bucket name off the endpoint if it is already there.
+ *
+ * Cloudflare R2's dashboard shows the S3 endpoint for a bucket **with the bucket appended**:
+ * `https://<account>.r2.cloudflarestorage.com/visit-evidence`. That is the string in front of
+ * someone copying it, and pasting it here produces
+ * `…/visit-evidence/visit-evidence/sessions/…` — every request 404s, and the 404 reads as "the
+ * bucket does not exist" when the bucket is fine and the URL is doubled.
+ *
+ * The intent is unambiguous, so this fixes it AND says so. Silently correcting configuration is
+ * how the next person inherits a setting that does not mean what it says.
+ */
+export function normaliseEndpoint(config: S3Config, logger?: Logger): string {
+  const trimmed = config.endpoint.replace(/\/+$/, '');
+  const suffix = `/${config.bucket}`;
+  if (!config.bucket || !trimmed.endsWith(suffix)) return trimmed;
+
+  const corrected = trimmed.slice(0, -suffix.length);
+  logger?.warn(
+    `S3_ENDPOINT ended with "/${config.bucket}", which is the bucket name. Using ` +
+      `"${corrected}" instead — S3_ENDPOINT should be the ACCOUNT endpoint and S3_BUCKET the ` +
+      'bucket. Cloudflare R2 shows the two joined together, which is where this usually comes from.',
+  );
+  return corrected;
+}
+
 export class S3ObjectStore implements ObjectStore {
   readonly kind = 's3' as const;
   private readonly logger = new Logger('S3ObjectStore');
 
-  constructor(private readonly config: S3Config) {}
+  constructor(config: S3Config) {
+    this.config = { ...config, endpoint: normaliseEndpoint(config, this.logger) };
+  }
+
+  private readonly config: S3Config;
 
   /**
    * Two representations of the same object, and the difference matters.
