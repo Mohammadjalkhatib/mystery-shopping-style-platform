@@ -45,6 +45,15 @@ export interface ObjectStore {
 
   /** Idempotent: deleting something already gone is a success, not an error. */
   delete(key: string): Promise<void>;
+
+  /**
+   * Can this store actually be reached with the credentials it was given?
+   *
+   * Run once at boot, never per request. Without it, a wrong key or a typo'd endpoint stays
+   * invisible until the first participant tries to attach a photo -- which on a deployed demo
+   * means finding out from a user rather than from a log line.
+   */
+  verify(): Promise<{ ok: boolean; detail: string }>;
 }
 
 /** DI token. A string token because the concrete class is chosen at runtime from config. */

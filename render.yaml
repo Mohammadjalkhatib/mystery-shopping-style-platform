@@ -83,6 +83,37 @@ services:
       - key: SESSION_ABANDON_AFTER_SECONDS
         value: "900"
 
+      # ---------------------------------------------------------------- evidence
+      #
+      # OPTIONAL, and all-or-nothing. Set all four `sync: false` values below and evidence
+      # photos go to that bucket; leave them blank and the API falls back to MongoDB GridFS,
+      # which is what this demo runs on today. A PARTIAL set logs an error and falls back --
+      # deliberately loud, because silently half-working is how photos end up in Mongo while
+      # everyone believes they are in a bucket (D-028).
+      #
+      # The local `docker compose` MinIO CANNOT be used here: `http://minio:9000` is a
+      # container hostname on your laptop and Render cannot route to it. This needs a bucket
+      # with a public HTTPS endpoint -- Cloudflare R2, Backblaze B2, Supabase Storage or any
+      # other S3-compatible host. See the README.
+      #
+      # After setting them, GET /health and check `evidence.ok` -- the API probes the bucket
+      # once at boot and reports whether it answered.
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      # R2 wants "auto". B2 and AWS want the bucket's real region.
+      - key: S3_REGION
+        value: auto
+      # Path style (endpoint/bucket/key) works on R2, B2, MinIO and Supabase. Set "false" only
+      # for a provider that requires virtual-host style.
+      - key: S3_FORCE_PATH_STYLE
+        value: "true"
+
     # PORT is injected by Render and main.ts reads it before API_PORT. It is deliberately not
     # listed here: setting it by hand is how you end up with the app on 3000 and the health
     # check on something else, which fails as a timeout rather than as an error.
