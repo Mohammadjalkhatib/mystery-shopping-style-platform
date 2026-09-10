@@ -2034,3 +2034,78 @@ with `docker compose down -v` afterwards.
 - The cheapest passing attack needs none of this: mock GPS at coordinates from any map, six
   fixes, ~2.5 minutes. On mobile web there is no positional defence; the answer is behavioural
   and belongs in the engine.
+
+---
+
+## `feat/user-accounts` — real accounts, created by an admin and by a business
+
+**Decision:** D-037. Supersedes the authentication half of D-008; its authorization half stands
+untouched, which is what that entry promised would happen.
+
+**What exists now.** A `users` collection with scrypt-hashed passwords
+(`apps/api/src/auth/password.ts`, `node:crypto`, no new dependency). `POST /orgs` creates a
+business account — the organisation and its first sign-in, in one transaction. `POST /users`
+creates people inside an organisation: an admin may create a business or a participant anywhere,
+a business may create participants and only in its own org. `GET /orgs`, `GET /users` and
+`PATCH /users/:id` (deactivate/reactivate) round it out, and a console **Accounts** tab drives
+all of it. `GET /auth/demo-credentials` is gone.
+
+**The load-bearing detail, if you touch the seed.** The demo roster keeps its exact ids —
+`u-admin`, `u-business`, `u-participant-1..10`. The deployed database's assignments, sessions,
+reports and participant stats reference those strings verbatim. Generate fresh ids and every
+existing visit orphans: blank dashboards, no errors anywhere. The seed writes only MISSING
+accounts, never an upsert — scrypt salts randomly, so re-hashing on every boot would silently
+reset a password mid-demo — and a username collision with a console-created account logs and
+continues rather than bricking a container that seeds on every start.
+
+**What the schema holds, not just the API.** `role` and `clientOrgId` are set once and refused
+on every update path; deletion is refused outright (visits reference an account forever, and
+rule 8 makes verification results append-only); `passwordHash` is `select: false`. The first
+attempt put the role/organisation invariant in a FIELD VALIDATOR and the `schema-reviewer` pass
+showed it does not run where it matters: Mongoose skips validators on `updateOne`/
+`findOneAndUpdate` unless asked, and when asked binds `this` to the QUERY, which has no `role` —
+so the check passed silently on exactly the paths that reach the invalid state. It is a
+`pre('validate')` hook plus a pre-update refusal now, same shape as the append-only hook on
+`SessionEventSchema`.
+
+**A tenancy hole this feature opened, closed in the same branch.** `createAssignment` checked
+that the assignee was a participant and never that they were in the task's organisation — which
+was unreachable while every account shared one org, and is cross-tenant exposure the moment a
+business creates its own people: the assignee reads the venue name, its address and the task
+brief from their own dashboard. Same class in `listParticipants`, which returned the whole
+roster. Both are org-scoped now, the refusal message for a foreign participant is deliberately
+identical to "no such participant", and `TaskRow` gained `clientOrgId` so the assign form can
+ask for the right roster.
+
+**Don't re-derive these.**
+
+1. **The per-request database read in `AuthService.verify` is deliberate.** Trusting the token
+   payload would leave a deactivated account working for seven days. It is projected to the five
+   `AuthUser` fields because that guard sits in front of ping ingest.
+2. **A driver error there must not become a 401.** It propagates. Catching it would log every
+   signed-in user out during a transient Mongo blip, including a participant mid-visit.
+3. **`AuthModule` uses `forFeature`, not `DbModule`.** DbModule carries an `onModuleInit` that
+   reconciles the ping TTL index, and seven specs import AuthModule directly.
+4. **Specs need `testDbModule(conn)`** from `apps/api/test/nest-db.ts`. `MongooseModule.forRoot`
+   registers a GLOBAL module in production; a connection provided in a testing module's own
+   `providers` array does not reproduce that, and any imported module declaring its own models
+   fails with "Nest can't resolve dependencies of the UserModel".
+5. **Only an admin creates a business user.** A business creating a peer would be minting
+   someone with full write access to its venues, tasks and review decisions, and there is no
+   owner concept to hang that on. `role: 'admin'` is refused for everyone — the one platform
+   admin comes from the seed.
+
+**Verified.** 643 tests pass, typecheck and build clean. The `schema-reviewer` pass found three
+blockers before any of this was applied; all three are fixed and two of them (the validator, and
+the missing delete guard) had test coverage added that asserts the schema refuses, not just the
+API.
+
+**Open.**
+
+- No password reset, no rotation, and every account starts on `demo1234`. Needs a mail transport.
+- Deactivation does not close an `@Sse()` stream the user already holds — guards run at connect.
+  REST stops immediately; live streams last until they reconnect.
+- Usernames are immutable, since the id is `u-<username>` and is copied into six collections.
+- Everything still open from `feat/live-presence`: the `dwellSeconds`/`coverageRatio` offline
+  flush defect (highest-value engine work left), `clockSkew`, `jitterFingerprint`, and the
+  `SessionView` fence disclosure.

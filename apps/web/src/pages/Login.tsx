@@ -9,7 +9,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useLocale } from '../i18n/LocaleContext.js';
 import { api } from '../api/client.js';
 import { useAuth } from '../auth/AuthContext.js';
@@ -17,25 +17,34 @@ import { useAuth } from '../auth/AuthContext.js';
 /**
  * Demo login.
  *
- * The accounts are listed on the page on purpose (D-008): this is a demo build with public
- * credentials, and a reviewer should not have to read source to get in. Clicking one fills
- * the form rather than logging straight in, so it is still obvious what is being sent.
+ * The demo accounts are listed on the page on purpose (D-008): this is a demo build with
+ * public credentials, and a reviewer should not have to read source to get in. Clicking one
+ * fills the form rather than signing in directly, so it stays obvious what is being sent.
+ *
+ * The list is now held HERE rather than fetched. It used to come from
+ * `GET /auth/demo-credentials`, which was unauthenticated and enumerated every account --
+ * fine when the roster was a fixed array of twelve fakes, and an open directory of every
+ * account on the platform once a business can create its own staff. The endpoint is gone
+ * (D-037), so these three names are hard-coded: they are the seeded demo accounts, they are
+ * already published in the README, and an account created through the console is deliberately
+ * not advertised here.
  */
+
+/** The seeded roster, from apps/api/src/auth/demo-users.ts. */
+const DEMO_PASSWORD = 'demo1234';
+const DEMO_ACCOUNTS: { username: string; role: string }[] = [
+  { username: 'admin', role: 'admin' },
+  { username: 'business', role: 'business' },
+  { username: 'user1', role: 'participant' },
+];
 export function Login() {
   const { login } = useAuth();
   const [username, setUsername] = useState('business');
-  const [password, setPassword] = useState('demo1234');
+  const [password, setPassword] = useState(DEMO_PASSWORD);
   const { t, toggle } = useLocale();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [accounts, setAccounts] = useState<{ username: string; role: string }[]>([]);
-
-  useEffect(() => {
-    api
-      .demoCredentials()
-      .then((d) => setAccounts(d.accounts))
-      .catch(() => setAccounts([]));
-  }, []);
+  const accounts = DEMO_ACCOUNTS;
 
   const submit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
@@ -112,7 +121,7 @@ export function Login() {
                     variant="outlined"
                     onClick={() => {
                       setUsername(a.username);
-                      setPassword('demo1234');
+                      setPassword(DEMO_PASSWORD);
                     }}
                   >
                     {a.username}

@@ -15,7 +15,13 @@ export class AuthGuard implements CanActivate {
     private readonly reflector: Reflector,
   ) {}
 
-  canActivate(ctx: ExecutionContext): boolean {
+  /**
+   * Async since D-037, because the user is now re-read from the database rather than found in
+   * an array. Nest has always accepted a Promise here; what changes is that every
+   * authenticated request costs one indexed lookup by `_id`, which is what makes deactivating
+   * an account take effect immediately instead of at token expiry.
+   */
+  async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean>(PUBLIC_KEY, [
       ctx.getHandler(),
       ctx.getClass(),
@@ -32,7 +38,7 @@ export class AuthGuard implements CanActivate {
       throw new UnauthorizedException('Missing bearer token');
     }
 
-    req.user = this.auth.verify(header.slice('Bearer '.length).trim());
+    req.user = await this.auth.verify(header.slice('Bearer '.length).trim());
     return true;
   }
 }

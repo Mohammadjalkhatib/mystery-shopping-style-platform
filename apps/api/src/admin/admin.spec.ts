@@ -23,6 +23,9 @@ import {
 import { ParticipantService } from '../participant/participant.service.js';
 import { AdminController } from './admin.controller.js';
 import { AdminService } from './admin.service.js';
+import { seedDemoUsers } from '../../test/seed-users.js';
+import { testDbModule } from '../../test/nest-db.js';
+import { User, UserSchema } from '../db/schemas/user.schema.js';
 
 /** The org the demo `business` user belongs to, per demo-users.ts. */
 const ORG = 'org-alfa-retail';
@@ -101,6 +104,9 @@ describe('admin surface', () => {
   beforeAll(async () => {
     mongod = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     conn = await mongoose.createConnection(mongod.getUri('admin')).asPromise();
+    // Real accounts now back /auth/login (D-037), so the roster has to exist.
+    await seedDemoUsers(conn);
+    const Users = conn.model(User.name, UserSchema);
 
     Orgs = conn.model(ClientOrg.name, ClientOrgSchema) as Model<ClientOrg>;
     Venues = conn.model(Venue.name, VenueSchema) as Model<Venue>;
@@ -123,7 +129,11 @@ describe('admin surface', () => {
     ] as never);
 
     const moduleRef = await Test.createTestingModule({
-      imports: [ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }), AuthModule],
+      imports: [
+        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        testDbModule(conn),
+        AuthModule,
+      ],
       controllers: [AdminController],
       providers: [
         AdminService,
@@ -142,6 +152,7 @@ describe('admin surface', () => {
         { provide: getModelToken(Task.name), useValue: Tasks },
         { provide: getModelToken(Assignment.name), useValue: Assignments },
         { provide: getModelToken(Session.name), useValue: Sessions },
+        { provide: getModelToken(User.name), useValue: Users },
       ],
     }).compile();
 
@@ -546,6 +557,134 @@ describe('admin surface', () => {
         (t) => t.id === taskId,
       );
       expect(row?.assignmentCount).toBe(1);
+    });
+  });
+
+  /**
+   * The tenancy hole that D-037 opens, and closes in the same branch.
+   *
+   * `createAssignment` checked that the assignee was a participant and never that they were in
+   * the task's organisation. That was unreachable while every account shared one org, so no
+   * test existed -- the boundary did not. The moment a business creates its own participants,
+   * the same code lets business A hand a task to business B's participant, who then reads the
+   * venue name, its address and the task brief out of their own dashboard.
+   */
+  describe('assignment stays inside one organisation (D-037)', () => {
+    let foreignParticipant: string;
+
+    beforeAll(async () => {
+      const Users = conn.model('User');
+      await Users.create({
+        _id: 'u-outsider',
+        username: 'outsider',
+        displayName: 'Outsider',
+        passwordHash: 'scrypt$16384$8$1$AAAA$BBBB',
+        role: 'participant',
+        clientOrgId: OTHER_ORG,
+        active: true,
+      });
+      await Users.create({
+        _id: 'u-benched',
+        username: 'benched',
+        displayName: 'Benched',
+        passwordHash: 'scrypt$16384$8$1$AAAA$BBBB',
+        role: 'participant',
+        clientOrgId: ORG,
+        active: false,
+      });
+      foreignParticipant = 'u-outsider';
+    });
+
+    const taskInOwnOrg = async (): Promise<string> => {
+      const venueId = await seedVenue(ORG);
+      return seedTask(ORG, venueId);
+    };
+
+    it("refuses a participant from another organisation", async () => {
+      const taskId = await taskInOwnOrg();
+      await request(app.getHttpServer())
+        .post('/assignments')
+        .set(auth(bizToken))
+        .send({ taskId, participantId: foreignParticipant })
+        .expect(400);
+
+      expect(await Assignments.countDocuments({ participantId: foreignParticipant })).toBe(0);
+    });
+
+    /**
+     * Same message as "no such participant". Whether an id exists in somebody else's
+     * organisation is not a fact to hand to a caller outside it.
+     */
+    it('does not reveal that the foreign participant exists', async () => {
+      const taskId = await taskInOwnOrg();
+      const foreign = await request(app.getHttpServer())
+        .post('/assignments')
+        .set(auth(bizToken))
+        .send({ taskId, participantId: foreignParticipant })
+        .expect(400);
+      const missing = await request(app.getHttpServer())
+        .post('/assignments')
+        .set(auth(bizToken))
+        .send({ taskId, participantId: 'u-no-such-person' })
+        .expect(400);
+
+      expect(JSON.stringify(foreign.body)).toBe(
+        JSON.stringify(missing.body).replace('u-no-such-person', foreignParticipant),
+      );
+    });
+
+    /** A deactivated account cannot start a visit, so the assignment would sit stuck. */
+    it('refuses a deactivated participant', async () => {
+      const taskId = await taskInOwnOrg();
+      await request(app.getHttpServer())
+        .post('/assignments')
+        .set(auth(bizToken))
+        .send({ taskId, participantId: 'u-benched' })
+        .expect(400);
+    });
+
+    it('still allows a participant in the same organisation', async () => {
+      const taskId = await taskInOwnOrg();
+      await request(app.getHttpServer())
+        .post('/assignments')
+        .set(auth(bizToken))
+        .send({ taskId, participantId: 'u-participant-6' })
+        .expect(201);
+    });
+  });
+
+  describe('the participant roster is scoped (D-037)', () => {
+    it("gives a business its own organisation's active participants only", async () => {
+      const res = await request(app.getHttpServer())
+        .get('/participants')
+        .set(auth(bizToken))
+        .expect(200);
+      const ids = (res.body as { id: string }[]).map((r) => r.id);
+
+      expect(ids).toContain('u-participant-1');
+      // Another organisation's staff are other people's names.
+      expect(ids).not.toContain('u-outsider');
+      // A deactivated account would produce an assignment that can never be started.
+      expect(ids).not.toContain('u-benched');
+    });
+
+    it('refuses a business asking for another organisation', async () => {
+      await request(app.getHttpServer())
+        .get('/participants')
+        .query({ clientOrgId: OTHER_ORG })
+        .set(auth(bizToken))
+        .expect(403);
+    });
+
+    it('makes an admin say which organisation, rather than guessing', async () => {
+      await request(app.getHttpServer()).get('/participants').set(auth(adminToken)).expect(400);
+
+      const res = await request(app.getHttpServer())
+        .get('/participants')
+        .query({ clientOrgId: OTHER_ORG })
+        .set(auth(adminToken))
+        .expect(200);
+      expect((res.body as { id: string }[]).map((r) => r.id)).toEqual(['u-outsider']);
     });
   });
 });

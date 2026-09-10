@@ -105,3 +105,25 @@ export async function syncPingTtlIndex(
   );
   return { action: 'updated', previousSeconds: current, currentSeconds: target };
 }
+
+/**
+ * Build the `users` indexes on boot, and refuse to start if they cannot be built.
+ *
+ * `unique: true` on a Mongoose path is an index, not a validator, and `autoIndex` builds it
+ * in the background: a failure surfaces on the model's `index` event, which nothing in this
+ * app listens to. On a database that already contains two accounts with the same username the
+ * build fails silently and `findOne({ username })` starts returning whichever document the
+ * storage engine hands back first -- an authentication bug that presents as "sometimes I log
+ * in as the wrong person", which is the worst possible way to find out.
+ *
+ * Same argument as syncPingTtlIndex above: the guarantee is only real if something asserts it
+ * on the way up. Awaited and unguarded on purpose -- an API that cannot guarantee unique
+ * usernames should not accept logins.
+ */
+export async function assertUserIndexes(connection: Connection): Promise<void> {
+  const users = connection.collection('users');
+  // Idempotent: an identical spec is a no-op, and a conflicting one throws rather than
+  // quietly leaving the old index in place (Mongoose never drops indexes by itself).
+  await users.createIndex({ username: 1 }, { unique: true });
+  await users.createIndex({ clientOrgId: 1, role: 1 });
+}

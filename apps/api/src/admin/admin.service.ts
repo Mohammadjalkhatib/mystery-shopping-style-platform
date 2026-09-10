@@ -8,11 +8,11 @@ import {
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import type { AuthUser } from '@msp/shared';
 import type { Connection, Model } from 'mongoose';
-import { DEMO_USERS } from '../auth/demo-users.js';
 import { ParticipantService } from '../participant/participant.service.js';
 import { checkCoordinatePrecision } from '../geo/precision.js';
 import { ClientOrg, Venue } from '../db/schemas/org-venue.schema.js';
 import { Assignment, Session, Task } from '../db/schemas/task-session.schema.js';
+import { User } from '../db/schemas/user.schema.js';
 import type { CreateAssignmentDto } from './dto/create-assignment.dto.js';
 import type { CreateTaskDto } from './dto/create-task.dto.js';
 import type { CreateVenueDto } from './dto/create-venue.dto.js';
@@ -31,6 +31,15 @@ export interface VenueRow {
 
 export interface TaskRow {
   id: string;
+  /**
+   * Exposed since D-037, because the assignment form needs it.
+   *
+   * A task can only be assigned to a participant in its OWN organisation, so the roster the
+   * form offers depends on which task is selected. Without this an admin -- who sees tasks
+   * across every organisation -- has no way to ask for the right roster, and would be picking
+   * from a list the server then refuses.
+   */
+  clientOrgId: string;
   title: string;
   brief: string;
   venueId: string;
@@ -67,6 +76,7 @@ export class AdminService {
     @InjectModel(Task.name) private readonly tasks: Model<Task>,
     @InjectModel(Assignment.name) private readonly assignments: Model<Assignment>,
     @InjectModel(Session.name) private readonly sessions: Model<Session>,
+    @InjectModel(User.name) private readonly users: Model<User>,
     private readonly participants: ParticipantService,
   ) {}
 
@@ -223,6 +233,7 @@ export class AdminService {
       });
       return {
         id: String(task._id),
+        clientOrgId: venue.clientOrgId,
         title: task.title,
         brief: task.brief,
         venueId: task.venueId,
@@ -246,6 +257,7 @@ export class AdminService {
       .lean<
         {
           _id: unknown;
+          clientOrgId: string;
           title: string;
           brief: string;
           venueId: string;
@@ -273,6 +285,7 @@ export class AdminService {
 
     return tasks.map((t) => ({
       id: String(t._id),
+      clientOrgId: t.clientOrgId,
       title: t.title,
       brief: t.brief,
       venueId: t.venueId,
@@ -304,12 +317,30 @@ export class AdminService {
     this.assertCanWrite(user, task.clientOrgId);
     if (!task.active) throw new BadRequestException('That task is not active');
 
-    // Participants are a fixed demo roster (D-008), so this is a membership check rather than
-    // a user lookup. It still matters: without it a task can be assigned to `u-admin`, or to
-    // a participant id that will never sign in, and the assignment looks correct forever.
-    const participant = DEMO_USERS.find((u) => u.id === dto.participantId);
-    if (!participant || participant.role !== 'participant') {
-      throw new BadRequestException(`${dto.participantId} is not a participant`);
+    /**
+     * The assignee must be a real, active participant IN THE TASK'S OWN ORGANISATION.
+     *
+     * The org check is new with D-037 and it is not defensive tidying -- it closes a hole that
+     * feature opens. This was a membership test against a fixed roster where every account
+     * shared one organisation, so cross-org was unreachable by construction. The moment a
+     * business can create its own participants, the same code lets business A assign a task to
+     * business B's participant, who then reads the venue name, its address and the task brief
+     * out of their own dashboard. The boundary test for it did not exist because the boundary
+     * did not.
+     *
+     * `active` is checked here too: assigning a deactivated account produces a visit that can
+     * never be started and sits in the console looking merely overdue.
+     */
+    const participant = await this.users
+      .findById(dto.participantId)
+      .lean<{ role: string; clientOrgId: string | null; active: boolean } | null>();
+    if (!participant || participant.role !== 'participant' || !participant.active) {
+      throw new BadRequestException(`${dto.participantId} is not an active participant`);
+    }
+    if (participant.clientOrgId !== task.clientOrgId) {
+      // Deliberately the same message as "no such participant": to a caller outside the
+      // organisation, whether an id exists in someone else's is not information to hand over.
+      throw new BadRequestException(`${dto.participantId} is not an active participant`);
     }
 
     const now = new Date();
@@ -377,11 +408,40 @@ export class AdminService {
   }
 
   /** The demo roster, so the assignment form has something to choose from. */
-  listParticipants(): ParticipantRow[] {
-    return DEMO_USERS.filter((u) => u.role === 'participant').map((u) => ({
-      id: u.id,
-      displayName: u.displayName,
-    }));
+  /**
+   * The participants an assignment can actually be given to.
+   *
+   * Scoped, since D-037. An admin has no organisation and may name one; a business is pinned
+   * to its own and a `clientOrgId` naming someone else's is refused rather than ignored --
+   * returning another organisation's roster would be a list of real people's names, and the
+   * assignment would be refused on submit anyway.
+   *
+   * Inactive accounts are excluded: they cannot start a visit, so offering them in the form
+   * only produces an assignment that is stuck before it begins.
+   */
+  async listParticipants(user: AuthUser, clientOrgId?: string): Promise<ParticipantRow[]> {
+    let org: string;
+    if (user.role === 'admin') {
+      if (!clientOrgId) {
+        throw new BadRequestException(
+          'clientOrgId is required: an admin has no organisation of their own, and a task can ' +
+            "only be assigned to a participant in the task's organisation",
+        );
+      }
+      org = clientOrgId;
+    } else {
+      if (clientOrgId && clientOrgId !== user.clientOrgId) {
+        throw new ForbiddenException('clientOrgId is taken from your account and cannot be set');
+      }
+      if (!user.clientOrgId) throw new ForbiddenException('Your account has no organisation');
+      org = user.clientOrgId;
+    }
+
+    const rows = await this.users
+      .find({ clientOrgId: org, role: 'participant', active: true })
+      .sort({ username: 1 })
+      .lean<{ _id: string; displayName: string }[]>();
+    return rows.map((u) => ({ id: u._id, displayName: u.displayName }));
   }
 
   /* --------------------------------------------------------------- tenancy */

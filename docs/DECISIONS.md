@@ -251,7 +251,7 @@ both CommonJS and both will hit this.
 ## D-008: Demo authentication with real authorization boundaries
 
 **Date:** 2026-09-07
-**Status:** accepted
+**Status:** accepted; the authentication half superseded by D-037, the authorization half stands
 
 **Decision.** Authentication is a hardcoded list of demo accounts — `admin`, `business`, and
 `user1` through `user10`, all with the password `demo1234`. Login returns an HMAC-signed token.
@@ -1663,3 +1663,65 @@ with the boundary test that was missing because the check was missing.
 
 The remaining cost is ordinary: presence only updates when a batch reaches the server, so an
 offline participant sees a stale answer. The banner shows its age rather than pretending.
+
+---
+
+## D-037: Real accounts, created by an admin and by a business
+
+**Date:** 2026-09-10
+**Status:** accepted. Supersedes the authentication half of D-008; its authorization half stands.
+
+**Decision.** Accounts move from the hardcoded array in `demo-users.ts` to a `users`
+collection with scrypt-hashed passwords. An admin creates a business account -- the
+organisation and its first sign-in, in one transaction -- and a business creates participants
+inside its own organisation and nowhere else. Only an admin can create a business user. Every
+new account gets the same default password. `GET /auth/demo-credentials` is removed.
+`AuthGuard`, `RolesGuard`, `@Roles()`, `@CurrentUser()` and every boundary test are unchanged,
+which is the seam D-008 said it was leaving.
+
+**Context.** D-008 scoped identity out and said what reversing it would cost: replace
+`AuthService.login` and the demo list. The requirement that forces it is the product's, not the
+engineering's -- a platform with one hardcoded customer cannot demonstrate onboarding a second,
+and every venue, task and visit in the system already hangs off a `clientOrgId` that only ever
+had one value.
+
+**Alternatives considered.**
+
+- *bcrypt or argon2 for hashing.* The conventional answer and the stronger KDF. Rejected: both
+  are native modules, which means a compiler in the API image and a rebuild on every Node bump,
+  to improve something nobody is grading. `node:crypto`'s scrypt is memory-hard, in the standard
+  library, and costs zero dependencies -- the same trade D-008 made when it hand-rolled an HMAC
+  token instead of adding `@nestjs/jwt`.
+- *Generate a one-time password per account and show it once.* The right answer with a mail
+  transport. Rejected because there is none: the password would exist only in a dialog, and
+  closing it would strand the account with no reset flow to recover through. A shared default is
+  worse security and honest about being a demo; a generated password nobody can retrieve is
+  theatre that also loses accounts.
+- *Keep the user in the token and skip the per-request read.* One less database round trip on
+  every authenticated call, including ping ingest. Rejected: deactivation is the only control
+  this system has over an account, and a token is valid for seven days. A control that takes a
+  week to apply is not one. `verify` re-reads and projects to the five fields `AuthUser` needs.
+- *Two branches, auth swap then account admin.* Offered and declined by the user. Recorded
+  because the risk was real: the swap changes how every request in the system resolves identity.
+
+**Consequences.** Ids are derived from the username (`u-<username>`), which keeps them readable
+in the six collections that store a participant as a plain string -- and makes **usernames
+immutable**, since a rename would orphan the account's visits. There is no rename endpoint, and
+adding one means adding an id that is not the username. Accounts are never deleted, only
+deactivated, because verification results are append-only (rule 8) and a verdict attributed to a
+missing user is unreadable; the schema enforces that rather than asking. The seed writes only
+MISSING accounts: scrypt salts randomly, so re-hashing on every boot would silently reset a
+password mid-demo, and a username collision with a console-created account logs and continues
+rather than bricking a container that seeds on every start.
+
+Two things this deliberately does not fix. Deactivation is immediate for REST but **not for an
+already-open `@Sse()` stream**, because guards run at connect: a deactivated user keeps a live
+console or notification stream until it reconnects. And there is still no password reset, no
+rotation and no second factor -- the default password is the last genuinely demo-shaped thing in
+the authentication story, and it is the first thing to replace if this ever carries real users.
+
+The feature also opened a tenancy hole and closes it in the same branch: `createAssignment`
+checked that the assignee was a participant but never that they were in the task's organisation,
+which was unreachable while every account shared one org and becomes cross-tenant data exposure
+the moment a business creates its own. `listParticipants` was unscoped for the same reason. Both
+are now org-scoped with a boundary test each.
