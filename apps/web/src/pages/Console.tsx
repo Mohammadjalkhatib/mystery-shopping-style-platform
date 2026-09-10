@@ -30,7 +30,7 @@ import type { TranslationKey } from '../i18n/strings.js';
 import { useCallback, useEffect, useState } from 'react';
 import { api, type VisitDetail, type VisitRow } from '../api/client.js';
 import { useAuth } from '../auth/AuthContext.js';
-import { VerdictChip } from '../components/VerdictChip.js';
+import { VERDICT_EXPLAIN, VerdictChip } from '../components/VerdictChip.js';
 import { useT } from '../i18n/LocaleContext.js';
 import { useVisitStream, type VisitEvent } from '../hooks/useVisitStream.js';
 import { qa, verdictPalette } from '../theme/theme.js';
@@ -684,45 +684,129 @@ function VisitDetailPanel({ sessionId, onDone }: { sessionId: string; onDone: ()
   if (error) return <Alert severity="error" sx={{ m: 2 }}>{error}</Alert>;
   if (!d) return <Box sx={{ p: 4, textAlign: 'center' }}><CircularProgress /></Box>;
 
+  const verdictColour = d.verdict ? verdictPalette[d.verdict].main : null;
+
   return (
-    <Box sx={{ p: { xs: 2, sm: 3 } }}>
-      <Typography variant="h3" sx={{ fontSize: { xs: '1.15rem', sm: '1.25rem' } }} gutterBottom>
-        {d.venueName}
-      </Typography>
-      <Stack direction="row" spacing={1} sx={{ mb: 2 }} useFlexGap>
-        <VerdictChip verdict={d.verdict} score={d.score} />
-        {d.engineVersion && (
-          <Chip
-            size="small"
-            variant="outlined"
-            label={t('console.detail.engine', { version: d.engineVersion })}
-          />
+    <Box>
+      {/* Header. Identity only -- the verdict gets its own band below. */}
+      <Box sx={{ px: { xs: 2, sm: 3 }, pt: { xs: 2, sm: 2.5 }, pb: 2 }}>
+        <Typography variant="h3" sx={{ fontSize: { xs: '1.15rem', sm: '1.25rem' }, mb: 0.5 }}>
+          {d.venueName}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          {d.participantId} · {d.startedAt ? new Date(d.startedAt).toLocaleString() : '—'} →{' '}
+          {d.endedAt ? new Date(d.endedAt).toLocaleTimeString() : '—'}
+        </Typography>
+      </Box>
+
+      {/*
+        The score, as the largest thing in the panel.
+
+        It is what the reviewer is deciding about, and it used to render as a chip the same size
+        as the engine-version chip beside it. The sentence under it is the verdict's own
+        explanation from the dictionary, which is where the "this is not proof" wording lives --
+        so the honest reading of the number arrives with the number rather than a scroll away.
+      */}
+      <Stack
+        direction="row"
+        spacing={2.5}
+        sx={{
+          alignItems: 'center',
+          px: { xs: 2, sm: 3 },
+          py: 2,
+          borderBlock: `1px solid ${qa.neutral[200]}`,
+          bgcolor: d.verdict === 'needs_review' ? qa.yellow[50] : qa.neutral[50],
+        }}
+      >
+        <Box sx={{ textAlign: 'center', flexShrink: 0, minWidth: 64 }}>
+          <Typography
+            sx={{
+              fontSize: '2.75rem',
+              fontWeight: 700,
+              lineHeight: 1,
+              letterSpacing: '-0.02em',
+              fontVariantNumeric: 'tabular-nums',
+              color: verdictColour ?? 'text.disabled',
+            }}
+          >
+            {d.score ?? '—'}
+          </Typography>
+          {d.score !== null && (
+            <Typography
+              variant="overline"
+              sx={{ display: 'block', mt: 0.5, color: 'text.disabled', lineHeight: 1 }}
+            >
+              {t('console.detail.scoreOf')}
+            </Typography>
+          )}
+        </Box>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="h3" sx={{ fontSize: '0.95rem', mb: 0.25 }}>
+            {t(d.verdict ? SHORT_LABEL[d.verdict] : 'verdict.pending')}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {d.verdict ? t(VERDICT_EXPLAIN[d.verdict]) : t('console.detail.notVerifiedYet')}
+          </Typography>
+          {d.engineVersion && (
+            <Typography variant="caption" color="text.disabled" sx={{ display: 'block', mt: 0.5 }}>
+              {t('console.detail.engine', { version: d.engineVersion })}
+            </Typography>
+          )}
+        </Box>
+      </Stack>
+
+      <Box sx={{ px: { xs: 2, sm: 3 }, py: 2.5 }}>
+      <Stack direction="row" spacing={1} sx={{ alignItems: 'baseline', mb: 1.25 }}>
+        <Typography variant="overline" color="text.secondary">
+          {t('console.detail.whyTitle')}
+        </Typography>
+        {d.signals.length > 0 && (
+          <Typography variant="caption" color="text.disabled">
+            {t('console.detail.signalCount', { count: d.signals.length })}
+          </Typography>
         )}
       </Stack>
 
-      <Typography variant="body2" color="text.secondary">
-        {d.participantId} · {d.startedAt ? new Date(d.startedAt).toLocaleString() : '—'} →{' '}
-        {d.endedAt ? new Date(d.endedAt).toLocaleTimeString() : '—'}
-      </Typography>
+      {/*
+        The ledger. One row per signal, its contribution and the sentence behind it.
 
-      <Divider sx={{ my: 2 }} />
-
-      <Typography variant="h3" sx={{ fontSize: '1rem', mb: 1 }}>
-        {t('console.detail.whyTitle')}
-      </Typography>
-      <Stack spacing={1}>
-        {d.signals.map((s) => (
-          <Box key={s.code} sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
-            <Chip
-              size="small"
-              label={s.contribution > 0 ? `+${s.contribution}` : String(s.contribution)}
-              color={s.contribution > 0 ? 'default' : 'warning'}
-              variant="outlined"
-              sx={{ minWidth: 56, fontVariantNumeric: 'tabular-nums' }}
-            />
-            <Typography variant="body2">{s.reason}</Typography>
-          </Box>
-        ))}
+        Rows sit flush against each other on a tinted ground rather than floating with gaps: the
+        list is a single accounting of one number, not a set of unrelated notes. Signals that
+        cost the visit points are tinted, so the reason a verdict went the way it did is findable
+        without reading every row.
+      */}
+      <Stack spacing="1px" sx={{ mb: 1 }}>
+        {d.signals.map((s) => {
+          const negative = s.contribution < 0;
+          return (
+            <Stack
+              key={s.code}
+              direction="row"
+              spacing={1.5}
+              sx={{
+                alignItems: 'flex-start',
+                p: 1.25,
+                bgcolor: negative ? qa.yellow[50] : qa.neutral[50],
+                borderRadius: `${qa.radius.xs}px`,
+              }}
+            >
+              <Typography
+                variant="body2"
+                sx={{
+                  fontWeight: 600,
+                  minWidth: 34,
+                  textAlign: 'end',
+                  flexShrink: 0,
+                  fontVariantNumeric: 'tabular-nums',
+                  color: negative ? verdictPalette.needs_review.main : 'primary.main',
+                }}
+              >
+                {s.contribution > 0 ? `+${s.contribution}` : s.contribution}
+              </Typography>
+              <Typography variant="body2">{s.reason}</Typography>
+            </Stack>
+          );
+        })}
         {d.signals.length === 0 && (
           <Typography color="text.secondary" variant="body2">
             {t('console.detail.notVerifiedYet')}
@@ -730,40 +814,69 @@ function VisitDetailPanel({ sessionId, onDone }: { sessionId: string; onDone: ()
         )}
       </Stack>
 
+      {/*
+        The rollups, as four numbers rather than one run-on sentence.
+
+        These were a single line of prose joined by middots -- "63 fixes · 14 min inside · 64% of
+        the session observed · closest 12 m" -- which is unreadable at a glance and impossible to
+        compare between two visits. They are the quantities behind the signals above, so they get
+        the same tabular treatment the score does.
+      */}
       {d.rollups && (
         <>
-          <Divider sx={{ my: 2 }} />
-          <Typography variant="h3" sx={{ fontSize: '1rem', mb: 1 }}>
+          <Divider sx={{ my: 2.5 }} />
+          <Typography variant="overline" color="text.secondary" sx={{ display: 'block', mb: 1.25 }}>
             {t('console.detail.observedTitle')}
           </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {t('console.detail.fixes', { count: d.rollups.fixCount })} ·{' '}
-            {t('console.detail.minutesInside', {
-              minutes: Math.round(d.rollups.dwellSeconds / 60),
-            })}{' '}
-            · {t('console.detail.observedPercent', {
-              percent: Math.round(d.rollups.coverageRatio * 100),
-            })}
-            {d.rollups.minDistanceM !== null &&
-              ` · ${t('console.detail.closest', { metres: Math.round(d.rollups.minDistanceM) })}`}
-            {d.rollups.unusableFixCount > 0 &&
-              ` · ${t('console.detail.unusable', { count: d.rollups.unusableFixCount })}`}
-          </Typography>
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+              gap: 1,
+            }}
+          >
+            <RollupStat value={String(d.rollups.fixCount)} label={t('console.detail.statFixes')} />
+            <RollupStat
+              value={String(Math.round(d.rollups.dwellSeconds / 60))}
+              unit={t('common.minutesShort')}
+              label={t('console.detail.statInside')}
+            />
+            <RollupStat
+              value={String(Math.round(d.rollups.coverageRatio * 100))}
+              unit="%"
+              label={t('console.detail.statObserved')}
+              // Coverage is the one rollup that is routinely the reason a visit lands in the
+              // queue, so a low one is allowed to look like the answer it usually is.
+              emphasise={d.rollups.coverageRatio < 0.75}
+            />
+            <RollupStat
+              value={d.rollups.minDistanceM === null ? '—' : String(Math.round(d.rollups.minDistanceM))}
+              unit={d.rollups.minDistanceM === null ? undefined : t('common.metresShort')}
+              label={t('console.detail.statClosest')}
+            />
+          </Box>
+          {d.rollups.unusableFixCount > 0 && (
+            <Typography variant="caption" color="text.disabled" sx={{ display: 'block', mt: 1 }}>
+              {t('console.detail.unusable', { count: d.rollups.unusableFixCount })}
+            </Typography>
+          )}
         </>
       )}
 
       {d.report && (
         <>
-          <Divider sx={{ my: 2 }} />
-          <Typography variant="h3" sx={{ fontSize: '1rem', mb: 1 }}>
+          <Divider sx={{ my: 2.5 }} />
+          <Typography variant="overline" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
             {t('console.detail.reportTitle', { rating: d.report.rating })}
           </Typography>
-          <Typography variant="body2">{d.report.notes}</Typography>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            {d.report.notes}
+          </Typography>
           <EvidenceImage evidenceKey={d.report.evidenceKey} />
         </>
       )}
 
-      <Divider sx={{ my: 2 }} />
+      <Divider sx={{ my: 2.5 }} />
       {d.review ? (
         <Alert severity="info">
           {t('console.review.recorded', {
@@ -816,7 +929,14 @@ function VisitDetailPanel({ sessionId, onDone }: { sessionId: string; onDone: ()
             multiline
             minRows={2}
             fullWidth
-            sx={{ mb: 1.5 }}
+            // Tinted in the brand, where the internal note above is not. The two boxes have two
+            // different audiences and the reviewer needs to know which one they are addressing
+            // while they type, not after -- a border is a cheaper reminder than reading a label.
+            sx={{
+              mb: 1.5,
+              '& .MuiOutlinedInput-notchedOutline': { borderColor: qa.teal[300] },
+              '& label': { color: 'primary.main' },
+            }}
           />
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
             <Button
@@ -837,6 +957,59 @@ function VisitDetailPanel({ sessionId, onDone }: { sessionId: string; onDone: ()
           </Stack>
         </>
       )}
+      </Box>
+    </Box>
+  );
+}
+
+/**
+ * One number from the rollups, with its unit and its label.
+ *
+ * The unit rides inside the value rather than in the label so the number and its "min" or "m"
+ * stay on one baseline; the label underneath is then a single word the eye can skip.
+ */
+function RollupStat({
+  value,
+  unit,
+  label,
+  emphasise = false,
+}: {
+  value: string;
+  unit?: string;
+  label: string;
+  emphasise?: boolean;
+}) {
+  return (
+    <Box
+      sx={{
+        p: 1.25,
+        border: `1px solid ${qa.neutral[200]}`,
+        borderRadius: `${qa.radius.sm}px`,
+        minWidth: 0,
+      }}
+    >
+      <Typography
+        sx={{
+          fontSize: '1.05rem',
+          fontWeight: 600,
+          lineHeight: 1.2,
+          fontVariantNumeric: 'tabular-nums',
+          color: emphasise ? verdictPalette.needs_review.main : 'text.primary',
+        }}
+      >
+        {value}
+        {unit && (
+          <Box
+            component="span"
+            sx={{ fontSize: '0.75rem', fontWeight: 500, color: 'text.secondary', ms: 0.25 }}
+          >
+            {unit}
+          </Box>
+        )}
+      </Typography>
+      <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>
+        {label}
+      </Typography>
     </Box>
   );
 }

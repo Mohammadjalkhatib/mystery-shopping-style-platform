@@ -2252,3 +2252,57 @@ single biggest open risk on the front-end pass and it applies to everything merg
 **Open.** The mockup's venue/participant search box was not built: `GET /visits` filters on
 verdict only, so it is a server change and an index. The visit detail drawer (the ledger layout)
 and the five participant screens are still unported. `verdictChartPalette` is still STALE.
+
+## `feat/visit-detail-ledger` — the drawer becomes a ledger
+
+**Decision:** D-042. Second port from the design canvas; follows `feat/console-triage`.
+
+**What exists now.** `VisitDetailPanel` reads top to bottom as: identity header, then a tinted
+band carrying the score at 2.75rem with the verdict's short label and its full explanation beside
+it, then the signal ledger, then the rollups as four stat boxes, then the report, then the review
+form. The score band is amber-tinted for `needs_review` and neutral otherwise.
+
+**What moved and why.**
+
+- The score was a chip the same size as the engine-version chip next to it. It is what the
+  reviewer is deciding about, so it is now the largest thing in the panel.
+- The verdict explanation came out of a tooltip and became body text under the score. A tooltip
+  is not reachable by touch, and the drawer is full-bleed on a phone — the caveat would have
+  vanished on exactly the surface where the number got biggest. D-042 records why this pulls the
+  opposite way from D-041 on the same screen, and why that is not a contradiction.
+- Signals were chips floating in a spaced `Stack`. They are now flush rows on a tinted ground,
+  one accounting of one number, with negative contributions tinted so the reason a verdict went
+  the way it did is findable without reading every row.
+- The rollups were one run-on sentence joined by middots. They are four `RollupStat` boxes.
+  Coverage below 75% is emphasised, since it is routinely the reason a visit is in the queue.
+- The feedback field is outlined in the brand teal where the internal note is not, so the
+  reviewer can see which audience they are addressing while typing.
+
+**Files.**
+
+- `apps/web/src/pages/Console.tsx`: `VisitDetailPanel` restructured; `RollupStat` added
+- `apps/web/src/components/VerdictChip.tsx`: `EXPLAIN` renamed to `VERDICT_EXPLAIN` and exported;
+  the chip still uses it for its own tooltip, so the three strings live in one place
+- `apps/web/src/i18n/en.json`, `ar.json`: `console.detail.signalCount` and `.scoreOf` added;
+  `.fixes`, `.minutesInside`, `.observedPercent` and `.closest` REPLACED by `.statFixes`,
+  `.statInside`, `.statObserved`, `.statClosest` — the old four embedded their numbers in the
+  sentence and a stat box needs the label alone. `common.minutesShort` and `common.metresShort`
+  supply the units; no new unit keys.
+- `docs/DECISIONS.md`: D-042
+
+**Trap worth knowing.** The IDE's inline diagnostics went badly stale during this edit — they
+reported `qa` as not exported from `theme.ts` when it is on line 35, and reported a JSX structure
+error that did not exist. `npx tsc --noEmit -p apps/web/tsconfig.json` was authoritative and
+showed two real errors where the IDE showed forty. Trust tsc.
+
+**Verified.** `tsc --noEmit` clean, `vite build` clean, full suite 643/643 across 25 suites, i18n
+dictionary suite 11/11.
+
+**NOT verified.** Still nobody has looked at any of this rendered — the Chrome extension is not
+connected in this session. That now covers the brand theme, the console triage screen and this
+drawer, all merged to `main` and deployed. It remains the biggest open risk on the front-end pass.
+
+**Open.** The five participant screens are still unported and are the largest remaining chunk;
+they carry the Arabic pass, so every layout change there has to survive `dir="rtl"`.
+`verdictChartPalette` is still STALE. The mockup's venue/participant search box is still not
+built and still needs a server change.
