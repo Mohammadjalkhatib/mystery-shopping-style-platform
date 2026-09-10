@@ -1897,3 +1897,39 @@ quiet, the answer is to make the caption heavier, not to restore the alert. The 
 refetch; if that count and the list ever disagree the band is the one that will look wrong. The
 table is hidden entirely when empty, so the empty-state sentence is now the only thing rendered
 in that case rather than sitting under a framed header row.
+
+## D-042: The verdict's caveat moves out of a tooltip and under the score
+
+**Date:** 2026-09-10
+**Status:** accepted
+
+**Decision.** The detail drawer prints the verdict's explanation — "The evidence is ambiguous. A
+human decides.", and its two siblings — as body text under the score, where it used to be the
+`title` of a tooltip on a chip. `VERDICT_EXPLAIN` is exported from `VerdictChip` rather than
+copied, so the three strings still exist in exactly one place.
+
+**Context.** The score is the object a reviewer is deciding about and it rendered as a small chip
+the same size as the engine-version chip beside it. Making it the largest thing in the panel is
+the obvious fix, but a large confident number is exactly what D-001 says this system must not
+produce — so the sentence qualifying it had to grow with it rather than stay behind a hover.
+
+**Alternatives considered.**
+
+- *Keep the tooltip and just enlarge the score.* The smallest change. Rejected because a tooltip
+  is not reachable by touch at all, and the drawer is full-bleed on a phone — the one surface
+  where the caveat would have disappeared completely is the one where the number got biggest.
+- *Write a new, shorter string for the drawer.* A sentence sized for the space rather than
+  inherited from the chip. Rejected: two copies of the "this is not proof" wording is exactly the
+  thing that drifts, and the drift always goes one way — the shorter copy loses the hedge. One
+  string, one place, is the whole point of exporting it.
+- *Print the full `verdict.auto_verified` label instead ("Consistent with a genuine visit").*
+  Rejected as saying the same thing twice: the heading above it already carries the short label,
+  and the explanation is the part that adds the hedge.
+
+**Consequences.** This pulls in the opposite direction from D-041, which demoted the console's
+standing disclaimer to a footnote on the same screen. That is deliberate and not a contradiction:
+the list-level disclaimer is a general statement about how to read a table and is read once,
+whereas this sentence is attached to one specific number a person is about to act on. The general
+caveat got quieter and the specific one got louder. If a future change wants to trim either, they
+should be argued separately. The cost is vertical space in a drawer that already scrolls, and one
+more import edge between a page and a component.
