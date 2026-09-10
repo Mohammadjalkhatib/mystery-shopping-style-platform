@@ -2345,3 +2345,53 @@ component, not assumed. A chart added later WITHOUT visible labels may not use t
 **Open.** The five participant screens are still unported. Nothing in the app has been looked at
 rendered; that risk is unchanged and now covers this too, though a palette is the one thing here
 a validator can check better than an eye can.
+
+## `feat/participant-screens` — presence becomes the screen
+
+**Decision:** D-044. Third and last port from the design canvas.
+
+**What exists now.** The on-site screen reads: presence block, elapsed clock, condition alerts,
+capture health, actions. Presence is a centred tinted block with a drawn mark at 60 px, sized to
+be the first thing seen. The clock is unboxed at 2.75 rem with the capturing/paused state as a
+dot-and-word under it. Capture health is a divided list of rows. "End visit" is outlined and
+neutral. `ReadyToStart` leads with the venue name at 1.6 rem and pins the start button to the
+bottom of the viewport on a phone.
+
+**Two real bugs found and fixed, neither of which any test could catch.**
+
+1. `End visit` was `variant="contained" color="secondary"`. Under the old placeholder palette
+   that was a muted amber; D-039 turned `secondary` into `--qa-purple-500`, so the button that
+   STOPS location capture had silently become the brightest element on the screen, under the
+   thumb. **Anything else still using `color="secondary"` inherited the same change and should be
+   looked at** — this was found by reading, not by tooling.
+2. `ms:` and `me:` are NOT MUI spacing shorthands. They are Bootstrap's. MUI passes unknown `sx`
+   keys through as raw CSS, so `ms: 0.25` emits `ms: 0.25`, which is invalid and silently
+   dropped — no error, no warning, just no margin. One had already shipped in `RollupStat` from
+   `feat/visit-detail-ledger`. Use `marginInlineStart` with an explicit value. `ml`/`mr` DO work
+   but are physical and break RTL.
+
+**RTL audit.** Grepped all three touched files for `ml|mr|pl|pr|borderLeft|borderRight|
+marginLeft|paddingLeft|...` and fixed what turned up: `AttentionBand`'s rail was `borderLeft`
+(now `borderInlineStart`) and the filter count used `ml` (now `marginInlineStart`). All three
+files are clean as of this branch. Beware the naive grep — `ms:` matches inside `alignItems:` and
+`me:` inside `venueName:`; use a word-boundary pattern.
+
+**Files.**
+
+- `apps/web/src/participant/PresenceBanner.tsx`: rebuilt off `Alert`; `PresenceMark` added
+- `apps/web/src/participant/VisitPage.tsx`: clock unboxed, `HealthRow` added, end button
+  restyled, `ReadyToStart` restructured, `Chip` import dropped, `qa` imported
+- `apps/web/src/pages/Console.tsx`: the two RTL fixes above
+- `docs/DECISIONS.md`: D-044
+
+**Verified.** `tsc --noEmit` clean, `vite build` clean, full suite 643/643.
+
+**NOT verified, and now the only thing left.** Nothing in this front-end pass has been looked at
+rendered. That covers the theme, the console, the drawer and now these screens. RTL in particular
+is checked by grep here, not by eye — a grep proves no physical property is written down, not
+that the Arabic layout is right.
+
+**Open.** `Consent.tsx` and `ReportForm` were NOT ported — the mockups for them exist on the
+canvas. The mockup's map on the ready screen was not built: it needs tile rendering via
+`slippy.ts` and is new functionality, not a restyle. The venue/participant search box in the
+console mockup still needs a server change.
