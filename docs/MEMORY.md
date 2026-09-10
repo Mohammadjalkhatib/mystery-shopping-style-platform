@@ -2515,3 +2515,40 @@ NOT built. Gemini-shaped: flush-left rail, hamburger collapse, destinations list
 bottom. Deliberately light rather than dark. The tradeoff is on the artboard's note — it buys a
 place for the queue count and the account, it costs 248 px of table width and a second responsive
 mode, because below ~900 px it has to become a drawer.
+
+## `feat/participant-topnav` — both surfaces navigate the same way now
+
+**Decision:** D-048. Follows D-047, which did the console.
+
+**What exists now.** `apps/web/src/components/PillTabs.tsx` holds the pill-styled `Tabs` used by
+BOTH the console and the participant shell. `Console.tsx`'s `ConsoleNav` is now a thin wrapper
+that translates `TABS` into its shape. `ParticipantApp` renders it as a second row inside its
+`AppBar`; the fixed `BottomNavigation`, its `Paper` wrapper and the 72 px bottom padding that
+reserved room for it are gone.
+
+**The argument that was weighed and lost.** A bottom bar is the right mobile pattern and this
+shell is explicitly mobile-first. It lost on what it was being SPENT on: switching between the
+runner and the history list happens a few times a day, and it held the most reachable strip of
+the screen permanently. The primary actions never moved — Start visit, End visit and Submit
+report are all still pinned to the bottom of their own screens, which is where thumb reach
+actually matters. If this gets revisited, that is the distinction to argue about.
+
+**Files.**
+
+- `apps/web/src/components/PillTabs.tsx`: new, generic over the tab key type
+- `apps/web/src/pages/Console.tsx`: `ConsoleNav` reduced to a wrapper over `PillTabs`
+- `apps/web/src/participant/ParticipantApp.tsx`: bottom bar removed, nav in the `AppBar`, title
+  is now `auth.appName`
+- `apps/web/src/i18n/en.json`, `ar.json`: `participant.yourVisit` deleted — the tab says it now
+- `docs/DECISIONS.md`: D-048
+
+**Trap.** MUI `Tab`'s `icon` prop is NOT `ReactNode` — it is `string | ReactElement | undefined`.
+Typing `PillTabs`' `items[].icon` as `ReactNode` fails to compile with a three-overload error
+that does not name the real problem. Use `ReactElement`.
+
+**Verified.** `tsc --noEmit` clean, `vite build` clean, full suite 643/643, RTL grep clean on all
+three touched files.
+
+**Open.** The participant artboards still draw a single-row bar reading "Your visit". They were
+never literal about that bar — no bell, no language toggle, no sign-out — and were left as-is
+rather than half-corrected. The sidebar option from D-047 is still drawn and not built.

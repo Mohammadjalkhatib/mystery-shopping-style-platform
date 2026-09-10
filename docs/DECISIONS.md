@@ -2123,3 +2123,40 @@ a guess at where five pills plus the status chip, the account name and the sign-
 it was picked by counting, not measured, and is the first thing to adjust if it looks tight. The
 nav is still `variant="scrollable"`, so on a narrow phone it scrolls sideways rather than
 wrapping to a third row.
+
+## D-048: The participant's section nav moves into the app bar too, and the pills are shared
+
+**Date:** 2026-09-11
+**Status:** accepted
+
+**Decision.** The participant shell's fixed `BottomNavigation` is replaced by the same pill nav
+the console got in D-047, on a second row inside its `AppBar`. The pill styling is extracted to
+`components/PillTabs.tsx` and both surfaces use it. The participant toolbar title becomes the
+product name, since the tabs below it now say which section is open.
+
+**Context.** The two surfaces navigated in two different ways for no reason a user would be able
+to name — the console with tabs at the top, the participant app with a fixed bar at the bottom.
+Asked to make them match.
+
+**Alternatives considered.**
+
+- *Keep the bottom bar. It is the correct mobile pattern and this shell is explicitly
+  mobile-first.* The strongest argument against this change, and it is not wrong in general: a
+  bottom bar is where the thumb is. It loses here on what it is being spent on. The nav switches
+  between the visit runner and the history list, which a participant does a handful of times a
+  day, and it was holding the most reachable strip of the screen permanently to do it. **The
+  primary actions have not moved** — "Start visit", "End visit" and "Submit report" are all still
+  pinned to the bottom of their own screens, which is where thumb reach actually matters.
+- *Duplicate the pill `sx` block into `ParticipantApp`.* Rejected: it is thirty lines of styling
+  that has to stay identical for the surfaces to look like one product, and a copy drifts the
+  first time either side is touched. Extracted instead, which is why `PillTabs` exists.
+- *Keep "Your visit" as the toolbar title.* Rejected as saying the same thing twice: the active
+  tab already reads "Visit" directly underneath it. The bar carries `auth.appName` and
+  `participant.yourVisit` was deleted from both dictionaries rather than left dead.
+
+**Consequences.** The participant loses a persistent bottom target and gains about 45 px of
+permanent top chrome — a two-row app bar on a phone. `PillTabs` is now a shared component with
+two callers, so a change to it moves both surfaces at once, which is the point and also the risk.
+The participant artboards on the design canvas still draw a simplified single-row bar reading
+"Your visit"; they were never literal about that bar (they omit the bell, the language toggle and
+sign-out too) and were left alone rather than half-corrected.

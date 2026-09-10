@@ -31,6 +31,7 @@ import type { TranslationKey } from '../i18n/strings.js';
 import { useCallback, useEffect, useState } from 'react';
 import { api, type VisitDetail, type VisitRow } from '../api/client.js';
 import { useAuth } from '../auth/AuthContext.js';
+import { PillTabs } from '../components/PillTabs.js';
 import { VERDICT_EXPLAIN, VerdictChip } from '../components/VerdictChip.js';
 import { useT } from '../i18n/LocaleContext.js';
 import { useVisitStream, type VisitEvent } from '../hooks/useVisitStream.js';
@@ -60,15 +61,13 @@ const TABS: { key: ConsoleTab; label: TranslationKey }[] = [
 ];
 
 /**
- * The section nav, as pills in the app bar.
+ * The console's section nav.
  *
- * Still MUI `Tabs` underneath rather than a row of buttons. The pills are a restyle -- the
- * indicator is hidden and the selected state is a tint instead of an underline -- but the
- * tablist role and the arrow-key navigation that comes with it are not something to give up for
- * a shape. A hand-rolled version would have to reimplement both.
+ * The pill styling lives in `PillTabs`, shared with the participant shell (D-048). This wrapper
+ * exists only to turn `TABS` into the shape that component takes and to translate at render time.
  *
- * Rendered twice by the caller, once inline in the toolbar and once as a second row below `lg`,
- * with the inactive one fully `display: none` so only one tablist is ever in the a11y tree.
+ * Rendered twice by the caller -- once inline in the toolbar, once as a second row below `lg` --
+ * with the inactive one fully `display: none`, so only one tablist is ever in the a11y tree.
  */
 function ConsoleNav({
   tab,
@@ -81,42 +80,12 @@ function ConsoleNav({
 }) {
   const t = useT();
   return (
-    <Tabs
+    <PillTabs
       value={tab}
-      onChange={(_e, v: ConsoleTab) => onChange(v)}
-      variant="scrollable"
-      allowScrollButtonsMobile
-      sx={[
-        {
-          minHeight: 0,
-          '& .MuiTabs-indicator': { display: 'none' },
-          '& .MuiTabs-flexContainer': { gap: '2px' },
-          '& .MuiTab-root': {
-            minHeight: 0,
-            minWidth: 0,
-            px: 1.5,
-            py: 0.75,
-            borderRadius: `${qa.radius.sm}px`,
-            textTransform: 'none',
-            fontSize: '0.875rem',
-            fontWeight: 500,
-            color: 'text.secondary',
-            transition: 'background-color 150ms',
-            '&:hover': { bgcolor: qa.neutral[100] },
-            '&.Mui-selected': {
-              color: 'primary.main',
-              fontWeight: 600,
-              bgcolor: qa.teal[100],
-            },
-          },
-        },
-        ...(Array.isArray(sx) ? sx : [sx]),
-      ]}
-    >
-      {TABS.map((x) => (
-        <Tab key={x.key} value={x.key} label={t(x.label)} />
-      ))}
-    </Tabs>
+      onChange={onChange}
+      items={TABS.map((x) => ({ key: x.key, label: t(x.label) }))}
+      sx={sx}
+    />
   );
 }
 
