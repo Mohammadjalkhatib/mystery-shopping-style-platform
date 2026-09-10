@@ -25,6 +25,7 @@ import {
   Toolbar,
   Typography,
 } from '@mui/material';
+import type { SxProps, Theme } from '@mui/material/styles';
 import type { Verdict } from '@msp/shared';
 import type { TranslationKey } from '../i18n/strings.js';
 import { useCallback, useEffect, useState } from 'react';
@@ -40,6 +41,84 @@ import { AccountsTab } from './AccountsTab.js';
 import { TasksTab } from './TasksTab.js';
 
 type Filter = 'all' | Verdict;
+type ConsoleTab = 'overview' | 'visits' | 'people' | 'tasks' | 'accounts';
+
+/**
+ * The console's sections, in the order they are used.
+ *
+ * `accounts` is last because it is the least-used: accounts are created once and then not looked
+ * at, whereas the visit feed is read every day. "Accounts" and not "People" -- the People tab
+ * answers a different question (who needs looking at) and merging the two would put results and
+ * sign-ins on one screen.
+ */
+const TABS: { key: ConsoleTab; label: TranslationKey }[] = [
+  { key: 'overview', label: 'console.dashboard.tabOverview' },
+  { key: 'visits', label: 'console.tabVisits' },
+  { key: 'people', label: 'console.people.tab' },
+  { key: 'tasks', label: 'console.tabTasks' },
+  { key: 'accounts', label: 'console.accounts.tab' },
+];
+
+/**
+ * The section nav, as pills in the app bar.
+ *
+ * Still MUI `Tabs` underneath rather than a row of buttons. The pills are a restyle -- the
+ * indicator is hidden and the selected state is a tint instead of an underline -- but the
+ * tablist role and the arrow-key navigation that comes with it are not something to give up for
+ * a shape. A hand-rolled version would have to reimplement both.
+ *
+ * Rendered twice by the caller, once inline in the toolbar and once as a second row below `lg`,
+ * with the inactive one fully `display: none` so only one tablist is ever in the a11y tree.
+ */
+function ConsoleNav({
+  tab,
+  onChange,
+  sx,
+}: {
+  tab: ConsoleTab;
+  onChange: (t: ConsoleTab) => void;
+  sx?: SxProps<Theme>;
+}) {
+  const t = useT();
+  return (
+    <Tabs
+      value={tab}
+      onChange={(_e, v: ConsoleTab) => onChange(v)}
+      variant="scrollable"
+      allowScrollButtonsMobile
+      sx={[
+        {
+          minHeight: 0,
+          '& .MuiTabs-indicator': { display: 'none' },
+          '& .MuiTabs-flexContainer': { gap: '2px' },
+          '& .MuiTab-root': {
+            minHeight: 0,
+            minWidth: 0,
+            px: 1.5,
+            py: 0.75,
+            borderRadius: `${qa.radius.sm}px`,
+            textTransform: 'none',
+            fontSize: '0.875rem',
+            fontWeight: 500,
+            color: 'text.secondary',
+            transition: 'background-color 150ms',
+            '&:hover': { bgcolor: qa.neutral[100] },
+            '&.Mui-selected': {
+              color: 'primary.main',
+              fontWeight: 600,
+              bgcolor: qa.teal[100],
+            },
+          },
+        },
+        ...(Array.isArray(sx) ? sx : [sx]),
+      ]}
+    >
+      {TABS.map((x) => (
+        <Tab key={x.key} value={x.key} label={t(x.label)} />
+      ))}
+    </Tabs>
+  );
+}
 
 /** Labels come from the dictionary at render time, so the key is what is stable here. */
 const FILTERS: { key: Filter; label: TranslationKey }[] = [
@@ -165,9 +244,7 @@ function AttentionBand({ count, onReview }: { count: number; onReview: () => voi
 export function Console() {
   const { user, logout } = useAuth();
   const t = useT();
-  const [tab, setTab] = useState<'overview' | 'visits' | 'people' | 'tasks' | 'accounts'>(
-    'overview',
-  );
+  const [tab, setTab] = useState<ConsoleTab>('overview');
   const [filter, setFilter] = useState<Filter>('all');
   const [rows, setRows] = useState<VisitRow[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -241,11 +318,24 @@ export function Console() {
         <Toolbar sx={{ gap: { xs: 1, sm: 2 }, minHeight: { xs: 56, sm: 64 } }}>
           <Typography
             variant="h3"
-            sx={{ fontSize: { xs: '1rem', sm: '1.1rem' }, flexGrow: 1, minWidth: 0 }}
+            sx={{ fontSize: { xs: '1rem', sm: '1.1rem' }, minWidth: 0, flexShrink: 0 }}
             noWrap
           >
             {t('console.title')}
           </Typography>
+
+          {/*
+            Inline with the title from `lg` up, where there is room for five pills plus the
+            status, the account and the sign-out without crushing any of them. Below that it
+            moves to its own row under this toolbar -- see after `</Toolbar>`.
+          */}
+          <ConsoleNav
+            tab={tab}
+            onChange={setTab}
+            sx={{ display: { xs: 'none', lg: 'flex' }, marginInlineStart: '8px' }}
+          />
+
+          <Box sx={{ flexGrow: 1, minWidth: 0 }} />
           <Chip
             size="small"
             variant="outlined"
@@ -288,6 +378,23 @@ export function Console() {
             {t('common.signOut')}
           </Button>
         </Toolbar>
+
+        {/*
+          The same nav, on its own row, below `lg`. Still inside the `AppBar`, so it stays stuck
+          to the top when the visit list scrolls -- which is the point of moving it up here.
+          Scrollable rather than wrapped: five pills wrap to two rows at 360 px and push the
+          content down by a whole row for the life of the session.
+        */}
+        <Box
+          sx={{
+            display: { xs: 'block', lg: 'none' },
+            borderTop: `1px solid ${qa.neutral[100]}`,
+            px: { xs: 1, sm: 2 },
+            py: 0.75,
+          }}
+        >
+          <ConsoleNav tab={tab} onChange={setTab} />
+        </Box>
       </AppBar>
 
       <Container
@@ -299,30 +406,10 @@ export function Console() {
         }}
       >
         {/*
-          Two surfaces for the same user: reading verdicts, and authoring the work that
-          produces them. Tabs rather than routes, because App.tsx routes by role and there is
-          no URL worth sharing -- every screen is scoped to the signed-in account anyway.
+          The nav that used to live here is now in the `AppBar` above. Tabs rather than routes,
+          because App.tsx routes by role and there is no URL worth sharing -- every screen is
+          scoped to the signed-in account anyway.
         */}
-        <Tabs
-          value={tab}
-          onChange={(_e, v: 'overview' | 'visits' | 'people' | 'tasks' | 'accounts') => setTab(v)}
-          variant="scrollable"
-          allowScrollButtonsMobile
-          sx={{ mb: 2 }}
-        >
-          <Tab value="overview" label={t('console.dashboard.tabOverview')} />
-          <Tab value="visits" label={t('console.tabVisits')} />
-          <Tab value="people" label={t('console.people.tab')} />
-          <Tab value="tasks" label={t('console.tabTasks')} />
-          {/*
-            Last, because it is the least-used tab: accounts are created once and then not
-            looked at, whereas the visit feed is read every day. "Accounts" and not "People" --
-            the People tab answers a different question (who needs looking at) and merging the
-            two would put results and sign-ins on one screen.
-          */}
-          <Tab value="accounts" label={t('console.accounts.tab')} />
-        </Tabs>
-
         {tab === 'overview' && <Dashboard />}
         {tab === 'people' && <People />}
         {tab === 'tasks' && <TasksTab />}

@@ -2476,3 +2476,42 @@ theme, console, drawer and on-site screen are confirmed good in a browser — th
 **Open.** The ready screen's map and its three-beat advice split are still not built (both new
 work, not restyles). The console's venue/participant search still needs a server change. The
 design canvas still needs re-saving to match what was accepted.
+
+## `feat/console-topnav` — the section nav moves into the app bar
+
+**Decision:** D-047.
+
+**What exists now.** `ConsoleNav` renders the five sections as tinted pills. It is inline in the
+`Toolbar` from `lg` up and on a second row inside the same `AppBar` below that, so the nav is
+sticky at every width instead of scrolling away with the visit list. `TABS` and `ConsoleTab` are
+named exports of the module's top scope; the `useState` union is now `ConsoleTab` rather than the
+five strings written out again.
+
+**Still MUI `Tabs`.** The pills are a restyle — `.MuiTabs-indicator` hidden, `.Mui-selected`
+tinted. The tablist role and arrow-key navigation come with it free and are not worth
+reimplementing for a shape. Same call as `Rating` over pills in D-046.
+
+**I reintroduced the `ms:` bug and caught it in the same turn.** Wrote `ms: 1` on the inline
+nav's `sx` — the Bootstrap shorthand MUI does not implement, documented two branches ago in this
+same file. It typechecks and silently emits nothing. Now `marginInlineStart: '8px'`. The RTL grep
+is the thing that would have caught it; run it before every commit that touches layout:
+
+    grep -nE "(^|[ {,])(ml|mr|pl|pr|ms|me)[[:space:]]*:|borderLeft[[:space:]]*:|borderRight[[:space:]]*:" <file>
+
+**Files.**
+
+- `apps/web/src/pages/Console.tsx`: `ConsoleTab`, `TABS` and `ConsoleNav` added; the nav removed
+  from the `Container` and rendered twice in the `AppBar`; `SxProps`/`Theme` types imported
+- `docs/DECISIONS.md`: D-047
+
+**Verified.** `tsc --noEmit` clean, `vite build` clean, full suite 643/643, RTL grep clean.
+
+**Open / worth knowing.** The `lg` breakpoint for switching between inline and second-row was
+counted, not measured — five pills plus the status chip, account name and sign-out. Adjust it
+first if it looks tight when someone actually opens a 1024 px window.
+
+A **sidebar option** is drawn on the design canvas (`SidebarOption.dc.html`, console page) and is
+NOT built. Gemini-shaped: flush-left rail, hamburger collapse, destinations list, account at the
+bottom. Deliberately light rather than dark. The tradeoff is on the artboard's note — it buys a
+place for the queue count and the account, it costs 248 px of table width and a second responsive
+mode, because below ~900 px it has to become a drawer.
