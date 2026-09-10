@@ -1768,3 +1768,48 @@ the click-to-fill habit loses it. If a reviewer reports friction, the cheapest a
 line of helper text naming the README, not the chips coming back. Nothing about credential
 handling actually improved — the accounts, the shared `demo1234` and the absence of a reset flow
 are all exactly as D-037 left them; this only stops the UI from announcing them.
+
+## D-039: The brand comes from theQA's own tokens, read off their stylesheet
+
+**Date:** 2026-09-10
+**Status:** accepted
+
+**Decision.** `apps/web/src/theme/theme.ts` now carries theQA's real design tokens, transcribed
+from the `--qa-*` custom properties theqa.io publishes in its Next.js CSS chunks. The primary is
+`--qa-teal-700` `#15868c`, not the placeholder green; the type face is IBM Plex Sans Arabic for
+both scripts; radii, shadows, motion curves and line-heights come across too. The font is now
+actually loaded, which it never was before.
+
+**Context.** The theme had shipped since the first UI commit with a comment saying its hexes were
+placeholders that "should not be trusted", and nobody replaced them. Worse, `Inter` sat at the
+front of the font stack and was never fetched by anything, so every screen rendered in whatever
+`system-ui` resolved to. The app did not look like theQA's product because none of it was
+theQA's. A prior attempt to read the site failed because theqa.io is client-rendered.
+
+**Alternatives considered.**
+
+- *Read the rendered DOM with browser automation and copy computed styles.* The obvious route
+  and the one the old comment prescribed. Blocked: the Chrome extension was not connected. Also
+  weaker than what we got — computed styles give you the handful of values you thought to
+  inspect, whereas the stylesheet gives the whole authored token layer including the steps
+  nobody would have thought to sample.
+- *Keep guessing, but guess better.* Pick a teal by eye from a screenshot. Rejected because the
+  failure here was never the quality of the guess, it was that a guess was in the tree at all
+  while claiming in a comment to be provisional. A better guess has exactly the same problem.
+- *Take purple `--qa-purple-500` as the primary.* Genuinely arguable: theQA ships teal and purple
+  as equal full ramps and purple is the more distinctive colour. Lost on evidence — `#15868c` is
+  the single colour literal in the served HTML, spent on the app-shell spinner, which is the one
+  piece of chrome they paint before their own app boots.
+- *Add `@fontsource/ibm-plex-sans-arabic` and self-host, as theqa.io does.* The better end state:
+  no third-party request, no FOUT, works offline in the Docker demo. Rejected for now only
+  because it needs a dependency (§6) and a `<link>` needs none.
+
+**Consequences.** The web app now has a hard runtime dependency on Google Fonts; offline or with
+that host blocked it falls back to `system-ui` and looks like it did before. That is the trade we
+took to avoid a dependency, and self-hosting is the fix when someone wants to spend one. These
+tokens are a transcription of a live site, so they will silently go stale if theQA rebrands —
+the source URLs and the read date are in the file header so the next person can re-read rather
+than re-guess. `verdictChartPalette` is now knowingly inconsistent: its values were validated
+against a brand green that no longer exists, and they are left untouched with a STALE notice
+rather than hand-edited, because re-deriving them means re-running the dataviz validator's six
+checks, not picking new hexes by eye.
