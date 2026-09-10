@@ -2306,3 +2306,42 @@ drawer, all merged to `main` and deployed. It remains the biggest open risk on t
 they carry the Arabic pass, so every layout change there has to survive `dir="rtl"`.
 `verdictChartPalette` is still STALE. The mockup's venue/participant search box is still not
 built and still needs a server change.
+
+## `fix/chart-palette-revalidation` — the STALE chart palette is re-derived
+
+**Decision:** D-043, which supersedes the chart half of D-039.
+
+**What exists now.** `verdictChartPalette` is `--qa-teal-600` `#1ea8af`, `--qa-yellow-800`
+`#a77f26`, `--qa-red-800` `#ad1f2a`. `qa.yellow[800]` was added to the token layer to supply it.
+The STALE notice is gone; the comment now records the validator result and the date.
+
+**The finding worth keeping.** The brand primary `--qa-teal-700` cannot be used in a chart — it
+fails the chroma floor at 0.092 and reads as gray. That is the *same* failure the old brand green
+had, for the same structural reason: a colour chosen to sit quietly behind UI chrome is chosen to
+be low-chroma, and a data mark needs the opposite. Two different brands, same trap. Do not
+"simplify" this by pointing the chart palette at `palette.primary.main`.
+
+Five off-ramp teals were tested to see whether chroma and 3:1 contrast could both be met
+(`#0d8a91`, `#00858f`, `#0a7f88`, `#008b94`, `#127e86`). All cleared contrast, all failed chroma,
+topping out at 0.099. Teal in sRGB will not hold chroma >= 0.1 while dark enough for 3:1 on white.
+That is a property of the hue, not a search failure — do not redo this hunt.
+
+**Files.**
+
+- `apps/web/src/theme/theme.ts`: `qa.yellow[800]` added; `verdictChartPalette` re-pointed at
+  token references rather than raw hex, with the validator result in the comment
+- `docs/DECISIONS.md`: D-043
+
+**Verified.** `dataviz/scripts/validate_palette.js "#1ea8af,#a77f26,#ad1f2a" --mode light` —
+lightness band PASS, chroma floor PASS, CVD separation PASS (worst adjacent ΔE 13.1 deutan / 16.7
+tritan), normal-vision floor PASS (worst ΔE 19.5), contrast WARN on the teal at 2.81:1.
+`tsc --noEmit` clean, `vite build` clean, full suite 643/643.
+
+**Load-bearing, and easy to break.** The contrast WARN is not dismissable; it obligates visible
+labels or a table view. `Dashboard`'s legend renders a swatch beside a text label for every
+series and its stat tiles are labelled, which is what discharges it — verified by reading the
+component, not assumed. A chart added later WITHOUT visible labels may not use this palette.
+
+**Open.** The five participant screens are still unported. Nothing in the app has been looked at
+rendered; that risk is unchanged and now covers this too, though a palette is the one thing here
+a validator can check better than an eye can.
