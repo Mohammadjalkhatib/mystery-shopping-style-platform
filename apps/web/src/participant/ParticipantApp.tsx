@@ -1,21 +1,13 @@
 import HistoryIcon from '@mui/icons-material/History';
 import StorefrontIcon from '@mui/icons-material/Storefront';
-import {
-  AppBar,
-  Badge,
-  Box,
-  BottomNavigation,
-  BottomNavigationAction,
-  Button,
-  Paper,
-  Toolbar,
-  Typography,
-} from '@mui/material';
+import { AppBar, Badge, Box, Button, Toolbar, Typography } from '@mui/material';
 import { useCallback, useEffect, useState } from 'react';
 import type { ParticipantNotification } from '../api/client.js';
 import { api, type ParticipantDashboard } from '../api/client.js';
 import { useAuth } from '../auth/AuthContext.js';
 import { useLocale, useT } from '../i18n/LocaleContext.js';
+import { PillTabs } from '../components/PillTabs.js';
+import { qa } from '../theme/theme.js';
 import { History } from './History.js';
 import { NotificationBell } from './NotificationBell.js';
 import { useNotifications } from './useNotifications.js';
@@ -119,8 +111,8 @@ export function ParticipantApp() {
       sx={{
         minHeight: '100dvh',
         bgcolor: 'background.default',
-        // Clear of the fixed bottom navigation plus the home indicator beneath it.
-        pb: 'calc(env(safe-area-inset-bottom, 0px) + 72px)',
+        // Only the home indicator to clear now that the nav is in the app bar.
+        pb: 'env(safe-area-inset-bottom, 0px)',
       }}
     >
       <AppBar position="sticky">
@@ -130,7 +122,7 @@ export function ParticipantApp() {
             sx={{ fontSize: { xs: '1rem', sm: '1.05rem' }, flexGrow: 1, minWidth: 0 }}
             noWrap
           >
-            {tab === 'visit' ? t('participant.yourVisit') : t('participant.history.title')}
+            {t('auth.appName')}
           </Typography>
           {/* The name is what a signed-in participant least needs told; it goes last of the text. */}
           <Typography
@@ -155,6 +147,50 @@ export function ParticipantApp() {
             {t('common.signOut')}
           </Button>
         </Toolbar>
+
+        {/*
+          The section nav, moved out of a fixed bottom bar and into the app bar, so this shell
+          navigates the same way the console does (D-048).
+
+          The thumb-reach argument for a bottom bar still holds for PRIMARY actions, and those
+          have not moved: "Start visit", "End visit" and "Submit report" are all still pinned to
+          the bottom of their screens. Switching between the runner and the history list is not
+          a primary action -- it is done a handful of times a day, and it was occupying the most
+          reachable strip on the screen permanently.
+        */}
+        <Box
+          sx={{
+            borderTop: `1px solid ${qa.neutral[100]}`,
+            px: { xs: 1, sm: 2 },
+            py: 0.75,
+          }}
+        >
+          <PillTabs
+            value={tab}
+            onChange={(v) => {
+              setTab(v);
+              setFocus(null);
+            }}
+            items={[
+              { key: 'visit' as Tab, label: t('participant.nav.visit'), icon: <StorefrontIcon /> },
+              {
+                key: 'history' as Tab,
+                label: t('participant.nav.history'),
+                icon: (
+                  // The dot sits on the tab as well as the bell, because a participant who
+                  // dismissed the sheet without tapping through still has an unread decision.
+                  <Badge
+                    color="secondary"
+                    variant="dot"
+                    invisible={!notifications.items.some((n) => n.kind === 'outcome')}
+                  >
+                    <HistoryIcon />
+                  </Badge>
+                ),
+              },
+            ]}
+          />
+        </Box>
       </AppBar>
 
       {/*
@@ -185,47 +221,6 @@ export function ParticipantApp() {
         />
       </Box>
 
-      <Paper
-        elevation={3}
-        sx={{
-          position: 'fixed',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          pb: 'env(safe-area-inset-bottom, 0px)',
-          borderRadius: 0,
-        }}
-      >
-        <BottomNavigation
-          value={tab}
-          onChange={(_, v: Tab) => {
-            setTab(v);
-            setFocus(null);
-          }}
-          showLabels
-        >
-          <BottomNavigationAction
-            value="visit"
-            label={t('participant.nav.visit')}
-            icon={<StorefrontIcon />}
-          />
-          <BottomNavigationAction
-            value="history"
-            label={t('participant.nav.history')}
-            icon={
-              // The badge sits on the tab as well as the bell, because a participant who
-              // dismissed the sheet without tapping through still has an unread decision.
-              <Badge
-                color="secondary"
-                variant="dot"
-                invisible={!notifications.items.some((n) => n.kind === 'outcome')}
-              >
-                <HistoryIcon />
-              </Badge>
-            }
-          />
-        </BottomNavigation>
-      </Paper>
     </Box>
   );
 }

@@ -21,7 +21,6 @@
     "signInFailed": "فشل تسجيل الدخول"
   },
   "participant": {
-    "yourVisit": "زيارتك",
     "noVisits": "لا توجد لديك زيارات مُسندة حاليًا.",
     "couldNotLoad": "تعذّر تحميل زياراتك",
     "consent": {

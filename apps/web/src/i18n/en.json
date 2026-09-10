@@ -21,7 +21,6 @@
     "signInFailed": "Sign in failed"
   },
   "participant": {
-    "yourVisit": "Your visit",
     "noVisits": "You have no visits assigned right now.",
     "couldNotLoad": "Could not load your visits",
     "consent": {
