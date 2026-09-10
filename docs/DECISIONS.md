@@ -2088,3 +2088,38 @@ sibling of the tracker rather than a parent. Two new copy keys, `visit.endTitle`
 `visit.startedAt`, plus `report.visitClosed`. The consent and report mockups on the canvas now
 show more than the code does, which is a trap for whoever reads them next; the canvas should be
 re-saved to match, or these two rejections will look like unfinished work.
+
+## D-047: The console's section nav moves into the app bar
+
+**Date:** 2026-09-11
+**Status:** accepted
+
+**Decision.** The five section tabs move from the top of the scrolling container into the
+`AppBar`: inline beside the title from `lg` up, and on their own row inside the same `AppBar`
+below that. They stay MUI `Tabs`, restyled as pills — indicator hidden, selected state a teal
+tint instead of an underline.
+
+**Context.** The console mockup put the nav in the top bar and the port never moved it; it stayed
+a default underlined `Tabs` strip sitting above the content, scrolling away with it. Two things
+follow from that. The nav scrolled out of reach on a long visit list, and the app bar carried
+only a title and a sign-out while the row below it did the actual navigating.
+
+**Alternatives considered.**
+
+- *A row of `Button`s styled as pills.* What the mockup literally draws, and simpler markup.
+  Rejected: `Tabs` carries `role="tablist"`, `aria-selected` and arrow-key navigation between
+  sections, and a hand-rolled row would have to reimplement all of it to reach parity. Same call
+  as keeping `Rating` over pill buttons in D-046 — a shape is not worth rebuilding semantics for.
+- *One `ConsoleNav` instance, repositioned with CSS order/wrap rather than rendered twice.*
+  Rejected as fragile: the two positions are in different flex contexts (inside the `Toolbar`
+  and below it), which `order` cannot bridge. The duplicate is `display: none`, so only one
+  tablist is ever in the accessibility tree.
+- *Skip straight to the sidebar.* Rejected as a bigger change than the one asked for, and it is
+  not obviously better — see the sidebar artboard's own note. Drawn, not built.
+
+**Consequences.** Below `lg` the `AppBar` is two rows tall, which costs about 45 px of vertical
+space on a phone permanently — the trade for the nav never scrolling away. The `lg` breakpoint is
+a guess at where five pills plus the status chip, the account name and the sign-out stop fitting;
+it was picked by counting, not measured, and is the first thing to adjust if it looks tight. The
+nav is still `variant="scrollable"`, so on a narrow phone it scrolls sideways rather than
+wrapping to a third row.
