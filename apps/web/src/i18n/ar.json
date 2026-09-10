@@ -18,9 +18,7 @@
     "signingIn": "جارٍ تسجيل الدخول…",
     "username": "اسم المستخدم",
     "password": "كلمة المرور",
-    "signInFailed": "فشل تسجيل الدخول",
-    "demoAccounts": "حسابات تجريبية",
-    "demoPasswordFor": "كلمة المرور للجميع:"
+    "signInFailed": "فشل تسجيل الدخول"
   },
   "participant": {
     "yourVisit": "زيارتك",
