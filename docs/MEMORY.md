@@ -2395,3 +2395,32 @@ that the Arabic layout is right.
 canvas. The mockup's map on the ready screen was not built: it needs tile rendering via
 `slippy.ts` and is new functionality, not a restyle. The venue/participant search box in the
 console mockup still needs a server change.
+
+## `fix/presence-marks-use-icon-library` — correcting a false premise from D-044
+
+**Decision:** D-045, correcting the icon half of D-044. Also `docs/AI-NOTES.md`, 2026-09-11.
+
+**What changed.** `PresenceMark` now renders `PlaceOutlined`, `WarningAmberOutlined` and
+`HelpOutlined` from `@mui/icons-material` instead of three hand-drawn SVG paths.
+
+**Why it matters more than the diff suggests.** D-044 and the component comment both stated the
+app had no icon dependency. `@mui/icons-material` 9.4.0 is a direct dependency and was already
+used by `ParticipantApp`, `NotificationBell` and `History`. The false part was not the
+hand-drawing — that is a defensible choice — it was recording a wrong *reason* in two places
+built to be trusted later. Anyone reading D-044 would have concluded the project deliberately
+has no icon library.
+
+**Facts to keep.**
+
+- `@mui/icons-material` 9.4.0 IS available. Use it; do not hand-roll glyphs.
+- The app's icon style is OUTLINED (bottom nav, bell, history accordion). Match it.
+- `HelpOutline` is a v5 name that v9 dropped. The v9 import is `HelpOutlined`. The v5 spelling
+  fails as a module-not-found build error, not silently.
+- The `color="secondary"` sweep flagged in the previous entry was completed and found NO further
+  bugs. The two remaining uses — `NotificationBell`'s count badge and `ParticipantApp`'s history
+  dot — are small accent marks, which is what a secondary ramp is for. Only the End-visit button
+  was wrong, because it was a large filled action.
+
+**Verified.** `tsc --noEmit` clean, `vite build` clean, full suite 643/643.
+
+**Open.** `Consent.tsx` and `ReportForm` are still unported. Still nothing looked at rendered.

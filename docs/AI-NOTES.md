@@ -213,3 +213,40 @@ green, and the comment was the thing that made it look finished. I do not think 
 "write fewer comments" — it is that a comment claiming an invariant is a claim that needs the
 same verification as a claim about behaviour, and the cheap way to verify it is to try to
 violate the invariant from below, at the layer the comment says is protected.
+
+### 2026-09-11 - I asserted a dependency did not exist, and designed around the gap
+
+**What happened.** Porting the participant screens, I needed three glyphs for the presence
+states. I wrote them as hand-drawn SVG paths and justified it in the component comment: "the app
+has no icon dependency and one is not worth adding for three glyphs." I then repeated that
+justification in D-044's consequences paragraph, and merged both to `main`.
+
+`@mui/icons-material` 9.4.0 is a direct dependency in `apps/web/package.json`. It was already
+imported in three files — `ParticipantApp.tsx`, `NotificationBell.tsx`, `History.tsx` — one of
+which I had read earlier in the same session.
+
+**Why it was wrong.** I never looked. The claim was not a conclusion from evidence, it was an
+assumption I needed in order to justify the thing I was already writing, and I wrote it in the
+confident register the rest of the file uses, which is what made it survive review — my own and
+otherwise. It cost nothing to check: `node -e "require('./apps/web/package.json')"`, one command,
+and the answer was unambiguous. I only ran it because I noticed `StorefrontIcon` in a grep result
+I was reading for a different reason.
+
+Worth naming precisely: the bug was not "hand-drew some icons". Hand-drawn SVG is a defensible
+choice. The bug is that I recorded a **reason** that was false, in two places designed to be
+trusted later — a code comment and a decision entry. A future reader deciding whether to add an
+icon library would have found D-044 saying the project deliberately has none.
+
+**What I did instead.** Swapped the three paths for the outlined MUI icons, corrected the comment
+to say where the icons come from and to point at this note, and added D-045 rather than editing
+D-044 — the decision log is append-only and a wrong entry that gets quietly fixed is worse than
+one that gets visibly superseded. Also learned in passing that `HelpOutline` is a v5 name that v9
+dropped; the import is `HelpOutlined`.
+
+**The pattern.** The AI-NOTES entry above this one is about a comment claiming an invariant that
+did not run. This one is about a comment claiming a fact about the repo that was never checked.
+Same shape: the code worked, the tests were green, and the prose was the part that was wrong. The
+difference is that the invariant one needed a test to catch and this one needed a single grep, so
+the rule I want is narrower and cheaper — **any claim about what the repository contains or does
+not contain gets verified before it is written down, not after.** "The app has no X" is a claim
+about the repo. So is "nothing else uses this". Both are one command away.
