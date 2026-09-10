@@ -1,6 +1,7 @@
-import { Alert, Box, Button, Card, CardContent, Stack, Typography } from '@mui/material';
+import { Box, Button, Stack, Typography } from '@mui/material';
 import { useState } from 'react';
 import { useT } from '../i18n/LocaleContext.js';
+import { qa } from '../theme/theme.js';
 
 /** Bump this when the text below changes. The server records which version was agreed to. */
 export const CONSENT_VERSION = 'v1';
@@ -28,18 +29,31 @@ export function Consent({
 
   return (
     <Box sx={{ p: { xs: 1.5, sm: 2 }, maxWidth: 560, mx: 'auto' }}>
-      <Typography variant="h1" sx={{ fontSize: '1.4rem', mb: 0.5 }}>
+      <Typography variant="h1" sx={{ fontSize: '1.6rem', mb: 0.5 }}>
         {t('participant.consent.title')}
       </Typography>
-      <Typography color="text.secondary" sx={{ mb: 2 }}>
+      <Typography color="text.secondary" variant="body2" sx={{ mb: 2.5 }}>
         {venueName}
       </Typography>
 
-      <Card sx={{ mb: 2 }}>
-        <CardContent>
-          <Stack spacing={2}>
-            <Box>
-              <Typography variant="h3" sx={{ fontSize: '1rem', mb: 0.5 }}>
+      {/*
+        Four bordered sections rather than four headings inside one card.
+
+        The four things this screen has to say are separate claims -- what is taken, what it is
+        for, how long it is kept, what the app cannot do -- and running them together inside a
+        single card made them read as one wall to scroll past. Giving each its own edge is the
+        whole change; the gate below is unchanged and still a single acknowledgement, because
+        per-section gating would be a different consent flow and not a restyle.
+      */}
+          <Stack spacing={1.25} sx={{ mb: 2.5 }}>
+            <Box
+              sx={{
+                p: 1.75,
+                border: `1px solid ${qa.neutral[200]}`,
+                borderRadius: `${qa.radius.md}px`,
+              }}
+            >
+              <Typography variant="h3" sx={{ fontSize: '0.95rem', mb: 0.5 }}>
                 {t('participant.consent.collectedTitle')}
               </Typography>
               <Typography variant="body2" color="text.secondary">
@@ -47,8 +61,14 @@ export function Consent({
               </Typography>
             </Box>
 
-            <Box>
-              <Typography variant="h3" sx={{ fontSize: '1rem', mb: 0.5 }}>
+            <Box
+              sx={{
+                p: 1.75,
+                border: `1px solid ${qa.neutral[200]}`,
+                borderRadius: `${qa.radius.md}px`,
+              }}
+            >
+              <Typography variant="h3" sx={{ fontSize: '0.95rem', mb: 0.5 }}>
                 {t('participant.consent.usedTitle')}
               </Typography>
               <Typography variant="body2" color="text.secondary">
@@ -56,8 +76,14 @@ export function Consent({
               </Typography>
             </Box>
 
-            <Box>
-              <Typography variant="h3" sx={{ fontSize: '1rem', mb: 0.5 }}>
+            <Box
+              sx={{
+                p: 1.75,
+                border: `1px solid ${qa.neutral[200]}`,
+                borderRadius: `${qa.radius.md}px`,
+              }}
+            >
+              <Typography variant="h3" sx={{ fontSize: '0.95rem', mb: 0.5 }}>
                 {t('participant.consent.keptTitle')}
               </Typography>
               <Typography variant="body2" color="text.secondary">
@@ -65,8 +91,14 @@ export function Consent({
               </Typography>
             </Box>
 
-            <Box>
-              <Typography variant="h3" sx={{ fontSize: '1rem', mb: 0.5 }}>
+            <Box
+              sx={{
+                p: 1.75,
+                border: `1px solid ${qa.neutral[200]}`,
+                borderRadius: `${qa.radius.md}px`,
+              }}
+            >
+              <Typography variant="h3" sx={{ fontSize: '0.95rem', mb: 0.5 }}>
                 {t('participant.consent.cannotTitle')}
               </Typography>
               <Typography variant="body2" color="text.secondary">
@@ -74,13 +106,20 @@ export function Consent({
               </Typography>
             </Box>
           </Stack>
-        </CardContent>
-      </Card>
 
+      {/*
+        The prompt is a line of text, not an `Alert`. It is a standing instruction that is true
+        every time this screen loads -- nothing has gone wrong when it shows -- and an Alert's
+        icon and fill announce it as a problem.
+      */}
       {!read && (
-        <Alert severity="info" sx={{ mb: 2 }}>
+        <Typography
+          variant="body2"
+          color="text.secondary"
+          sx={{ textAlign: 'center', mb: 1.5 }}
+        >
           {t('participant.consent.readPrompt')}
-        </Alert>
+        </Typography>
       )}
 
       <Stack spacing={1.5}>

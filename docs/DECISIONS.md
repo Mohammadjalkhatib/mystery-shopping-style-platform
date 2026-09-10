@@ -2047,3 +2047,44 @@ asserted. Recorded in `docs/AI-NOTES.md` for 2026-09-11.
 the trade for not maintaining it. `HelpOutline` — the v5 alias — does not exist in v9; the import
 is `HelpOutlined`, and that is noted at the import because the v5 name is what autocomplete
 memory reaches for and the failure is a build error rather than a silent one.
+
+## D-046: The end-visit confirm is a sheet over the live screen, and consent keeps one gate
+
+**Date:** 2026-09-11
+**Status:** accepted
+
+**Decision.** The end-visit confirm becomes a bottom `Drawer` over the running screen instead of
+replacing the action area in place. The report form loses its card and dividers and gains a
+"Visit closed" line, keeping MUI `Rating` rather than the pill selector the mockup drew. The
+consent screen gets one bordered panel per section and keeps its single read gate.
+
+**Context.** These were the last three artboards on the design canvas. Two of them, as drawn,
+described behaviour the app does not have, and porting them faithfully would have been a product
+change wearing a mockup's clothes.
+
+**Alternatives considered.**
+
+- *Port the consent mockup's per-section read-gating — four independent ticks, "2 left".* This is
+  what the canvas shows, and it is a stricter, more defensible consent flow. Rejected here
+  because it is a change to how consent is obtained, not to how it looks: four pieces of state,
+  new copy in both languages, and a different claim about what the participant attested to. The
+  gate is a product and arguably legal decision and does not belong in a styling pass. Only the
+  visual half was taken. The mockup was mine, and drawing it did not make it agreed.
+- *Port the report mockup's 1-5 numbered pills in place of the stars.* Bigger touch targets and
+  less ambiguous than five stars. Rejected: `Rating` already carries keyboard interaction and
+  screen-reader semantics that hand-built pills would have to reimplement, and a required field
+  in the only form a participant fills is the wrong place to spend that risk for a target-size
+  gain. The rest of that screen's layout was taken.
+- *Keep the confirm inline and just restyle it.* Rejected. The confirm replaced the timer and the
+  presence state with itself, so the state being closed vanished at the moment of deciding about
+  it. A sheet leaves it on screen. `DiscreetMode` already establishes the sibling-overlay pattern
+  on this screen for the same reason: `useVisitTracker` lives in `ActiveVisit` and anything that
+  unmounts that subtree stops capture.
+
+**Consequences.** The end sheet adds a dismissable surface to the one flow that must not be
+ambiguous — a participant can now background the app with the sheet open and return to it, which
+the inline version made impossible. The visit is unaffected either way, since the sheet is a
+sibling of the tracker rather than a parent. Two new copy keys, `visit.endTitle` and
+`visit.startedAt`, plus `report.visitClosed`. The consent and report mockups on the canvas now
+show more than the code does, which is a trap for whoever reads them next; the canvas should be
+re-saved to match, or these two rejections will look like unfinished work.
