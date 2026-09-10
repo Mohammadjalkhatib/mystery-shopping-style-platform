@@ -1855,3 +1855,45 @@ export is also a wider contract than the palette: every rung listed is now somet
 may depend on, so removing one is a breaking change rather than an edit. Deliberately kept
 trimmed to the steps in use for that reason. If a second app or a non-React consumer ever needs
 these, the separate-module alternative above becomes the right shape.
+
+## D-041: The console opens with the review queue, and the disclaimer becomes a footnote
+
+**Date:** 2026-09-10
+**Status:** accepted
+
+**Decision.** The visits tab now opens with a band naming how many visits are waiting on a human
+decision, and `console.disclaimer` moves from a full-width `Alert` above the fold to a caption
+under the table it qualifies. The filter chips become a segmented control, and the verdict is
+drawn in the table as a coloured rail plus a dot rather than a filled chip.
+
+**Context.** The screen had no answer on it. Five tabs, a paragraph-length info alert, and four
+filter chips each wearing a count badge all rendered at the same weight, so the thing a business
+user opens the console to find out — is anything waiting on me — took as much scanning as
+everything else. On a 360 px phone the badged chips wrapped to three rows and pushed the table
+below the fold outright.
+
+**Alternatives considered.**
+
+- *Keep the `Alert` and add the band above it.* The smallest change and it loses nothing.
+  Rejected: two full-width blocks before the first row is worse than one, and the alert is what
+  the band is trying to outrank. Something had to be demoted for anything to be promoted.
+- *Drop the disclaimer from this screen entirely; it is already on every verdict in the drawer.*
+  Tempting, and it is genuinely repeated there. Rejected because the table is where a reader
+  forms the impression that a score is a measurement, and D-001 is worth one caption. Demoting
+  it is a real reduction in prominence and that is the cost, taken deliberately.
+- *Keep the filled `VerdictChip` in the table and add the score as its own column.* Less churn,
+  and the chip already exists. Rejected: a filled colour block in every row of a column turns
+  the column into a bar chart of nothing, and it competes with the venue name, which is what
+  the eye is actually looking for. The chip survives unchanged on the phone cards, where there
+  is no column of siblings for it to compete with.
+- *Build the venue/participant search box from the mockup.* Rejected as out of scope for a
+  restyle: `GET /visits` filters on verdict only, so this is a server change and an index, not a
+  front-end one. Noted rather than half-built behind a disabled input.
+
+**Consequences.** The disclaimer is now materially less likely to be read — that is the point of
+a footnote and it is the honest cost of this change; if a reviewer says the caveat has become too
+quiet, the answer is to make the caption heavier, not to restore the alert. The band reads
+`counts['needs_review']`, which the SSE handler already maintains, so it stays live without a
+refetch; if that count and the list ever disagree the band is the one that will look wrong. The
+table is hidden entirely when empty, so the empty-state sentence is now the only thing rendered
+in that case rather than sitting under a framed header row.
