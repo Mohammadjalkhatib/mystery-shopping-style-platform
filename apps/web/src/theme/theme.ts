@@ -3,68 +3,162 @@ import { createTheme, type ThemeOptions } from '@mui/material/styles';
 /**
  * theQA brand theme.
  *
- * IMPORTANT: the hex values below are PLACEHOLDERS. theqa.io is a client-rendered app and
- * its stylesheet could not be read reliably, so these were not extracted from the real site
- * and should not be trusted. Replace them before the first UI commit.
+ * The values below are theQA's own design tokens, not an approximation. They were read on
+ * 2026-09-10 out of the stylesheets theqa.io ships at
+ * `/_next/static/chunks/{00pnp7o2lj6qg,180p~f7erl0tb}.css`, where the site publishes a full
+ * `--qa-*` custom-property layer on `:root`. theqa.io is a Next.js app and its rendered DOM
+ * is not fetchable, but that token layer is static CSS, so it can be read directly.
  *
- * To get the real values in about a minute:
- *   1. Open https://theqa.io/en, right click the primary button, Inspect.
- *   2. In the Styles pane read the computed `background-color` and `color`.
- *   3. Do the same for a heading (text colour), the page background, and a link.
- *   4. In the Computed tab read `font-family` on a heading and on body text.
- *   5. Read `border-radius` off the primary button. Kuwaiti product sites tend to run
- *      pill-shaped or heavily rounded, and getting that one value right does more for
- *      "this looks like our product" than the palette does.
- *
- * Also check whether their Arabic type is a different family from their Latin type. Most
- * bilingual Gulf products use two, and `typography.fontFamily` needs both in the stack.
- *
- * Record the extracted values in a comment here with the date, so the reviewer can see
- * this was taken from their site rather than guessed.
+ * Everything named `qa.*` in this file is a verbatim copy of one of those tokens. Anything
+ * this file decides on top of them is marked LOCAL and carries a reason. See D-039.
  */
 
-const brand = {
-  // PLACEHOLDER: replace with the real primary from theqa.io
-  primary: '#1F6F5C',
-  primaryDark: '#164F41',
-  primaryLight: '#4E9A88',
+/**
+ * theQA's token layer, transcribed.
+ *
+ * Only the steps this app actually uses are kept. The site defines a full 50..950 ramp for
+ * teal, purple, blue, orange, red, green, yellow, sky and pink; pulling all of them in would
+ * be dead weight, and a half-used ramp invites people to reach for an off-brand step. Add a
+ * step here when a screen needs it, from the source in the header -- never a value picked to
+ * sit between two of these.
+ *
+ * Exported because the MUI palette cannot carry all of it (D-040). `palette` holds the dozen
+ * values MUI itself resolves -- `primary`, `divider`, `text.secondary` -- and a component that
+ * needs a specific rung reaches for `qa` directly:
+ *
+ *     import { qa } from '../theme/theme.js';
+ *     <Box sx={{ bgcolor: qa.neutral[100], borderRadius: `${qa.radius.sm}px` }} />
+ *
+ * Prefer the semantic palette route where one exists: `divider` says what the colour is FOR,
+ * `qa.neutral[200]` only says what it is. Reach here for the rungs the palette has no name for.
+ */
+export const qa = {
+  /** `--qa-neutral-*`. 700 really is `#333` in their CSS, not a 6-digit value. */
+  neutral: {
+    0: '#ffffff',
+    50: '#fafafa',
+    100: '#f5f5f5',
+    200: '#ebebeb',
+    300: '#d6d6d6',
+    400: '#a8a8a8',
+    500: '#7b7b7b',
+    600: '#5c5c5c',
+    700: '#333333',
+    900: '#1f1f1f',
+  },
 
-  // PLACEHOLDER
-  secondary: '#F2A93B',
+  /**
+   * `--qa-teal-*`. This is the brand.
+   *
+   * 700 is the load-bearing one: theqa.io hardcodes `#15868c` as the accent on its app-shell
+   * loading spinner, which is the only colour literal in the served HTML. That is what settles
+   * teal as the primary rather than purple -- both ship as full ramps, but only teal is spent
+   * on chrome the user sees before the app has booted.
+   */
+  teal: {
+    50: '#e3fbfc',
+    100: '#d1f9fb',
+    300: '#84e5ea',
+    500: '#20cad3',
+    600: '#1ea8af',
+    700: '#15868c',
+    800: '#197075',
+    900: '#175f63',
+  },
 
-  // Neutral scale. Safe to keep as-is, these are not brand-specific.
-  ink: '#1A1D1F',
-  inkMuted: '#6B7280',
-  surface: '#FFFFFF',
-  surfaceAlt: '#F7F8F9',
-  border: '#E5E7EB',
-};
+  /** `--qa-purple-*`. The second brand ramp, an accent rather than an action colour. */
+  purple: {
+    100: '#dcd6ff',
+    500: '#7d52f4',
+    700: '#5b2dc9',
+  },
+
+  /**
+   * Status ramps. See `verdictPalette` for why only some of these are reachable.
+   *
+   * The 50 steps are tinted SURFACES, not text or fills -- a review banner's background, the
+   * ground under a rejected row. Nothing legible goes on top of a 700 at that size.
+   */
+  yellow: { 50: '#fffaea', 500: '#f6b51e', 700: '#c89a2c' },
+  red: { 50: '#ffeaec', 700: '#d02633', 800: '#ad1f2a' },
+
+  /** `--qa-radius-*`. */
+  radius: { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, full: 9999 },
+
+  /** `--qa-duration-*` and `--qa-ease-*`. */
+  motion: {
+    fast: '0.15s',
+    base: '0.2s',
+    slow: '0.3s',
+    easeOut: 'cubic-bezier(0.22, 1, 0.36, 1)',
+    easeInOut: 'cubic-bezier(0.45, 0, 0.55, 1)',
+    spring: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
+  },
+
+  /** `--qa-shadow-*`. MUI wants a 25-entry array, so these get spliced in by `buildTheme`. */
+  shadow: {
+    sm: '0 1px 2px 0 #0000000d',
+    base: '0 1px 3px 0 #0000001a, 0 1px 2px -1px #0000001a',
+    md: '0 4px 6px -1px #0000001a, 0 2px 4px -2px #0000001a',
+    lg: '0 10px 15px -3px #0000001a, 0 4px 6px -4px #0000001a',
+    xl: '0 20px 25px -5px #0000001a, 0 8px 10px -6px #0000001a',
+  },
+
+  /** `--qa-lh-*` and `--qa-ls-*`. */
+  lineHeight: { title: 1.1, compact: 1.2, body: 1.5 },
+  letterSpacing: { tight: '-0.01em', none: '0', uppercase: '0.08em' },
+} as const;
+
+/**
+ * `--font-primary`, verbatim.
+ *
+ * One family covers both scripts. theqa.io sets IBM Plex Sans Arabic as its only text face and
+ * typesets its Latin copy in it too, so matching them means dropping the Inter that used to sit
+ * at the front of this stack. That also unblocks the Arabic pass: with Inter first, Arabic only
+ * reached Plex by falling through, which is not the same thing as being set in it.
+ */
+const fontFamily = [
+  '"IBM Plex Sans Arabic"',
+  'ui-sans-serif',
+  'system-ui',
+  '-apple-system',
+  'sans-serif',
+].join(',');
 
 /**
  * Verification verdict colours.
  *
- * These are deliberately NOT green / red. The whole point of D-001 is that the system does
- * not claim certainty, and a green tick undoes that in the UI no matter what the copy says.
- * `auto_verified` reads as a confident neutral, `needs_review` as an amber that invites
- * attention rather than alarm.
+ * These are deliberately not a green tick and a red cross. The whole point of D-001 is that the
+ * system does not claim certainty, and a green tick undoes that in the UI no matter what the
+ * copy says. theQA's palette does contain `--qa-green-700`, and this is the one place the brand
+ * ramp is deliberately left unused.
+ *
+ * `auto_verified` is the brand teal, which reads as a confident neutral rather than a pass mark.
+ * `needs_review` is `--qa-yellow-700`, an amber that invites attention rather than alarm.
+ * `rejected` is `--qa-red-800`; a rejection is a real negative and is allowed to look like one.
  *
  * The strings shown next to these are always "consistent with a genuine visit", never
  * "verified". Do not let the UI overstate what the engine can support.
  */
 export const verdictPalette = {
-  auto_verified: { main: brand.primary, contrastText: '#FFFFFF' },
-  needs_review: { main: '#B7791F', contrastText: '#FFFFFF' },
-  rejected: { main: '#9B2C2C', contrastText: '#FFFFFF' },
+  auto_verified: { main: qa.teal[700], contrastText: '#FFFFFF' },
+  needs_review: { main: qa.yellow[700], contrastText: '#FFFFFF' },
+  rejected: { main: qa.red[800], contrastText: '#FFFFFF' },
 } as const;
 
 /**
  * The same three states, re-stepped for charts.
  *
- * The brand green is deliberately low-chroma for UI chrome, and at that chroma it reads as GRAY
- * in a chart -- it failed the palette validator's chroma floor outright. These values pass all
- * six checks against the chart surface (lightness band, chroma floor, CVD separation, normal
- * vision floor, contrast). Chrome and data have different jobs; sharing one value would mean one
- * of them is wrong. Verified with the dataviz validator, not by eye.
+ * STALE -- these need a re-run through the dataviz validator. They are left unchanged on
+ * purpose rather than re-guessed by eye.
+ *
+ * The original justification for `#0F7A55` was that the brand green is too low-chroma for a
+ * chart and reads as gray there. That premise no longer holds: the brand is teal, not green,
+ * and `--qa-teal-700` sits at a different hue and chroma entirely. The six checks (lightness
+ * band, chroma floor, CVD separation, normal-vision floor, contrast against the chart surface)
+ * have not been re-run against a teal-anchored set, so nothing here is trustworthy yet.
+ *
+ * Do not hand-edit these. Re-derive them with the validator, then delete this notice.
  */
 export const verdictChartPalette = {
   auto_verified: '#0F7A55',
@@ -78,43 +172,102 @@ const options: ThemeOptions = {
   palette: {
     mode: 'light',
     primary: {
-      main: brand.primary,
-      dark: brand.primaryDark,
-      light: brand.primaryLight,
+      main: qa.teal[700],
+      dark: qa.teal[900],
+      light: qa.teal[500],
       contrastText: '#FFFFFF',
     },
-    secondary: { main: brand.secondary },
-    background: { default: brand.surfaceAlt, paper: brand.surface },
-    text: { primary: brand.ink, secondary: brand.inkMuted },
-    divider: brand.border,
+    secondary: {
+      main: qa.purple[500],
+      dark: qa.purple[700],
+      light: qa.purple[100],
+      contrastText: '#FFFFFF',
+    },
+    warning: { main: qa.yellow[700], light: qa.yellow[500] },
+    error: { main: qa.red[800], light: qa.red[700] },
+    background: { default: qa.neutral[50], paper: qa.neutral[0] },
+    text: {
+      primary: qa.neutral[900],
+      secondary: qa.neutral[600],
+      disabled: qa.neutral[400],
+    },
+    divider: qa.neutral[200],
+    action: { hover: qa.neutral[100], selected: qa.teal[100] },
   },
 
   typography: {
-    // PLACEHOLDER: replace the first entry with theQA's real family. Keep an Arabic
-    // family in the stack, the participant screens get an Arabic pass.
-    fontFamily: [
-      'Inter',
-      '"IBM Plex Sans Arabic"',
-      'system-ui',
-      '-apple-system',
-      'sans-serif',
-    ].join(','),
-    h1: { fontSize: '2rem', fontWeight: 700, letterSpacing: '-0.02em' },
-    h2: { fontSize: '1.5rem', fontWeight: 700, letterSpacing: '-0.01em' },
-    h3: { fontSize: '1.25rem', fontWeight: 600 },
+    fontFamily,
+    fontWeightRegular: 400,
+    fontWeightMedium: 500,
+
+    /**
+     * LOCAL: their heading steps, entered one rung down.
+     *
+     * theQA's scale runs `--qa-h1-size: 3.5rem` down to `--qa-h6-size: 1.25rem`, which is sized
+     * for a marketing page. A console screen opening at 3.5rem would be absurd, so h1 here takes
+     * their h4 step, h2 their h5, h3 their h6. The ratios and the line-heights are theirs; only
+     * the entry point into the scale is ours.
+     */
+    h1: {
+      fontSize: '2rem',
+      fontWeight: 700,
+      lineHeight: qa.lineHeight.title,
+      letterSpacing: qa.letterSpacing.tight,
+    },
+    h2: {
+      fontSize: '1.5rem',
+      fontWeight: 700,
+      lineHeight: qa.lineHeight.compact,
+      letterSpacing: qa.letterSpacing.tight,
+    },
+    h3: {
+      fontSize: '1.25rem',
+      fontWeight: 600,
+      lineHeight: qa.lineHeight.compact,
+    },
+    body1: { fontSize: '1rem', lineHeight: qa.lineHeight.body },
+    body2: { fontSize: '0.875rem', lineHeight: qa.lineHeight.body },
+    caption: { fontSize: '0.75rem', lineHeight: qa.lineHeight.body },
+    overline: {
+      fontSize: '0.75rem',
+      fontWeight: 500,
+      letterSpacing: qa.letterSpacing.uppercase,
+    },
     button: { textTransform: 'none', fontWeight: 600 },
   },
 
   shape: {
-    // PLACEHOLDER: match theirs. See the note at the top.
-    borderRadius: 12,
+    borderRadius: qa.radius.md,
+  },
+
+  transitions: {
+    duration: {
+      shortest: 150,
+      shorter: 150,
+      short: 200,
+      standard: 200,
+      complex: 300,
+      enteringScreen: 200,
+      leavingScreen: 150,
+    },
+    easing: {
+      easeInOut: qa.motion.easeInOut,
+      easeOut: qa.motion.easeOut,
+      easeIn: qa.motion.easeInOut,
+      sharp: qa.motion.easeOut,
+    },
   },
 
   components: {
     MuiButton: {
       defaultProps: { disableElevation: true },
       styleOverrides: {
-        root: { borderRadius: 999, paddingInline: 20, paddingBlock: 10 },
+        root: {
+          borderRadius: qa.radius.full,
+          paddingInline: 20,
+          paddingBlock: 10,
+          transition: `background-color ${qa.motion.base} ${qa.motion.easeOut}`,
+        },
         // The participant's primary action is "start visit" and later "end visit",
         // both of which need to be unmissable on a phone held one-handed in a shop.
         sizeLarge: { minHeight: 56, fontSize: '1rem' },
@@ -123,20 +276,62 @@ const options: ThemeOptions = {
     MuiCard: {
       defaultProps: { elevation: 0 },
       styleOverrides: {
-        root: { border: `1px solid ${brand.border}` },
+        root: {
+          border: `1px solid ${qa.neutral[200]}`,
+          borderRadius: qa.radius.lg,
+        },
       },
     },
     MuiChip: {
-      styleOverrides: { root: { fontWeight: 600 } },
+      styleOverrides: {
+        root: { fontWeight: 600, borderRadius: qa.radius.sm },
+      },
     },
     MuiAppBar: {
       defaultProps: { elevation: 0, color: 'inherit' },
       styleOverrides: {
-        root: { borderBottom: `1px solid ${brand.border}` },
+        root: { borderBottom: `1px solid ${qa.neutral[200]}` },
+      },
+    },
+    MuiPaper: {
+      styleOverrides: {
+        rounded: { borderRadius: qa.radius.lg },
+      },
+    },
+    MuiTableCell: {
+      styleOverrides: {
+        root: { borderBottomColor: qa.neutral[200] },
+        head: { fontWeight: 600, color: qa.neutral[600], backgroundColor: qa.neutral[50] },
+      },
+    },
+    MuiTooltip: {
+      styleOverrides: {
+        tooltip: { backgroundColor: qa.neutral[900], borderRadius: qa.radius.sm },
       },
     },
   },
 };
+
+/**
+ * theQA's shadow scale, mapped onto MUI's 25 elevation slots.
+ *
+ * MUI indexes shadows by elevation number and expects exactly 25 entries. theQA publishes six
+ * named steps, so the named ones are pinned to the elevations MUI actually reaches for and the
+ * tail repeats the largest. Anything above elevation 8 in this app is a menu or a dialog, and
+ * those can all share one shadow.
+ */
+const shadows = [
+  'none',
+  qa.shadow.sm,
+  qa.shadow.sm,
+  qa.shadow.base,
+  qa.shadow.base,
+  qa.shadow.md,
+  qa.shadow.md,
+  qa.shadow.md,
+  qa.shadow.lg,
+  ...Array<string>(16).fill(qa.shadow.xl),
+] as ThemeOptions['shadows'];
 
 /**
  * The theme, for a given text direction.
@@ -146,7 +341,7 @@ const options: ThemeOptions = {
  * the page runs. `document.dir` is set alongside it and does most of the real work (D-022).
  */
 export function buildTheme(direction: 'ltr' | 'rtl' = 'ltr') {
-  return createTheme({ ...options, direction });
+  return createTheme({ ...options, direction, shadows });
 }
 
 /** The default LTR theme, for anything outside the participant flow. */

@@ -2148,3 +2148,56 @@ passes 11/11, which is what guards the two languages having the same key set.
 
 **Open.** First change of the front-end pass; the rest of that list is still to come. Everything
 open from `feat/user-accounts` is unaffected and still open.
+
+## `feat/brand-theme` — the real theQA tokens, and a way for components to reach them
+
+**Decisions:** D-039 (the tokens), D-040 (exported as a plain const, not an augmented theme).
+
+**What exists now.** `apps/web/src/theme/theme.ts` carries theQA's actual design tokens instead
+of the placeholders it had shipped with since the first UI commit. The primary is
+`--qa-teal-700` `#15868c`, not the guessed green; the secondary is `--qa-purple-500` `#7d52f4`,
+not the guessed amber; the neutral ramp, radius scale, shadow scale, motion curves, line-heights
+and letter-spacings are all theirs. The font is IBM Plex Sans Arabic, one family covering both
+scripts, and `apps/web/index.html` now actually loads it.
+
+**Where the values came from.** theqa.io is a Next.js app whose rendered DOM is not fetchable —
+an earlier attempt to read it failed for exactly that reason, and the old header comment said so.
+But the site publishes a full `--qa-*` custom-property layer as static CSS in
+`/_next/static/chunks/{00pnp7o2lj6qg,180p~f7erl0tb}.css`, which can be read directly. That is
+where every value came from, on 2026-09-10. The URLs and the date are in the file header so the
+next person re-reads rather than re-guesses.
+
+**Why teal and not purple.** theQA ships teal and purple as equal full ramps. `#15868c` is the
+only colour literal in the served HTML, spent on the app-shell loading spinner — the one piece of
+chrome they paint before their own app boots. That is the tiebreak; it is recorded in D-039
+because it is the kind of thing that looks arbitrary six months later.
+
+**Files.**
+
+- `apps/web/src/theme/theme.ts`: `qa` added as the transcribed token layer and exported;
+  `palette`, `typography`, `shape`, `transitions` and the component overrides rebuilt on it;
+  `shadows` mapped onto MUI's 25 elevation slots; `verdictPalette` re-pointed at
+  teal-700 / yellow-700 / red-800
+- `apps/web/index.html`: Google Fonts link for IBM Plex Sans Arabic at 400/500/600/700, plus
+  `theme-color` set to the brand teal
+- `docs/DECISIONS.md`: D-039 and D-040 appended
+
+**Now true.** The app renders in theQA's typeface and palette for the first time. Before this,
+`Inter` sat at the front of the font stack and nothing ever fetched it, so every screen fell
+through to `system-ui` — Segoe UI on Windows. That was the single largest reason the UI did not
+look like their product, and it was invisible in code review because the stack *looked* right.
+D-001 still holds: `auto_verified` is the brand teal, deliberately not a green tick.
+
+**Verified.** `tsc --noEmit` clean and `vite build` clean on `apps/web`. All four exports
+(`qa`, `verdictPalette`, `verdictChartPalette`, `buildTheme`) still consumed by their existing
+importers — `VerdictChip`, `OutcomeChip`, `LocaleContext`, `Dashboard`, `People`.
+
+**Open.** `verdictChartPalette` is knowingly STALE and is marked so in the file. Its values were
+validated against a brand green that no longer exists — the whole justification for `#0F7A55`
+was that the brand green read as gray in a chart. They were left untouched rather than
+hand-edited, because re-deriving them means re-running the dataviz validator's six checks, not
+picking new hexes by eye. That is the next small piece of work.
+
+Mockups for the console triage screen, the visit detail drawer and the five participant states
+exist as a design canvas and are the intended target of the front-end pass; nothing in this
+branch ports them. The token export in D-040 is what unblocks that work.
