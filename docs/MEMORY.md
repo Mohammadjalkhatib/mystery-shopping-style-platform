@@ -2424,3 +2424,55 @@ has no icon library.
 **Verified.** `tsc --noEmit` clean, `vite build` clean, full suite 643/643.
 
 **Open.** `Consent.tsx` and `ReportForm` are still unported. Still nothing looked at rendered.
+
+## `feat/end-sheet-and-report` — the last three artboards
+
+**Decision:** D-046. Completes the port from the design canvas.
+
+**What exists now.**
+
+- The end-visit confirm is a bottom `Drawer` over the running screen, with a grab handle, the
+  session summary (venue, start time, locations recorded, elapsed) and the two actions. The
+  clock and the presence block stay visible behind it.
+- `ReportForm` has no card and no dividers: a "Visit closed" line in brand teal, the venue, then
+  rating, notes and photo spaced apart. The character counter moved out of `helperText` and up
+  beside the field label, where the on-screen keyboard is not covering it.
+- `Consent` renders one bordered panel per section instead of four headings inside one card, and
+  the read prompt is a line of text rather than an `Alert`.
+
+**Two mockups were deliberately NOT ported as drawn, and this matters.**
+
+1. Consent's per-section read-gating — four independent ticks, "2 left" — is a different consent
+   flow, not a restyle. It changes what the participant attested to. Left alone; only the visual
+   half was taken.
+2. The report's 1-5 pill selector replaces `Rating`, which would mean hand-building keyboard and
+   screen-reader semantics for a required field. Kept the stars.
+
+Both mockups were drawn by me and drawing them did not make them agreed. **The canvas now shows
+more than the code does** — anyone reading it will think these are unfinished. Re-save it or the
+rejections read as a backlog.
+
+**The v9 icon-alias trap, twice now.** `CheckCircleOutline` does not exist in
+`@mui/icons-material` 9.4.0 either — it is `CheckCircleOutlined`. Same shape as `HelpOutline` ->
+`HelpOutlined` from the previous branch. The v5 names are what memory reaches for. Check
+`ls node_modules/@mui/icons-material/ | grep '^<Name>'` before importing; the failure is a build
+error, so it is loud, but it costs a round trip every time.
+
+**Files.**
+
+- `apps/web/src/participant/VisitPage.tsx`: end sheet as `Drawer`, `ReportForm` restructured,
+  `short` extracted for the counter and the field error, `Drawer` and `CheckCircleOutlined`
+  imported
+- `apps/web/src/participant/Consent.tsx`: bordered sections, prompt de-Alerted, `Card`/
+  `CardContent`/`Alert` imports dropped, `qa` added
+- `apps/web/src/i18n/en.json`, `ar.json`: `visit.endTitle`, `visit.startedAt`,
+  `report.visitClosed`
+- `docs/DECISIONS.md`: D-046
+
+**Verified.** `tsc --noEmit` clean, `vite build` clean, full suite 643/643, i18n 11/11. RTL audit
+clean on both touched files. The app was tested by hand on `main` before this branch, so the
+theme, console, drawer and on-site screen are confirmed good in a browser — this branch is not.
+
+**Open.** The ready screen's map and its three-beat advice split are still not built (both new
+work, not restyles). The console's venue/participant search still needs a server change. The
+design canvas still needs re-saving to match what was accepted.

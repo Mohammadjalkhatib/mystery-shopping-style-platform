@@ -64,6 +64,8 @@
       "screenAwake": "screen kept awake while this page is open",
       "captureRestarted": "capture restarted {count}×",
       "waitingFirstFix": "Waiting for a first fix. This can take a few seconds outdoors and longer inside.",
+      "endTitle": "End this visit?",
+      "startedAt": "Started {time}",
       "endingNotice": "Ending the visit stops location capture. You will write your report next.",
       "endingConfirm": "Yes, end the visit",
       "ending": "Ending…",
@@ -80,6 +82,7 @@
     },
     "report": {
       "title": "Your report",
+      "visitClosed": "Visit closed",
       "rating": "Overall experience",
       "notes": "What did you observe?",
       "notesHint": "Greeting time, staff helpfulness, queue length, cleanliness…",
