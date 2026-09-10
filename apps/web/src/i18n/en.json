@@ -186,6 +186,14 @@
     "reconnecting": "Reconnecting…",
     "stopped": "Stopped",
     "disclaimer": "Verdicts describe how much the evidence supports a visit. They are not proof of presence — see the reasons on each visit.",
+    "attention": {
+      "one": "1 visit is waiting on a human decision",
+      "many": "{count} visits are waiting on a human decision",
+      "hint": "The engine could not settle these on the evidence, so a person decides.",
+      "action": "Review them",
+      "clearTitle": "Nothing is waiting on you",
+      "clearHint": "Every completed visit has a verdict. New ones arrive here on their own."
+    },
     "filters": {
       "all": "All visits",
       "needsReview": "Needs review",
@@ -197,6 +205,9 @@
       "participant": "Participant",
       "ended": "Ended",
       "verdict": "Verdict",
+      "score": "Score",
+      "running": "On site now",
+      "new": "New",
       "empty": "No visits yet. Completed visits appear here on their own."
     },
     "detail": {
