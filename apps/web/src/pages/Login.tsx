@@ -1,50 +1,25 @@
-import {
-  Alert,
-  Box,
-  Button,
-  Card,
-  CardContent,
-  Divider,
-  Stack,
-  TextField,
-  Typography,
-} from '@mui/material';
+import { Alert, Box, Button, Card, CardContent, Stack, TextField, Typography } from '@mui/material';
 import { useState } from 'react';
 import { useLocale } from '../i18n/LocaleContext.js';
-import { api } from '../api/client.js';
 import { useAuth } from '../auth/AuthContext.js';
 
 /**
- * Demo login.
+ * Sign in.
  *
- * The demo accounts are listed on the page on purpose (D-008): this is a demo build with
- * public credentials, and a reviewer should not have to read source to get in. Clicking one
- * fills the form rather than signing in directly, so it stays obvious what is being sent.
- *
- * The list is now held HERE rather than fetched. It used to come from
- * `GET /auth/demo-credentials`, which was unauthenticated and enumerated every account --
- * fine when the roster was a fixed array of twelve fakes, and an open directory of every
- * account on the platform once a business can create its own staff. The endpoint is gone
- * (D-037), so these three names are hard-coded: they are the seeded demo accounts, they are
- * already published in the README, and an account created through the console is deliberately
- * not advertised here.
+ * The page used to list the seeded demo accounts and their shared password, so a reviewer
+ * could click one to fill the form (D-008). That is gone (D-038): the credentials are still
+ * in the README, where a reviewer looks anyway, and a sign-in screen that hands out a
+ * password reads as a toy rather than as the product. The fields start empty for the same
+ * reason -- a form arriving pre-filled with `business` / `demo1234` is the same advertisement
+ * with the password behind dots.
  */
-
-/** The seeded roster, from apps/api/src/auth/demo-users.ts. */
-const DEMO_PASSWORD = 'demo1234';
-const DEMO_ACCOUNTS: { username: string; role: string }[] = [
-  { username: 'admin', role: 'admin' },
-  { username: 'business', role: 'business' },
-  { username: 'user1', role: 'participant' },
-];
 export function Login() {
   const { login } = useAuth();
-  const [username, setUsername] = useState('business');
-  const [password, setPassword] = useState(DEMO_PASSWORD);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const { t, toggle } = useLocale();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const accounts = DEMO_ACCOUNTS;
 
   const submit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
@@ -106,33 +81,6 @@ export function Login() {
               </Button>
             </Stack>
           </form>
-
-          {accounts.length > 0 && (
-            <>
-              <Divider sx={{ my: 3 }}>{t('auth.demoAccounts')}</Divider>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                {t('auth.demoPasswordFor')} <code>demo1234</code>
-              </Typography>
-              <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
-                {accounts.map((a) => (
-                  <Button
-                    key={a.username}
-                    size="small"
-                    variant="outlined"
-                    onClick={() => {
-                      setUsername(a.username);
-                      setPassword(DEMO_PASSWORD);
-                    }}
-                  >
-                    {a.username}
-                    <Typography component="span" variant="caption" sx={{ ml: 0.75, opacity: 0.7 }}>
-                      {a.role}
-                    </Typography>
-                  </Button>
-                ))}
-              </Stack>
-            </>
-          )}
         </CardContent>
       </Card>
     </Box>

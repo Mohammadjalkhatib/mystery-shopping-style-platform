@@ -251,7 +251,8 @@ both CommonJS and both will hit this.
 ## D-008: Demo authentication with real authorization boundaries
 
 **Date:** 2026-09-07
-**Status:** accepted; the authentication half superseded by D-037, the authorization half stands
+**Status:** accepted; the authentication half superseded by D-037, the login-page account list
+removed by D-038, the authorization half stands
 
 **Decision.** Authentication is a hardcoded list of demo accounts — `admin`, `business`, and
 `user1` through `user10`, all with the password `demo1234`. Login returns an HMAC-signed token.
@@ -1725,3 +1726,45 @@ checked that the assignee was a participant but never that they were in the task
 which was unreachable while every account shared one org and becomes cross-tenant data exposure
 the moment a business creates its own. `listParticipants` was unscoped for the same reason. Both
 are now org-scoped with a boundary test each.
+
+---
+
+## D-038: The sign-in screen stops advertising the demo accounts
+
+**Date:** 2026-09-10
+**Status:** accepted. Reverses the "list them on the page" half of D-008; the accounts and the
+shared password themselves are unchanged.
+
+**Decision.** The login page no longer renders the demo-account chips, the shared password, or
+the divider above them, and the username and password fields now start empty instead of
+pre-filled with `business` / `demo1234`. The credentials stay documented in `README.md`, which
+is where a reviewer is already told to look. `auth.demoAccounts` and `auth.demoPasswordFor` are
+deleted from both dictionaries.
+
+**Context.** D-008 put the roster on the page so a reviewer would not have to read source to get
+in, and that was right while the roster was twelve fakes and the README was thin. Since D-037 a
+business creates its own accounts, so the page shows three seeded names out of an open-ended set
+— a partial directory, which is worse than none — and the first screen of the product is a form
+handing out a password. This is the beginning of a front-end pass; the sign-in screen is the
+first thing anyone sees and it should read as the product, not as a fixture.
+
+**Alternatives considered.**
+
+- *Keep the chips but hide them behind `import.meta.env.DEV`.* Tempting, and it keeps the
+  one-click path for local work. Rejected: the deployed demo on Render **is** the thing being
+  reviewed, so the branch that matters is the one where they are hidden, and we would be
+  carrying a code path nobody exercises plus a build-mode difference in the highest-traffic
+  screen — the exact place a mode-only bug goes unnoticed.
+- *Keep the fields pre-filled and drop only the visible list.* The literal minimum, and the
+  password is behind dots anyway. Rejected because a form that arrives filled in is the same
+  advertisement with one extra click removed; and a reviewer who then types their own username
+  over a stale pre-filled password gets a failed login for no visible reason.
+- *Remove the seeded accounts entirely and add a first-run setup flow.* The honest end state.
+  Rejected as out of scope for a front-end pass, and the seed is what makes `docker compose up`
+  work with no manual steps (§7).
+
+**Consequences.** Signing in to the deployed demo now costs a README lookup, and anyone who had
+the click-to-fill habit loses it. If a reviewer reports friction, the cheapest answer is a single
+line of helper text naming the README, not the chips coming back. Nothing about credential
+handling actually improved — the accounts, the shared `demo1234` and the absence of a reset flow
+are all exactly as D-037 left them; this only stops the UI from announcing them.

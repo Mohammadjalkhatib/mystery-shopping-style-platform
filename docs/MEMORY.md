@@ -2109,3 +2109,42 @@ API.
 - Everything still open from `feat/live-presence`: the `dwellSeconds`/`coverageRatio` offline
   flush defect (highest-value engine work left), `clockSkew`, `jitterFingerprint`, and the
   `SessionView` fence disclosure.
+
+---
+
+## `feat/login-polish` — the sign-in screen stops advertising the demo accounts
+
+**Decision:** D-038. Reverses the "list them on the page" half of D-008; the accounts, the shared
+password and the seed are untouched.
+
+**What exists now.** The login page renders a title, a language toggle and two empty fields. The
+demo-account chips, the `Password for all: demo1234` line and the divider above them are gone,
+and the form no longer arrives pre-filled with `business` / `demo1234`. The credentials are still
+in `README.md` (the Demo credentials table and the deployed-URLs table), which is where the
+reviewer guide already points.
+
+**Why it changed now.** D-008 put the roster on the page while it was twelve fakes and the README
+was thin. Since D-037 a business creates its own accounts, so those three names were a PARTIAL
+directory of an open-ended set — worse than none — and the first screen of the product was a form
+handing out a password. This is the start of a front-end pass.
+
+**Files.**
+
+- `apps/web/src/pages/Login.tsx`: the account block, `DEMO_ACCOUNTS`, `DEMO_PASSWORD`, the unused
+  `api` import and the `Divider` import removed; `useState('')` for both fields; the header
+  comment now explains the removal rather than the old rationale
+- `apps/web/src/i18n/en.json`, `ar.json`: `auth.demoAccounts` and `auth.demoPasswordFor` deleted
+  from both, key sets still identical
+- `docs/DECISIONS.md`: D-038 appended; D-008's status line points at it
+
+**Now true.** There is no in-app path to a credential any more. Anyone signing in to the deployed
+demo needs the README. If a reviewer reports friction the cheap answer is one line of helper text
+naming the README, not the chips coming back. Nothing about credential handling actually improved
+— the shared `demo1234` and the absent reset flow are exactly as D-037 left them; the UI just
+stopped announcing them.
+
+**Verified.** `apps/web` builds clean (`tsc --build && vite build`); the i18n dictionary suite
+passes 11/11, which is what guards the two languages having the same key set.
+
+**Open.** First change of the front-end pass; the rest of that list is still to come. Everything
+open from `feat/user-accounts` is unaffected and still open.

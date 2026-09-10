@@ -18,9 +18,7 @@
     "signingIn": "Signing in…",
     "username": "Username",
     "password": "Password",
-    "signInFailed": "Sign in failed",
-    "demoAccounts": "Demo accounts",
-    "demoPasswordFor": "Password for all:"
+    "signInFailed": "Sign in failed"
   },
   "participant": {
     "yourVisit": "Your visit",
