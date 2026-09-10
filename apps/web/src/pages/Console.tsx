@@ -123,7 +123,9 @@ function AttentionBand({ count, onReview }: { count: number; onReview: () => voi
     <Card
       sx={{
         mb: 2,
-        borderLeft: `3px solid ${clear ? verdictPalette.auto_verified.main : verdictPalette.needs_review.main}`,
+        borderInlineStart: `3px solid ${
+          clear ? verdictPalette.auto_verified.main : verdictPalette.needs_review.main
+        }`,
         bgcolor: clear ? qa.teal[50] : qa.yellow[50],
       }}
     >
@@ -393,7 +395,7 @@ export function Console() {
                 <Box
                   component="span"
                   sx={{
-                    ml: 0.75,
+                    marginInlineStart: '6px',
                     fontVariantNumeric: 'tabular-nums',
                     // The queue's own count keeps its colour when it is not the active tab --
                     // it is the one number worth noticing from across the row.
@@ -1001,7 +1003,12 @@ function RollupStat({
         {unit && (
           <Box
             component="span"
-            sx={{ fontSize: '0.75rem', fontWeight: 500, color: 'text.secondary', ms: 0.25 }}
+            sx={{
+              fontSize: '0.75rem',
+              fontWeight: 500,
+              color: 'text.secondary',
+              marginInlineStart: '2px',
+            }}
           >
             {unit}
           </Box>

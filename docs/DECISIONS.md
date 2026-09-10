@@ -1974,3 +1974,45 @@ visible labels is not licensed to use this palette, and the file says so. There 
 near-but-unequal colours per state across the app, which will look like a mistake to anyone who
 does not read the comment — the comment is the mitigation. No dark-mode steps were derived
 because `palette.mode` is `light` and there is no dark surface to validate against.
+
+## D-044: Presence is the participant screen, not a banner on it
+
+**Date:** 2026-09-10
+**Status:** accepted
+
+**Decision.** `PresenceBanner` stops being an MUI `Alert` and becomes a centred block with a
+drawn mark, a headline and a hint, in the brand's colours rather than MUI's semantic set.
+`inside` is `--qa-teal-700`, not a success green. On the same screen the elapsed clock comes out
+of its card, capture health becomes rows instead of a middot-joined sentence, and "End visit"
+stops being a filled `color="secondary"` button.
+
+**Context.** The on-site screen had four `Alert`s that could render at once — presence, the
+background-tab notice, the offline notice, and a permission error — all at identical weight.
+Only one of them tells the participant to do something, and it was the one competing with a
+timer that changes every second. Separately, the brand change in D-039 turned
+`color="secondary"` from a muted amber into `--qa-purple-500`, so the button that stops location
+capture had quietly become the brightest thing on the screen.
+
+**Alternatives considered.**
+
+- *Keep the `Alert` and raise only its severity.* Cheapest. Rejected: severity changes the colour,
+  not the weight, and the problem was that four things looked equally important. Raising presence
+  to `error` would also make `near` and `unknown` — neither of which is a failure — shout.
+- *Use `success` green for `inside`.* What MUI's severity vocabulary pushes you toward, and it is
+  what the old code did. Rejected on D-001 grounds: this screen feeds the verdict that comes out
+  the other end, and a green tick at the start promises a certainty the engine will not deliver.
+  The brand teal reads as confident without claiming proof.
+- *Colour the capture-health rows by severity — red for offline, red for a restart.* Rejected:
+  queued fixes and a capture restart are both normal, already handled, and recoverable. Colouring
+  them as failures makes a working visit look broken to someone who cannot do anything about it.
+  They are amber, and every row says its piece in words so the colour carries nothing alone.
+- *Leave "End visit" filled and just change the colour.* Rejected. Ending is not what the screen
+  wants you to do, it is what you do when finished; a filled button under the thumb is an
+  invitation. Outlined and neutral, with "start" the only filled action in the flow.
+
+**Consequences.** `PresenceBanner` no longer inherits MUI's alert affordances — it is not
+announced as a `role="alert"` any more, which for a value that changes while the page is open is
+arguably a regression for a screen reader and is worth revisiting with a live region. The three
+marks are hand-drawn SVG rather than an icon dependency, so they are ours to maintain. The
+tinted grounds are `qa.*[50]` steps, which means this screen now depends on the token export from
+D-040 rather than the palette alone.

@@ -5,7 +5,6 @@ import {
   Button,
   Card,
   CardContent,
-  Chip,
   CircularProgress,
   Divider,
   Rating,
@@ -20,6 +19,7 @@ import { Consent, CONSENT_VERSION } from './Consent.js';
 import { DiscreetMode } from './DiscreetMode.js';
 import { EvidencePicker } from './EvidencePicker.js';
 import { PresenceBanner } from './PresenceBanner.js';
+import { qa } from '../theme/theme.js';
 import { clearQueue } from './offlineQueue.js';
 import { useVisitTracker } from './useVisitTracker.js';
 
@@ -224,25 +224,85 @@ function ReadyToStart({
 }) {
   const t = useT();
   return (
-    <Box sx={{ p: { xs: 1.5, sm: 2 }, maxWidth: 560, mx: 'auto' }}>
-      <Card>
-        <CardContent>
-          <Typography variant="h1" sx={{ fontSize: '1.3rem', mb: 0.5 }}>
-            {session.venue.name}
-          </Typography>
-          <Typography color="text.secondary" sx={{ mb: 2 }}>
-            {session.venue.indoor ? t('participant.ready.venueIndoor') : t('participant.ready.venueOutdoor')} ·{' '}
-            {t('participant.ready.geofence', { radius: session.venue.radiusM })}
-          </Typography>
-          <Alert severity="info" sx={{ mb: 2 }}>
-            {t('participant.ready.advice')}
-          </Alert>
-          <Button variant="contained" size="large" fullWidth disabled={busy} onClick={onStart}>
-            {busy ? t('participant.ready.starting') : t('participant.ready.start')}
-          </Button>
-        </CardContent>
-      </Card>
+    <Box
+      sx={{
+        p: { xs: 1.5, sm: 2 },
+        maxWidth: 560,
+        mx: 'auto',
+        // The start button sits at the bottom on a phone, under the thumb, rather than
+        // wherever the content happens to end. On anything taller it just centres.
+        minHeight: { xs: 'calc(100dvh - 120px)', sm: 'auto' },
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 2,
+      }}
+    >
+      {/*
+        The venue name is the headline, not a line inside a card. This is the only screen where
+        a participant chooses whether they are in the right place at all, and it used to render
+        at 1.3rem inside a bordered box alongside everything else.
+      */}
+      <Box>
+        <Typography variant="h1" sx={{ fontSize: '1.6rem', mb: 0.5 }}>
+          {session.venue.name}
+        </Typography>
+        <Typography color="text.secondary" variant="body2">
+          {session.venue.indoor
+            ? t('participant.ready.venueIndoor')
+            : t('participant.ready.venueOutdoor')}{' '}
+          · {t('participant.ready.geofence', { radius: session.venue.radiusM })}
+        </Typography>
+      </Box>
+
+      {/*
+        The advice, as a quiet panel rather than a blue info Alert.
+
+        It is the last calm moment before a live session and the only place these rules get
+        read, so it should look like something to read rather than something to dismiss — an
+        `Alert` is shaped like an interruption and this is not one.
+      */}
+      <Box sx={{ p: 2, bgcolor: qa.neutral[50], borderRadius: `${qa.radius.lg}px` }}>
+        <Typography variant="body2" color="text.secondary">
+          {t('participant.ready.advice')}
+        </Typography>
+      </Box>
+
+      <Box sx={{ flexGrow: 1 }} />
+
+      <Button variant="contained" size="large" fullWidth disabled={busy} onClick={onStart}>
+        {busy ? t('participant.ready.starting') : t('participant.ready.start')}
+      </Button>
     </Box>
+  );
+}
+
+/**
+ * One line of capture health.
+ *
+ * `tone` only picks the mark's colour -- every row says its own piece in words, so a participant
+ * who cannot separate the three colours loses nothing. `waiting` is amber rather than red on
+ * purpose: fixes queued offline and a capture restart are both normal, recoverable and already
+ * handled, and colouring them as failures would make a working visit look broken.
+ */
+function HealthRow({ text, tone }: { text: string; tone: 'good' | 'waiting' | 'idle' }) {
+  const colour =
+    tone === 'good' ? 'primary.main' : tone === 'waiting' ? 'warning.main' : 'text.disabled';
+  return (
+    <Stack direction="row" spacing={1.25} sx={{ alignItems: 'flex-start', px: 1.75, py: 1.25 }}>
+      <Box
+        sx={{
+          width: 6,
+          height: 6,
+          borderRadius: '50%',
+          bgcolor: colour,
+          flexShrink: 0,
+          mt: '7px',
+        }}
+      />
+      <Typography variant="body2" color="text.secondary">
+        {text}
+      </Typography>
+    </Stack>
   );
 }
 
@@ -295,29 +355,49 @@ function ActiveVisit({
         venueName={session.venue.name}
       />
 
-      <Card sx={{ mb: 2 }}>
-        <CardContent>
-          <Stack
-            direction="row"
-            sx={{ mb: 1, justifyContent: 'space-between', alignItems: 'center' }}
+      {/*
+        The elapsed clock, unboxed.
+
+        It used to sit in a Card with the venue name and a capturing chip above it, which meant
+        the one number a person on site actually looks at was the third thing in a stack. The
+        venue name is already in the presence banner directly above, so repeating it here was
+        buying nothing; the capturing state moves to the row under the clock, where it reads as
+        a property of the timer rather than a separate badge.
+      */}
+      <Stack spacing={0.5} sx={{ alignItems: 'center', mb: 2.5 }}>
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{ alignItems: 'baseline', justifyContent: 'center' }}
+        >
+          <Typography
+            variant="h1"
+            sx={{ fontSize: '2.75rem', fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}
           >
-            <Typography variant="h3" sx={{ fontSize: '1.1rem' }}>
-              {session.venue.name}
-            </Typography>
-            <Chip
-              size="small"
-              color={t.visible ? 'primary' : 'default'}
-              label={t.visible ? tx('participant.visit.capturing') : tx('participant.visit.paused')}
-            />
-          </Stack>
-          <Typography variant="h1" sx={{ fontSize: '2.2rem', fontVariantNumeric: 'tabular-nums' }}>
             {mins}:{String(secs).padStart(2, '0')}
           </Typography>
           <Typography color="text.secondary" variant="body2">
             {tx('participant.visit.onSite')}
           </Typography>
-        </CardContent>
-      </Card>
+        </Stack>
+        <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
+          <Box
+            sx={{
+              width: 7,
+              height: 7,
+              borderRadius: '50%',
+              flexShrink: 0,
+              bgcolor: t.visible ? 'primary.main' : 'text.disabled',
+            }}
+          />
+          <Typography
+            variant="caption"
+            sx={{ fontWeight: 600, color: t.visible ? 'primary.main' : 'text.secondary' }}
+          >
+            {t.visible ? tx('participant.visit.capturing') : tx('participant.visit.paused')}
+          </Typography>
+        </Stack>
+      </Stack>
 
       {/* Honest status. Each of these is a real condition, not a decorative badge. */}
       {t.permission === 'denied' && (
@@ -342,32 +422,58 @@ function ActiveVisit({
         </Alert>
       )}
 
+      {/*
+        Capture health, as rows rather than one middot-joined sentence.
+
+        Up to five facts were being concatenated into a single line of prose, which on a phone
+        wrapped into an unreadable block exactly when it had the most to say — an offline
+        participant with a restart behind them is the person least able to parse it. The copy
+        keys are unchanged; only the joining is.
+
+        Deliberately quiet and below the fold-line of attention. It reassures; it is not what the
+        participant is here to read, and it must not compete with the presence banner.
+      */}
       <Card sx={{ mb: 2 }}>
-        <CardContent>
-          <Typography variant="body2" color="text.secondary">
-            {/*
-              Count-neutral phrasing ("Locations recorded: 3"), not "3 locations". English
-              needs one plural rule, Arabic needs six, and a pass is not the place to build a
-              plural engine -- so the copy is written to need none.
-            */}
-            {tx('participant.visit.locationsRecorded', { count: t.captured })}
-            {t.lastAccuracyM !== null &&
-              ` · ${tx('participant.visit.lastAccurate', { metres: Math.round(t.lastAccuracyM) })}`}
-            {t.pending > 0 && ` · ${tx('participant.visit.waitingToSend', { count: t.pending })}`}
-            {t.wakeLock && ` · ${tx('participant.visit.screenAwake')}`}
-            {/*
-              Shown rather than hidden. A restart is the only evidence that capture had died
-              rather than that the screen was simply off, and after the visit the two are
-              otherwise indistinguishable.
-            */}
-            {t.restarts > 0 && ` · ${tx('participant.visit.captureRestarted', { count: t.restarts })}`}
-          </Typography>
-          {t.captured === 0 && t.permission === 'granted' && (
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-              {tx('participant.visit.waitingFirstFix')}
-            </Typography>
+        <Stack divider={<Divider />}>
+          {/*
+            Count-neutral phrasing ("Locations recorded: 3"), not "3 locations". English
+            needs one plural rule, Arabic needs six, and a pass is not the place to build a
+            plural engine -- so the copy is written to need none.
+          */}
+          <HealthRow
+            text={tx('participant.visit.locationsRecorded', { count: t.captured })}
+            tone={t.captured > 0 ? 'good' : 'idle'}
+          />
+          {t.lastAccuracyM !== null && (
+            <HealthRow
+              text={tx('participant.visit.lastAccurate', {
+                metres: Math.round(t.lastAccuracyM),
+              })}
+              tone="idle"
+            />
           )}
-        </CardContent>
+          {t.pending > 0 && (
+            <HealthRow
+              text={tx('participant.visit.waitingToSend', { count: t.pending })}
+              tone="waiting"
+            />
+          )}
+          {t.wakeLock && <HealthRow text={tx('participant.visit.screenAwake')} tone="idle" />}
+          {/*
+            Shown rather than hidden. A restart is the only evidence that capture had died
+            rather than that the screen was simply off, and after the visit the two are
+            otherwise indistinguishable.
+          */}
+          {t.restarts > 0 && (
+            <HealthRow
+              text={tx('participant.visit.captureRestarted', { count: t.restarts })}
+              tone="waiting"
+            />
+          )}
+          {t.captured === 0 && t.permission === 'granted' && (
+            <HealthRow text={tx('participant.visit.waitingFirstFix')} tone="idle" />
+          )}
+        </Stack>
       </Card>
 
       {confirming ? (
@@ -393,11 +499,21 @@ function ActiveVisit({
           <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'center' }}>
             {tx('participant.discreet.explain')}
           </Typography>
+          {/*
+            Outlined and neutral, not a filled brand button.
+
+            This was `color="secondary"`, which under the old placeholder palette was a muted
+            amber and is now `--qa-purple-500` — a vivid purple, brighter than the primary, sitting
+            under the thumb on the one action that stops capture. Ending is not the thing this
+            screen wants you to do; it is the thing you do when you are finished. `inherit` keeps
+            it legible without competing with "Start visit" on the screen before it.
+          */}
           <Button
-            variant="contained"
+            variant="outlined"
             size="large"
             fullWidth
-            color="secondary"
+            color="inherit"
+            sx={{ borderColor: 'divider', color: 'text.primary' }}
             onClick={() => setConfirming(true)}
           >
             {tx('participant.visit.end')}
