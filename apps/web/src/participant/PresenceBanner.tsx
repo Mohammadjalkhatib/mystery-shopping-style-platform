@@ -1,3 +1,7 @@
+// `HelpOutlined`, not `HelpOutline` -- v9 dropped the bare alias that v5 shipped.
+import HelpOutlinedIcon from '@mui/icons-material/HelpOutlined';
+import PlaceOutlinedIcon from '@mui/icons-material/PlaceOutlined';
+import WarningAmberOutlinedIcon from '@mui/icons-material/WarningAmberOutlined';
 import { Box, Stack, Typography } from '@mui/material';
 import type { Presence } from '@msp/shared';
 import { useT } from '../i18n/LocaleContext.js';
@@ -151,45 +155,20 @@ export function PresenceBanner({
 /**
  * The mark inside the disc.
  *
- * Drawn rather than imported: the app has no icon dependency and one is not worth adding for
- * three glyphs. Stroke-based on a 20px grid so they scale and take their colour from the state.
+ * These are `@mui/icons-material`, which is already a dependency and already used by
+ * `ParticipantApp`, `NotificationBell` and `History`. An earlier version of this file drew them
+ * by hand on the stated grounds that the app had no icon dependency, which was simply false —
+ * see `docs/AI-NOTES.md`, 2026-09-11, and D-045.
+ *
+ * Outlined variants, to sit with the outlined set the bottom navigation already uses. Colour and
+ * size come from the caller so the mark stays tied to the state rather than to this component.
  */
 function PresenceMark({ mark, colour }: { mark: 'pin' | 'alert' | 'question'; colour: string }) {
-  const common = {
-    width: 30,
-    height: 30,
-    viewBox: '0 0 20 20',
-    fill: 'none',
-    stroke: colour,
-    strokeWidth: 1.7,
-    strokeLinecap: 'round' as const,
-    strokeLinejoin: 'round' as const,
-  };
+  const sx = { fontSize: 30, color: colour } as const;
 
-  if (mark === 'pin') {
-    return (
-      <svg {...common} aria-hidden>
-        <path d="M10 17.5s5.5-4.35 5.5-9a5.5 5.5 0 1 0-11 0c0 4.65 5.5 9 5.5 9Z" />
-        <circle cx="10" cy="8.5" r="2" />
-      </svg>
-    );
-  }
-  if (mark === 'alert') {
-    return (
-      <svg {...common} aria-hidden>
-        <path d="M8.6 2.9 1.9 15a1.6 1.6 0 0 0 1.4 2.4h13.4A1.6 1.6 0 0 0 18.1 15L11.4 2.9a1.6 1.6 0 0 0-2.8 0Z" />
-        <path d="M10 7.5v3.6" />
-        <circle cx="10" cy="13.7" r="0.6" fill={colour} stroke="none" />
-      </svg>
-    );
-  }
-  return (
-    <svg {...common} aria-hidden>
-      <circle cx="10" cy="10" r="7.5" />
-      <path d="M8.1 7.9a2 2 0 1 1 2.7 1.9v1.3" />
-      <circle cx="10.4" cy="13.6" r="0.6" fill={colour} stroke="none" />
-    </svg>
-  );
+  if (mark === 'pin') return <PlaceOutlinedIcon sx={sx} aria-hidden />;
+  if (mark === 'alert') return <WarningAmberOutlinedIcon sx={sx} aria-hidden />;
+  return <HelpOutlinedIcon sx={sx} aria-hidden />;
 }
 
 function Freshness({ at }: { at: number }) {

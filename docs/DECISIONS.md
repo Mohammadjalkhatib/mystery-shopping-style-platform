@@ -2016,3 +2016,34 @@ arguably a regression for a screen reader and is worth revisiting with a live re
 marks are hand-drawn SVG rather than an icon dependency, so they are ours to maintain. The
 tinted grounds are `qa.*[50]` steps, which means this screen now depends on the token export from
 D-040 rather than the palette alone.
+
+## D-045: The presence marks use the icon library that was already installed
+
+**Date:** 2026-09-11
+**Status:** accepted. Corrects the icon half of D-044, whose stated reason was factually wrong.
+
+**Decision.** `PresenceMark` renders `@mui/icons-material` outlined icons —
+`PlaceOutlined`, `WarningAmberOutlined`, `HelpOutlined` — instead of the three hand-drawn SVG
+paths D-044 introduced.
+
+**Context.** D-044's consequences paragraph says the marks are "hand-drawn SVG rather than an
+icon dependency, so they are ours to maintain", and the component carried a comment saying "the
+app has no icon dependency and one is not worth adding for three glyphs". Both were false.
+`@mui/icons-material` 9.4.0 is in `apps/web/package.json` and was already imported by
+`ParticipantApp`, `NotificationBell` and `History`. The premise was never checked; it was
+asserted. Recorded in `docs/AI-NOTES.md` for 2026-09-11.
+
+**Alternatives considered.**
+
+- *Keep the hand-drawn paths and just correct the comment.* The smaller diff, and the paths did
+  render. Rejected: the only argument for hand-drawing was avoiding a dependency that is already
+  there, so with the premise gone there is no argument left — three bespoke SVGs are three things
+  to maintain and restyle in a codebase that has a maintained set for exactly this.
+- *Use the filled variants (`Place`, `Warning`, `Help`).* Rejected for consistency: the bottom
+  navigation and the notification bell use outlined icons, and the presence disc sits on a tinted
+  ground where a filled glyph reads heavier than intended.
+
+**Consequences.** Icon geometry is now MUI's and will move if the library is upgraded, which is
+the trade for not maintaining it. `HelpOutline` — the v5 alias — does not exist in v9; the import
+is `HelpOutlined`, and that is noted at the import because the v5 name is what autocomplete
+memory reaches for and the failure is a build error rather than a silent one.
