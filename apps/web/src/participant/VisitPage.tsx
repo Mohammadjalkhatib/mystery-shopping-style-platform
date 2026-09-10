@@ -1,3 +1,4 @@
+import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined';
 import {
   Alert,
   Snackbar,
@@ -7,6 +8,7 @@ import {
   CardContent,
   CircularProgress,
   Divider,
+  Drawer,
   Rating,
   Stack,
   TextField,
@@ -476,18 +478,106 @@ function ActiveVisit({
         </Stack>
       </Card>
 
-      {confirming ? (
-        <Stack spacing={1.5}>
-          <Alert severity="info">
-            {tx('participant.visit.endingNotice')}
-          </Alert>
-          <Button variant="contained" size="large" fullWidth disabled={busy} onClick={onEnd}>
-            {busy ? tx('participant.visit.ending') : tx('participant.visit.endingConfirm')}
-          </Button>
-          <Button onClick={() => setConfirming(false)}>{tx('participant.visit.notYet')}</Button>
+      {/*
+        The confirm is a sheet OVER this screen, not a replacement for the action area.
+
+        It used to swap the buttons out in place, which meant the thing you were being asked to
+        end — the running clock, the presence state — disappeared at the moment you were deciding
+        about it. Ending is the one irreversible action a participant takes, and the state it
+        closes should still be on screen while they choose.
+
+        `keepMounted` is not needed and would be wrong here: this is a sibling of the tracker,
+        never a parent, so opening and closing it cannot touch capture either way.
+      */}
+      <Drawer
+        anchor="bottom"
+        open={confirming}
+        onClose={() => setConfirming(false)}
+        slotProps={{
+          paper: {
+            sx: {
+              borderRadius: `${qa.radius.xl}px ${qa.radius.xl}px 0 0`,
+              pb: 'calc(env(safe-area-inset-bottom, 0px) + 20px)',
+              px: 2.5,
+              pt: 1.25,
+              maxWidth: 560,
+              mx: 'auto',
+            },
+          },
+        }}
+      >
+        <Stack spacing={2}>
+          {/* Grab handle. Decorative -- the sheet is dismissed by the backdrop or "Not yet". */}
+          <Box
+            sx={{
+              width: 36,
+              height: 4,
+              borderRadius: `${qa.radius.full}px`,
+              bgcolor: 'divider',
+              alignSelf: 'center',
+            }}
+          />
+
+          <Box>
+            <Typography variant="h2" sx={{ fontSize: '1.3rem', mb: 0.75 }}>
+              {tx('participant.visit.endTitle')}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {tx('participant.visit.endingNotice')}
+            </Typography>
+          </Box>
+
+          {/*
+            What is actually being closed. A confirm that names only the verb is a confirm about
+            a word; this one is about a session with a start time and 54 fixes behind it.
+          */}
+          <Stack
+            direction="row"
+            spacing={2}
+            sx={{
+              alignItems: 'center',
+              p: 1.75,
+              bgcolor: qa.neutral[50],
+              borderRadius: `${qa.radius.md}px`,
+            }}
+          >
+            <Box sx={{ minWidth: 0, flexGrow: 1 }}>
+              <Typography variant="body2" sx={{ fontWeight: 600 }} noWrap>
+                {session.venue.name}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {tx('participant.visit.startedAt', {
+                  time: new Date(session.startedAt ?? Date.now()).toLocaleTimeString(),
+                })}
+                {' · '}
+                {tx('participant.visit.locationsRecorded', { count: t.captured })}
+              </Typography>
+            </Box>
+            <Typography
+              sx={{
+                fontVariantNumeric: 'tabular-nums',
+                fontWeight: 700,
+                fontSize: '1.2rem',
+                color: 'primary.main',
+                flexShrink: 0,
+              }}
+            >
+              {mins}:{String(secs).padStart(2, '0')}
+            </Typography>
+          </Stack>
+
+          <Stack spacing={1}>
+            <Button variant="contained" size="large" fullWidth disabled={busy} onClick={onEnd}>
+              {busy ? tx('participant.visit.ending') : tx('participant.visit.endingConfirm')}
+            </Button>
+            <Button size="large" fullWidth onClick={() => setConfirming(false)}>
+              {tx('participant.visit.notYet')}
+            </Button>
+          </Stack>
         </Stack>
-      ) : (
-        <Stack spacing={1.5}>
+      </Drawer>
+
+      <Stack spacing={1.5}>
           <Button
             variant="outlined"
             size="large"
@@ -519,7 +609,6 @@ function ActiveVisit({
             {tx('participant.visit.end')}
           </Button>
         </Stack>
-      )}
     </Box>
   );
 }
@@ -545,12 +634,27 @@ function ReportForm({ session, onSubmitted }: { session: SessionView; onSubmitte
     }
   };
 
+  /** Below the server's minimum. Drives the counter's colour and the field's error state. */
+  const short = notes.length > 0 && notes.trim().length < 10;
+
   return (
     <Box sx={{ p: { xs: 1.5, sm: 2 }, maxWidth: 560, mx: 'auto' }}>
-      <Typography variant="h1" sx={{ fontSize: '1.3rem', mb: 0.5 }}>
+      {/*
+        The visit is already closed and safe before this form is reachable, and saying so first
+        stops the form reading as a test the participant might still fail. It is also the only
+        acknowledgement they get that ending worked.
+      */}
+      <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1 }}>
+        <CheckCircleOutlinedIcon sx={{ fontSize: 18, color: 'primary.main' }} aria-hidden />
+        <Typography variant="body2" sx={{ fontWeight: 600, color: 'primary.main' }}>
+          {t('participant.report.visitClosed')}
+        </Typography>
+      </Stack>
+
+      <Typography variant="h1" sx={{ fontSize: '1.6rem', mb: 0.5 }}>
         {t('participant.report.title')}
       </Typography>
-      <Typography color="text.secondary" sx={{ mb: 2 }}>
+      <Typography color="text.secondary" variant="body2" sx={{ mb: 3 }}>
         {session.venue.name}
       </Typography>
 
@@ -560,39 +664,73 @@ function ReportForm({ session, onSubmitted }: { session: SessionView; onSubmitte
         </Alert>
       )}
 
-      <Card>
-        <CardContent>
-          <Typography component="legend" variant="body2" sx={{ mb: 0.5 }}>
+      {/*
+        Unboxed, and spaced rather than divided.
+
+        The three questions were stacked inside one Card separated by `Divider`s, which made a
+        short form look like a long one — a rule between every field reads as a section break and
+        this is three fields. The Card is gone and the spacing does the same job more quietly.
+
+        The stars stay `Rating`. The mockup drew a row of 1–5 pills, which is a bigger touch
+        target, but `Rating` already carries keyboard and screen-reader semantics that hand-built
+        pills would have to reimplement, and a rating control is the wrong place to spend that
+        risk.
+      */}
+      <Stack spacing={2.5}>
+        <Box>
+          <Typography component="legend" variant="body2" sx={{ fontWeight: 600, mb: 0.75 }}>
             {t('participant.report.rating')}
           </Typography>
-          <Rating value={rating} onChange={(_, v) => setRating(v)} size="large" sx={{ mb: 2 }} />
-          <Divider sx={{ mb: 2 }} />
+          <Rating value={rating} onChange={(_, v) => setRating(v)} size="large" />
+        </Box>
+
+        <Box>
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{ alignItems: 'baseline', justifyContent: 'space-between', mb: 0.75 }}
+          >
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+              {t('participant.report.notes')}
+            </Typography>
+            {/*
+              The counter moves out of `helperText` and up beside the label, where it is visible
+              while typing rather than under a five-row box the keyboard is covering.
+            */}
+            <Typography
+              variant="caption"
+              sx={{
+                fontVariantNumeric: 'tabular-nums',
+                flexShrink: 0,
+                color: short ? 'warning.main' : 'text.disabled',
+              }}
+            >
+              {t('participant.report.notesCounter', { count: notes.trim().length })}
+            </Typography>
+          </Stack>
           <TextField
-            label={t('participant.report.notes')}
             placeholder={t('participant.report.notesHint')}
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             multiline
             minRows={5}
             fullWidth
-            helperText={t('participant.report.notesCounter', { count: notes.trim().length })}
-            error={notes.length > 0 && notes.trim().length < 10}
+            error={short}
           />
-          <Divider sx={{ my: 2 }} />
-          <EvidencePicker sessionId={session.id} onChange={setEvidenceKey} />
-        </CardContent>
-      </Card>
+        </Box>
 
-      <Button
-        variant="contained"
-        size="large"
-        fullWidth
-        sx={{ mt: 2 }}
-        disabled={busy || notes.trim().length < 10}
-        onClick={() => void submit()}
-      >
-        {busy ? t('participant.report.submitting') : t('participant.report.submit')}
-      </Button>
+        <EvidencePicker sessionId={session.id} onChange={setEvidenceKey} />
+
+        <Button
+          variant="contained"
+          size="large"
+          fullWidth
+          disabled={busy || notes.trim().length < 10}
+          onClick={() => void submit()}
+        >
+          {busy ? t('participant.report.submitting') : t('participant.report.submit')}
+        </Button>
+      </Stack>
     </Box>
   );
 }
