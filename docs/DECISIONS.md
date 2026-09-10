@@ -1813,3 +1813,45 @@ than re-guess. `verdictChartPalette` is now knowingly inconsistent: its values w
 against a brand green that no longer exists, and they are left untouched with a STALE notice
 rather than hand-edited, because re-deriving them means re-running the dataviz validator's six
 checks, not picking new hexes by eye.
+
+## D-040: Design tokens are a plain export, not an augmented MUI theme
+
+**Date:** 2026-09-10
+**Status:** accepted
+
+**Decision.** `qa` — theQA's transcribed token layer from D-039 — is exported from
+`theme/theme.ts` as an ordinary named const. Components import it directly for the rungs MUI's
+palette has no name for. The palette keeps the dozen values MUI itself resolves (`primary`,
+`divider`, `text.secondary`), and those stay the preferred route where they exist.
+
+**Context.** D-039 landed the real tokens but left `qa` module-private, so the only reachable
+values were the ones mapped onto MUI's palette. A screen needing `neutral[300]`, `teal[50]`,
+`radius.sm` or a named shadow had nowhere to get it, and the front-end pass would have started
+hardcoding hexes into components — the exact failure D-039 was fixing, one layer down.
+
+**Alternatives considered.**
+
+- *MUI module augmentation (`declare module '@mui/material/styles'`), so tokens ride on the
+  theme as `theme.qa.*`.* The idiomatic MUI answer, and it keeps one object to pass around.
+  Lost on two counts: the tokens are direction-independent but `buildTheme` is called once per
+  direction, so they would be duplicated into both themes for no reason; and in an `sx` prop the
+  augmented form is strictly worse to read — `sx={{ color: (t) => t.qa.neutral[700] }}` against
+  `sx={{ color: qa.neutral[700] }}`.
+- *Extend `palette` with custom keys instead (`palette.neutral`, `palette.brandTeal`).* Keeps
+  everything in one place and needs augmentation anyway. Rejected because MUI's palette entries
+  carry meaning — `main`/`light`/`dark`/`contrastText`, used by component variants — and a raw
+  50..900 ramp shoved in there gets picked up by `color="neutral"` props that then behave oddly.
+  It also cannot hold the non-colour scales, so radius, motion and shadows would need a second
+  mechanism regardless.
+- *A separate `tokens.ts` module, with `theme.ts` importing from it.* Cleaner on paper. Rejected
+  as ceremony at this size: the tokens exist to build the theme, they are read from the same
+  source on the same date, and splitting them puts the provenance comment a file away from the
+  values it vouches for. Worth revisiting if a second consumer appears that has no theme.
+
+**Consequences.** Two ways to reach a colour now coexist, and the boundary between them is a
+convention in a doc comment rather than something the compiler enforces — someone will
+eventually write `qa.neutral[200]` where `divider` was meant, and nothing will complain. The
+export is also a wider contract than the palette: every rung listed is now something a component
+may depend on, so removing one is a breaking change rather than an edit. Deliberately kept
+trimmed to the steps in use for that reason. If a second app or a non-React consumer ever needs
+these, the separate-module alternative above becomes the right shape.

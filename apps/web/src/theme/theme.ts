@@ -18,9 +18,21 @@ import { createTheme, type ThemeOptions } from '@mui/material/styles';
  *
  * Only the steps this app actually uses are kept. The site defines a full 50..950 ramp for
  * teal, purple, blue, orange, red, green, yellow, sky and pink; pulling all of them in would
- * be dead weight, and a half-used ramp invites people to reach for an off-brand step.
+ * be dead weight, and a half-used ramp invites people to reach for an off-brand step. Add a
+ * step here when a screen needs it, from the source in the header -- never a value picked to
+ * sit between two of these.
+ *
+ * Exported because the MUI palette cannot carry all of it (D-040). `palette` holds the dozen
+ * values MUI itself resolves -- `primary`, `divider`, `text.secondary` -- and a component that
+ * needs a specific rung reaches for `qa` directly:
+ *
+ *     import { qa } from '../theme/theme.js';
+ *     <Box sx={{ bgcolor: qa.neutral[100], borderRadius: `${qa.radius.sm}px` }} />
+ *
+ * Prefer the semantic palette route where one exists: `divider` says what the colour is FOR,
+ * `qa.neutral[200]` only says what it is. Reach here for the rungs the palette has no name for.
  */
-const qa = {
+export const qa = {
   /** `--qa-neutral-*`. 700 really is `#333` in their CSS, not a 6-digit value. */
   neutral: {
     0: '#ffffff',
@@ -44,6 +56,7 @@ const qa = {
    * on chrome the user sees before the app has booted.
    */
   teal: {
+    50: '#e3fbfc',
     100: '#d1f9fb',
     300: '#84e5ea',
     500: '#20cad3',
@@ -60,9 +73,14 @@ const qa = {
     700: '#5b2dc9',
   },
 
-  /** Status ramps. See `verdictPalette` for why only some of these are reachable. */
-  yellow: { 500: '#f6b51e', 700: '#c89a2c' },
-  red: { 700: '#d02633', 800: '#ad1f2a' },
+  /**
+   * Status ramps. See `verdictPalette` for why only some of these are reachable.
+   *
+   * The 50 steps are tinted SURFACES, not text or fills -- a review banner's background, the
+   * ground under a rejected row. Nothing legible goes on top of a 700 at that size.
+   */
+  yellow: { 50: '#fffaea', 500: '#f6b51e', 700: '#c89a2c' },
+  red: { 50: '#ffeaec', 700: '#d02633', 800: '#ad1f2a' },
 
   /** `--qa-radius-*`. */
   radius: { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, full: 9999 },
