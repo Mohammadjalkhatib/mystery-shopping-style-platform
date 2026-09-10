@@ -12,6 +12,8 @@ import { EvidenceController } from './evidence.controller.js';
 import { EvidenceService } from './evidence.service.js';
 import { GridFsObjectStore } from './storage/gridfs.store.js';
 import { OBJECT_STORE } from './storage/object-store.js';
+import { seedDemoUsers } from '../../test/seed-users.js';
+import { testDbModule } from '../../test/nest-db.js';
 
 const ORG = 'org-alfa-retail';
 const OTHER_ORG = 'org-someone-else';
@@ -76,11 +78,17 @@ describe('evidence upload', () => {
   beforeAll(async () => {
     mongod = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     conn = await mongoose.createConnection(mongod.getUri('evidence')).asPromise();
+    // Real accounts now back /auth/login (D-037), so the roster has to exist.
+    await seedDemoUsers(conn);
     Sessions = conn.model(Session.name, SessionSchema) as Model<Session>;
     Reports = conn.model(Report.name, ReportSchema) as Model<Report>;
 
     const moduleRef = await Test.createTestingModule({
-      imports: [ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }), AuthModule],
+      imports: [
+        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        testDbModule(conn),
+        AuthModule,
+      ],
       controllers: [EvidenceController],
       providers: [
         EvidenceService,

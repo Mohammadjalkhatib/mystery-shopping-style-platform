@@ -261,6 +261,40 @@
       "topIssueHint": "Fired on {count} of their visits",
       "empty": "No completed visits in this window yet.",
       "tab": "People"
+    },
+    "accounts": {
+      "tab": "Accounts",
+      "title": "Accounts",
+      "subtitleAdmin": "Create business accounts, and the people who sign into them.",
+      "subtitleBusiness": "The people in your organisation who can be assigned visits.",
+      "passwordNotice": "Every account created here uses the password demo1234. There is no email in this build and no password reset — tell the person their username and that password.",
+      "newBusiness": "New business account",
+      "newBusinessHint": "Creates the organisation and its first sign-in together. An organisation with nobody in it cannot be logged into.",
+      "newUser": "New user",
+      "newParticipant": "New participant",
+      "create": "Create",
+      "orgName": "Organisation name",
+      "orgSlug": "Short name",
+      "orgSlugHint": "Becomes the organisation id: {id}. It cannot be changed later.",
+      "org": "Organisation",
+      "orgRequiredHint": "An admin has no organisation, so a new user needs one naming here.",
+      "name": "Name",
+      "username": "Username",
+      "usernameHint": "Lowercase letters, digits, dots, dashes. It becomes the account id and cannot be changed.",
+      "role": "Role",
+      "role_admin": "Admin",
+      "role_business": "Business",
+      "role_participant": "Participant",
+      "active": "Active",
+      "you": "You",
+      "platform": "Platform",
+      "noOrg": "No organisation — sees every one",
+      "deactivateHint": "Deactivate: they can no longer sign in. Their past visits are kept.",
+      "reactivateHint": "Reactivate: they can sign in again.",
+      "deactivated": "{name} can no longer sign in.",
+      "reactivated": "{name} can sign in again.",
+      "businessCreated": "{name} created. They can sign in now with the password above.",
+      "userCreated": "{name} created. They can sign in now with the password above."
     }
   },
   "admin": {
@@ -326,7 +360,9 @@
       "dialogTitle": "Assigned",
       "dialogBody": "{who} now has a pending visit at {venue}. It is waiting in their app and they have been notified.",
       "dialogClose": "Done",
-      "dialogAgain": "Assign another"
+      "dialogAgain": "Assign another",
+      "pickTaskFirst": "Pick a task first.",
+      "noParticipants": "No participants in that organisation yet — create one on the Accounts tab."
     },
     "taskList": {
       "title": "Tasks",

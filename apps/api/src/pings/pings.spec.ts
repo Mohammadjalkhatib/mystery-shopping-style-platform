@@ -16,6 +16,8 @@ import {
 import { Venue } from '../db/schemas/org-venue.schema.js';
 import { PingsController } from './pings.controller.js';
 import { PingsService } from './pings.service.js';
+import { seedDemoUsers } from '../../test/seed-users.js';
+import { testDbModule } from '../../test/nest-db.js';
 
 /**
  * Ping ingest, tested against a real MongoDB.
@@ -83,6 +85,8 @@ describe('ping ingest', () => {
     mongod = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     const uri = mongod.getUri('ping-ingest');
     conn = await mongoose.createConnection(uri).asPromise();
+    // Real accounts now back /auth/login (D-037), so the roster has to exist.
+    await seedDemoUsers(conn);
 
     Pings = conn.model(Ping.name, PingSchema) as Model<Ping>;
     Sessions = conn.model(Session.name, SessionSchema) as Model<Session>;
@@ -101,7 +105,11 @@ describe('ping ingest', () => {
     venueId = String(v._id);
 
     const moduleRef = await Test.createTestingModule({
-      imports: [ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }), AuthModule],
+      imports: [
+        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        testDbModule(conn),
+        AuthModule,
+      ],
       controllers: [PingsController],
       providers: [
         PingsService,

@@ -8,8 +8,8 @@ import {
   ReviewAction,
   VerificationResultDoc,
 } from '../db/schemas/report-verification.schema.js';
-import { findDemoUserById } from '../auth/demo-users.js';
 import { Session } from '../db/schemas/task-session.schema.js';
+import { User } from '../db/schemas/user.schema.js';
 import { ParticipantService } from '../participant/participant.service.js';
 
 export interface VisitRow {
@@ -99,6 +99,7 @@ export class ConsoleService {
     @InjectModel(Report.name) private readonly reports: Model<Report>,
     @InjectModel(ReviewAction.name) private readonly reviews: Model<ReviewAction>,
     @InjectModel(Venue.name) private readonly venues: Model<Venue>,
+    @InjectModel(User.name) private readonly users: Model<User>,
     private readonly participants: ParticipantService,
   ) {}
 
@@ -485,12 +486,35 @@ export class ConsoleService {
       return s2.length % 2 ? s2[mid]! : (s2[mid - 1]! + s2[mid]!) / 2;
     };
 
+    /**
+      * Display names in ONE query, not one per row.
+      *
+      * This used to be an in-process lookup against the demo array, which was free. Since
+      * D-037 it is a collection, and the shape it must not become is a lookup inside the loop
+      * below -- that reads perfectly naturally and is N round trips against the database for
+      * a screen whose whole job is to list everyone.
+      *
+      * A plain `find`, deliberately not an `$lookup` into the session pipeline: `passwordHash`
+      * is `select: false`, and projections do not apply to aggregation stages.
+      */
+     const names = new Map<string, string>();
+     if (byParticipant.size > 0) {
+       const users = await this.users
+         .find({ _id: { $in: [...byParticipant.keys()] } })
+         .select({ displayName: 1 })
+         .lean<{ _id: string; displayName: string }[]>();
+       for (const u of users) names.set(u._id, u.displayName);
+     }
+
     const out: ParticipantStats[] = [];
     for (const [participantId, row] of byParticipant) {
       const visits = row.counts.auto_verified + row.counts.needs_review + row.counts.rejected;
       out.push({
         participantId,
-        displayName: findDemoUserById(participantId)?.displayName ?? participantId,
+        // Falls back to the id: a participant whose account was removed by hand still has
+        // visits, and a blank name column would read as a bug in the stats rather than as a
+        // missing account.
+        displayName: names.get(participantId) ?? participantId,
         visits,
         ...row.counts,
         passRate: visits === 0 ? 0 : row.counts.auto_verified / visits,

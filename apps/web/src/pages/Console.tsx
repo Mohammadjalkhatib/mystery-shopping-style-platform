@@ -34,6 +34,7 @@ import { useT } from '../i18n/LocaleContext.js';
 import { useVisitStream, type VisitEvent } from '../hooks/useVisitStream.js';
 import { Dashboard } from './Dashboard.js';
 import { People } from './People.js';
+import { AccountsTab } from './AccountsTab.js';
 import { TasksTab } from './TasksTab.js';
 
 type Filter = 'all' | Verdict;
@@ -49,7 +50,9 @@ const FILTERS: { key: Filter; label: TranslationKey }[] = [
 export function Console() {
   const { user, logout } = useAuth();
   const t = useT();
-  const [tab, setTab] = useState<'overview' | 'visits' | 'people' | 'tasks'>('overview');
+  const [tab, setTab] = useState<'overview' | 'visits' | 'people' | 'tasks' | 'accounts'>(
+    'overview',
+  );
   const [filter, setFilter] = useState<Filter>('all');
   const [rows, setRows] = useState<VisitRow[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -187,7 +190,7 @@ export function Console() {
         */}
         <Tabs
           value={tab}
-          onChange={(_e, v: 'overview' | 'visits' | 'people' | 'tasks') => setTab(v)}
+          onChange={(_e, v: 'overview' | 'visits' | 'people' | 'tasks' | 'accounts') => setTab(v)}
           variant="scrollable"
           allowScrollButtonsMobile
           sx={{ mb: 2 }}
@@ -196,11 +199,19 @@ export function Console() {
           <Tab value="visits" label={t('console.tabVisits')} />
           <Tab value="people" label={t('console.people.tab')} />
           <Tab value="tasks" label={t('console.tabTasks')} />
+          {/*
+            Last, because it is the least-used tab: accounts are created once and then not
+            looked at, whereas the visit feed is read every day. "Accounts" and not "People" --
+            the People tab answers a different question (who needs looking at) and merging the
+            two would put results and sign-ins on one screen.
+          */}
+          <Tab value="accounts" label={t('console.accounts.tab')} />
         </Tabs>
 
         {tab === 'overview' && <Dashboard />}
         {tab === 'people' && <People />}
         {tab === 'tasks' && <TasksTab />}
+        {tab === 'accounts' && <AccountsTab />}
 
         {tab === 'visits' && (
         <>

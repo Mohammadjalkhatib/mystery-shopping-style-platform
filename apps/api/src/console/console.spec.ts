@@ -22,6 +22,9 @@ import { ParticipantService } from '../participant/participant.service.js';
 import { ConsoleController } from './console.controller.js';
 import { ConsoleService } from './console.service.js';
 import { VisitEventsService } from './visit-events.service.js';
+import { seedDemoUsers } from '../../test/seed-users.js';
+import { testDbModule } from '../../test/nest-db.js';
+import { User, UserSchema } from '../db/schemas/user.schema.js';
 
 /** The org the demo `business` user belongs to, per demo-users.ts. */
 const ORG = 'org-alfa-retail';
@@ -106,6 +109,9 @@ describe('business console', () => {
   beforeAll(async () => {
     mongod = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     conn = await mongoose.createConnection(mongod.getUri('console')).asPromise();
+    // Real accounts now back /auth/login (D-037), so the roster has to exist.
+    await seedDemoUsers(conn);
+    const Users = conn.model(User.name, UserSchema);
 
     Sessions = conn.model(Session.name, SessionSchema) as Model<Session>;
     Results = conn.model(
@@ -128,7 +134,11 @@ describe('business console', () => {
     venueId = String(v._id);
 
     const moduleRef = await Test.createTestingModule({
-      imports: [ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }), AuthModule],
+      imports: [
+        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        testDbModule(conn),
+        AuthModule,
+      ],
       controllers: [ConsoleController],
       providers: [
         ConsoleService,
@@ -165,6 +175,7 @@ describe('business console', () => {
         { provide: getModelToken(Venue.name), useValue: Venues },
         { provide: getModelToken(Report.name), useValue: Reports },
         { provide: getModelToken(ReviewAction.name), useValue: Reviews },
+        { provide: getModelToken(User.name), useValue: Users },
       ],
     }).compile();
 

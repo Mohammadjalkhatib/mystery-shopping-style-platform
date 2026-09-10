@@ -1,6 +1,8 @@
 import mongoose from 'mongoose';
-import { DEMO_CLIENT_ORG_ID } from '../auth/demo-users.js';
+import { DEFAULT_PASSWORD, DEMO_CLIENT_ORG_ID, DEMO_USERS } from '../auth/demo-users.js';
+import { hashPassword } from '../auth/password.js';
 import { ClientOrgSchema, VenueSchema } from './schemas/org-venue.schema.js';
+import { UserSchema } from './schemas/user.schema.js';
 import { AssignmentSchema, SessionSchema, TaskSchema } from './schemas/task-session.schema.js';
 
 /**
@@ -98,6 +100,57 @@ function resolveVenues() {
 /** Matches the demo accounts in apps/api/src/auth/demo-users.ts (D-008). */
 const PARTICIPANT_IDS = Array.from({ length: 10 }, (_, i) => `u-participant-${i + 1}`);
 
+/** MongoDB duplicate key. */
+const DUPLICATE_KEY = 11000;
+
+/**
+ * Put the demo roster in the `users` collection, without ever touching an account that is
+ * already there.
+ *
+ * Three things this deliberately is not:
+ *
+ *  - **Not an upsert.** `$setOnInsert` would work, but an upsert bypasses schema validation
+ *    entirely, so a roster entry that broke the role/organisation invariant would land
+ *    silently. `create()` runs the document validators.
+ *  - **Not a password reset.** Only a MISSING account is written. scrypt salts randomly, so
+ *    re-hashing on every boot would write a different value each time -- the seed would stop
+ *    being idempotent in the sense this file's header claims, and would silently undo a
+ *    password change made during a demo.
+ *  - **Not fatal on a collision.** Since D-037 an admin can create an account genuinely named
+ *    `user1`. The seed runs on EVERY container start, so letting E11000 escape here would
+ *    mean one console action permanently bricks the API's boot. It logs and moves on.
+ */
+async function seedUsers(conn: mongoose.Connection): Promise<{ created: number }> {
+  const Users = conn.model('User', UserSchema);
+  let created = 0;
+  for (const u of DEMO_USERS) {
+    if (await Users.exists({ _id: u.id })) continue;
+    try {
+      await Users.create({
+        _id: u.id,
+        username: u.username,
+        displayName: u.displayName,
+        passwordHash: await hashPassword(DEFAULT_PASSWORD),
+        role: u.role,
+        clientOrgId: u.clientOrgId,
+        active: true,
+        createdBy: null,
+      });
+      created += 1;
+    } catch (e) {
+      if ((e as { code?: number }).code === DUPLICATE_KEY) {
+        console.warn(
+          `  ! demo account "${u.username}" not seeded: that username is already taken by ` +
+            'another account. Sign in with the real one, or rename it.',
+        );
+        continue;
+      }
+      throw e;
+    }
+  }
+  return { created };
+}
+
 export async function seed(uri: string): Promise<void> {
   const { relocated, venues: VENUES } = resolveVenues();
   const conn = await mongoose.createConnection(uri).asPromise();
@@ -121,6 +174,10 @@ export async function seed(uri: string): Promise<void> {
     { upsert: true, returnDocument: 'after' },
   );
   const clientOrgId = DEMO_CLIENT_ORG_ID;
+
+  // Accounts before anything that references them: the assignments below are written against
+  // `u-participant-N`, and those ids only mean something once the users exist (D-037).
+  const { created: usersCreated } = await seedUsers(conn);
 
   let venueCount = 0;
   let taskCount = 0;
@@ -240,6 +297,11 @@ export async function seed(uri: string): Promise<void> {
     }
   }
 
+  // eslint-disable-next-line no-console
+  console.log(
+    `[seed] accounts created=${usersCreated} of ${DEMO_USERS.length} ` +
+      `(existing accounts and their passwords are never touched) password=${DEFAULT_PASSWORD}`,
+  );
   // eslint-disable-next-line no-console
   console.log(
     `[seed] org=${SEED_ORG_SLUG} venues=${venueCount} tasks=${taskCount} assignments=${assignmentCount} (idempotent)`,
