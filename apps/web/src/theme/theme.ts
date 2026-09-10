@@ -79,7 +79,7 @@ export const qa = {
    * The 50 steps are tinted SURFACES, not text or fills -- a review banner's background, the
    * ground under a rejected row. Nothing legible goes on top of a 700 at that size.
    */
-  yellow: { 50: '#fffaea', 500: '#f6b51e', 700: '#c89a2c' },
+  yellow: { 50: '#fffaea', 500: '#f6b51e', 700: '#c89a2c', 800: '#a77f26' },
   red: { 50: '#ffeaec', 700: '#d02633', 800: '#ad1f2a' },
 
   /** `--qa-radius-*`. */
@@ -147,23 +147,36 @@ export const verdictPalette = {
 } as const;
 
 /**
- * The same three states, re-stepped for charts.
+ * The same three states, re-stepped for charts. Re-validated 2026-09-10 (D-043).
  *
- * STALE -- these need a re-run through the dataviz validator. They are left unchanged on
- * purpose rather than re-guessed by eye.
+ * Chrome and data have different jobs, so these are not the same steps as `verdictPalette`. A
+ * colour that is right for a 20 px chip on white is not automatically right for a bar segment
+ * that has to stay distinguishable under simulated colour-vision deficiency.
  *
- * The original justification for `#0F7A55` was that the brand green is too low-chroma for a
- * chart and reads as gray there. That premise no longer holds: the brand is teal, not green,
- * and `--qa-teal-700` sits at a different hue and chroma entirely. The six checks (lightness
- * band, chroma floor, CVD separation, normal-vision floor, contrast against the chart surface)
- * have not been re-run against a teal-anchored set, so nothing here is trustworthy yet.
+ * `auto_verified` is `--qa-teal-600`, one step lighter than the brand primary. The primary
+ * itself, `--qa-teal-700`, FAILS the chroma floor at 0.092 — it reads as gray in a chart. That
+ * is the same failure the old green had for the same reason: a colour chosen to sit quietly
+ * behind UI chrome is chosen to be low-chroma, which is exactly wrong for a data mark.
  *
- * Do not hand-edit these. Re-derive them with the validator, then delete this notice.
+ * `needs_review` is `--qa-yellow-800` rather than the 700 the chip uses, for adjacent-pair
+ * separation against the red.
+ *
+ * Verified with `dataviz/scripts/validate_palette.js --mode light`: lightness band PASS, chroma
+ * floor PASS, CVD separation PASS (worst adjacent pair ΔE 13.1 deutan, 16.7 tritan),
+ * normal-vision floor PASS (worst ΔE 19.5). Contrast against the chart surface is a WARN for the
+ * teal at 2.81:1 — that is not dismissable, and the relief it requires is already in place:
+ * `Dashboard` renders a labelled legend and labelled stat tiles, so no series is identified by
+ * colour alone. If a chart is ever added WITHOUT visible labels, this palette is not licensed
+ * for it.
+ *
+ * No dark-mode steps: `palette.mode` is `light` and there is no dark surface to validate against.
+ *
+ * Do not hand-edit these. Re-run the validator.
  */
 export const verdictChartPalette = {
-  auto_verified: '#0F7A55',
-  needs_review: '#B7791F',
-  rejected: '#9B2C2C',
+  auto_verified: qa.teal[600],
+  needs_review: qa.yellow[800],
+  rejected: qa.red[800],
 } as const;
 
 const options: ThemeOptions = {

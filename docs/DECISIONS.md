@@ -1933,3 +1933,44 @@ whereas this sentence is attached to one specific number a person is about to ac
 caveat got quieter and the specific one got louder. If a future change wants to trim either, they
 should be argued separately. The cost is vertical space in a drawer that already scrolls, and one
 more import edge between a page and a component.
+
+## D-043: The chart palette is re-derived on teal, one step off the brand primary
+
+**Date:** 2026-09-10
+**Status:** accepted. Supersedes the chart half of D-039, which left these values STALE.
+
+**Decision.** `verdictChartPalette` becomes `--qa-teal-600` `#1ea8af`, `--qa-yellow-800`
+`#a77f26` and `--qa-red-800` `#ad1f2a`, re-derived through the dataviz validator rather than
+picked by eye. It is deliberately not the same three steps as `verdictPalette`.
+
+**Context.** D-039 replaced the brand green with teal but left the chart palette untouched under
+a STALE notice, because its whole justification — "the brand green is low-chroma and reads gray
+in a chart" — referenced a colour that no longer existed. The values had to be re-derived, and
+the honest way to do that is to run the checks, not to eyeball a teal.
+
+**Alternatives considered.**
+
+- *Use the brand primary `--qa-teal-700` `#15868c` directly, so chrome and charts match.* The
+  obvious thing to want. It FAILS the chroma floor at 0.092 — it reads as gray in a chart. This
+  is the same failure the old green had and for the same structural reason: a colour picked to
+  sit quietly behind UI chrome is picked to be low-chroma, which is exactly wrong for a data
+  mark. That the replacement hue failed identically is the useful finding here.
+- *Find an off-ramp teal that passes chroma AND clears 3:1 contrast.* Five candidates were
+  tested across the plausible lightness range (`#0d8a91`, `#00858f`, `#0a7f88`, `#008b94`,
+  `#127e86`). Every one cleared contrast and every one failed chroma, topping out at 0.099. Teal
+  in sRGB cannot hold chroma >= 0.1 while dark enough for 3:1 against a white surface; the two
+  constraints are in genuine tension for this hue, not for want of searching.
+- *Shift the hue toward green to buy chroma.* Would pass everything. Rejected: it walks back to
+  a green for `auto_verified`, which is the thing D-001 spends its budget avoiding, and it stops
+  reading as the brand.
+- *Keep the chip's `--qa-yellow-700` for `needs_review` so the two palettes agree.* Rejected on
+  adjacent-pair separation against the red; the 800 step buys the margin.
+
+**Consequences.** Contrast for the teal is a WARN at 2.81:1, and a WARN is not dismissable — it
+obligates visible labels or a table view. `Dashboard` already satisfies this: the legend renders
+a swatch beside a text label for every series and the stat tiles are labelled, so no series is
+identified by colour alone. **That relief is now load-bearing.** A chart added later without
+visible labels is not licensed to use this palette, and the file says so. There are also now two
+near-but-unequal colours per state across the app, which will look like a mistake to anyone who
+does not read the comment — the comment is the mitigation. No dark-mode steps were derived
+because `palette.mode` is `light` and there is no dark surface to validate against.
