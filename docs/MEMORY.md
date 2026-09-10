@@ -2201,3 +2201,54 @@ picking new hexes by eye. That is the next small piece of work.
 Mockups for the console triage screen, the visit detail drawer and the five participant states
 exist as a design canvas and are the intended target of the front-end pass; nothing in this
 branch ports them. The token export in D-040 is what unblocks that work.
+
+## `feat/console-triage` — the console opens on the review queue
+
+**Decision:** D-041. First port from the design canvas; the tokens it spends come from D-039/D-040.
+
+**What exists now.** The visits tab opens with an `AttentionBand` naming how many visits are
+waiting on a human decision, with a button that sets the filter to `needs_review`. Below it the
+four filter chips are a `ToggleButtonGroup` with inline counts, then the table, then the
+disclaimer as a caption inside the table's card. The verdict is a 3 px rail on each row's leading
+edge plus a dot and a short word; the score is its own right-aligned column in the verdict's
+colour, tabular-numeric.
+
+**What moved and why.** The screen previously had no answer on it — five tabs, a paragraph-length
+info `Alert` and four count-badged chips all at one weight. The alert had to be demoted for the
+band to be promoted; two full-width blocks before the first row is worse than one. That demotion
+is a real reduction in the prominence of a D-001 caveat and D-041 records it as a deliberate cost,
+not an oversight.
+
+**Files.**
+
+- `apps/web/src/pages/Console.tsx`: `SHORT_LABEL`, `VerdictDot` and `AttentionBand` added; the
+  info `Alert` removed; filters rebuilt as a segmented control; the desktop table wrapped in a
+  `Card` with the disclaimer as its footer and hidden entirely when empty; phone cards given the
+  same rail and a score; `Badge` import dropped, `ToggleButton`/`ToggleButtonGroup` and
+  `qa`/`verdictPalette` added
+- `apps/web/src/i18n/en.json`, `ar.json`: `console.attention.*` (six keys), `console.table.score`,
+  `.running`, `.new`
+- `docs/DECISIONS.md`: D-041
+
+**Things worth knowing for the next port.**
+
+- MUI v9 does not take `alignItems` as a `Stack` prop; it goes in `sx`. Three of these failed the
+  typecheck at once. The existing code already did it the right way.
+- A `borderLeft` on a `TableRow` is dropped by MUI's collapsed borders. The rail lives on a 3 px
+  first cell, which is the only reason that cell exists.
+- On the phone cards the rail is `borderInlineStart`, not `borderLeft`, so it flips under the
+  Arabic pass (D-022). Any further rails should follow that.
+- `VerdictChip` was deliberately not replaced. It is still right on a card and in the drawer; only
+  the table stopped using it.
+
+**Verified.** `tsc --noEmit` clean, `vite build` clean, full suite 643/643 across 25 suites, i18n
+dictionary suite 11/11 which is what guards the two key sets matching.
+
+**NOT verified.** Nobody has looked at this rendered. There is no browser in this session — the
+Chrome extension is not connected — so every claim above is from the compiler and the test suite,
+and the brand theme from `feat/brand-theme` has never been seen on screen either. That is the
+single biggest open risk on the front-end pass and it applies to everything merged since D-039.
+
+**Open.** The mockup's venue/participant search box was not built: `GET /visits` filters on
+verdict only, so it is a server change and an index. The visit detail drawer (the ledger layout)
+and the five participant screens are still unported. `verdictChartPalette` is still STALE.
