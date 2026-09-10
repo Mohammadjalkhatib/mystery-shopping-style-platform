@@ -3,7 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#15868c" />
     <title>theQA Visits</title>
+
+    <!--
+      IBM Plex Sans Arabic is theQA's `--font-primary` and it carries both scripts, so this one
+      family covers the console and the Arabic participant pass. Loaded from Google Fonts rather
+      than bundled because it needs no dependency; theqa.io self-hosts it via next/font.
+
+      Weights match what the theme asks for: 400 body, 500 overline/medium, 600 h3 and buttons,
+      700 h1/h2. Nothing else is requested -- every extra weight is another file on a phone.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap"
+    />
   </head>
   <body>
     <div id="root"></div>
