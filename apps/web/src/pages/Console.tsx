@@ -1,7 +1,6 @@
 import {
   Alert,
   AppBar,
-  Badge,
   Box,
   Button,
   Card,
@@ -21,6 +20,8 @@ import {
   TableRow,
   Tabs,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Toolbar,
   Typography,
 } from '@mui/material';
@@ -32,6 +33,7 @@ import { useAuth } from '../auth/AuthContext.js';
 import { VerdictChip } from '../components/VerdictChip.js';
 import { useT } from '../i18n/LocaleContext.js';
 import { useVisitStream, type VisitEvent } from '../hooks/useVisitStream.js';
+import { qa, verdictPalette } from '../theme/theme.js';
 import { Dashboard } from './Dashboard.js';
 import { People } from './People.js';
 import { AccountsTab } from './AccountsTab.js';
@@ -46,6 +48,117 @@ const FILTERS: { key: Filter; label: TranslationKey }[] = [
   { key: 'auto_verified', label: 'console.filters.autoVerified' },
   { key: 'rejected', label: 'console.filters.rejected' },
 ];
+
+/**
+ * The verdict, in as few words as a table column can carry.
+ *
+ * Deliberately the SAME strings as the filters rather than new keys. `verdict.auto_verified` is
+ * a whole sentence — "Consistent with a genuine visit" — which is right on a chip with a tooltip
+ * and wrong in a column the eye scans vertically. The filter labels are already the short form
+ * of exactly these three states, and giving them a second set of keys would mean two places to
+ * keep a translation honest.
+ */
+const SHORT_LABEL: Record<Verdict, TranslationKey> = {
+  auto_verified: 'console.filters.autoVerified',
+  needs_review: 'console.filters.needsReview',
+  rejected: 'console.filters.rejected',
+};
+
+/**
+ * The verdict as a dot and a word, for the table.
+ *
+ * A filled chip per row turned the column into a stack of coloured blocks that read as a bar
+ * chart of nothing. The dot carries the same three colours at a size that does not compete with
+ * the venue name.
+ *
+ * `null` is not a fourth verdict, it is the absence of one — a session the evaluator has not
+ * reached yet — so it renders hollow. Filling it in any colour would make "we have not looked"
+ * look like an answer.
+ */
+function VerdictDot({ verdict }: { verdict: Verdict | null }) {
+  const t = useT();
+  const colour = verdict ? verdictPalette[verdict].main : null;
+  return (
+    <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+      <Box
+        sx={{
+          width: 7,
+          height: 7,
+          borderRadius: '50%',
+          flexShrink: 0,
+          bgcolor: colour ?? 'transparent',
+          border: colour ? undefined : `1.5px solid ${qa.neutral[400]}`,
+        }}
+      />
+      <Typography
+        variant="body2"
+        noWrap
+        sx={{
+          fontWeight: verdict ? 500 : 400,
+          color: verdict ? 'text.primary' : 'text.secondary',
+        }}
+      >
+        {t(verdict ? SHORT_LABEL[verdict] : 'verdict.pending')}
+      </Typography>
+    </Stack>
+  );
+}
+
+/**
+ * The one question this screen answers before any other: is anything waiting on me?
+ *
+ * This replaces a permanent info `Alert` that restated the disclaimer on every single load. A
+ * standing caveat is not news, and putting it where the day's work should be meant the screen
+ * opened with four filter chips, five tabs and a paragraph, all at the same weight, and no
+ * answer. The review queue is the only thing here that is genuinely addressed to the reader.
+ *
+ * It renders in the cleared state too rather than disappearing. A band that vanishes when the
+ * queue empties leaves the reader unsure whether they are done or whether it failed to load.
+ */
+function AttentionBand({ count, onReview }: { count: number; onReview: () => void }) {
+  const t = useT();
+  const clear = count === 0;
+
+  return (
+    <Card
+      sx={{
+        mb: 2,
+        borderLeft: `3px solid ${clear ? verdictPalette.auto_verified.main : verdictPalette.needs_review.main}`,
+        bgcolor: clear ? qa.teal[50] : qa.yellow[50],
+      }}
+    >
+      <CardContent
+        sx={{
+          display: 'flex',
+          alignItems: { xs: 'flex-start', sm: 'center' },
+          flexDirection: { xs: 'column', sm: 'row' },
+          gap: 2,
+          p: { xs: 1.75, sm: 2.25 },
+          '&:last-child': { pb: { xs: 1.75, sm: 2.25 } },
+        }}
+      >
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="h3" sx={{ fontSize: '1rem', mb: 0.25 }}>
+            {clear
+              ? t('console.attention.clearTitle')
+              : count === 1
+                ? t('console.attention.one')
+                : t('console.attention.many', { count })}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {clear ? t('console.attention.clearHint') : t('console.attention.hint')}
+          </Typography>
+        </Box>
+        <Box sx={{ flexGrow: 1 }} />
+        {!clear && (
+          <Button variant="contained" onClick={onReview} sx={{ flexShrink: 0 }}>
+            {t('console.attention.action')}
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 export function Console() {
   const { user, logout } = useAuth();
@@ -215,13 +328,18 @@ export function Console() {
 
         {tab === 'visits' && (
         <>
-        <Alert severity="info" sx={{ mb: 2 }}>
-          {t('console.disclaimer')}
-        </Alert>
+        <AttentionBand
+          count={counts['needs_review'] ?? 0}
+          onReview={() => setFilter('needs_review')}
+        />
 
         {/*
-          A horizontal scroller on a phone rather than a three-line wrap. Four filter chips with
-          badges wrapped to three rows at 360 px and pushed the table below the fold.
+          A segmented control rather than four badged chips.
+
+          The badges were the problem: a count bubble on every option made four things shout when
+          only one of them is a queue anybody acts on, and at 360 px they wrapped to three rows
+          and pushed the table below the fold. The counts are still here, inline and quiet, and
+          the group still scrolls sideways on a phone rather than wrapping.
         */}
         <Stack
           direction="row"
@@ -229,32 +347,70 @@ export function Console() {
           useFlexGap
           sx={{
             mb: 2,
-            flexWrap: { xs: 'nowrap', sm: 'wrap' },
+            alignItems: 'center',
             overflowX: { xs: 'auto', sm: 'visible' },
             pb: { xs: 1, sm: 0 },
-            alignItems: 'center',
             '&::-webkit-scrollbar': { display: 'none' },
             scrollbarWidth: 'none',
           }}
         >
-          {FILTERS.map((f) => (
-            <Badge
-              key={f.key}
-              badgeContent={counts[f.key === 'all' ? 'all' : f.key] ?? 0}
-              color="primary"
-              showZero
-            >
-              <Chip
-                label={t(f.label)}
-                onClick={() => setFilter(f.key)}
-                variant={filter === f.key ? 'filled' : 'outlined'}
-                color={filter === f.key ? 'primary' : 'default'}
-                sx={{ whiteSpace: 'nowrap' }}
-              />
-            </Badge>
-          ))}
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={filter}
+            // `null` arrives when the active button is clicked again. Clearing the filter that
+            // way would leave no button selected and the table showing everything, which is a
+            // state the segmented control cannot represent.
+            onChange={(_e, v: Filter | null) => v !== null && setFilter(v)}
+            sx={{
+              flexShrink: 0,
+              bgcolor: qa.neutral[100],
+              borderRadius: `${qa.radius.sm + 2}px`,
+              p: '3px',
+              gap: '2px',
+              '& .MuiToggleButtonGroup-grouped': {
+                border: 0,
+                borderRadius: `${qa.radius.sm}px !important`,
+                textTransform: 'none',
+                fontWeight: 500,
+                color: 'text.secondary',
+                px: 1.75,
+                py: 0.75,
+                whiteSpace: 'nowrap',
+                '&.Mui-selected': {
+                  bgcolor: 'background.paper',
+                  color: 'text.primary',
+                  fontWeight: 600,
+                  boxShadow: 1,
+                  '&:hover': { bgcolor: 'background.paper' },
+                },
+              },
+            }}
+          >
+            {FILTERS.map((f) => (
+              <ToggleButton key={f.key} value={f.key}>
+                {t(f.label)}
+                <Box
+                  component="span"
+                  sx={{
+                    ml: 0.75,
+                    fontVariantNumeric: 'tabular-nums',
+                    // The queue's own count keeps its colour when it is not the active tab --
+                    // it is the one number worth noticing from across the row.
+                    color:
+                      f.key === 'needs_review' && (counts[f.key] ?? 0) > 0
+                        ? verdictPalette.needs_review.main
+                        : 'text.disabled',
+                    fontWeight: f.key === 'needs_review' && (counts[f.key] ?? 0) > 0 ? 600 : 500,
+                  }}
+                >
+                  {counts[f.key] ?? 0}
+                </Box>
+              </ToggleButton>
+            ))}
+          </ToggleButtonGroup>
           <Box sx={{ flexGrow: 1 }} />
-          <Button size="small" onClick={() => void load()}>
+          <Button size="small" onClick={() => void load()} sx={{ flexShrink: 0 }}>
             {t('common.refresh')}
           </Button>
         </Stack>
@@ -267,38 +423,123 @@ export function Console() {
           for, end up squeezed to a few characters each or pushed off a horizontal scroll nobody
           discovers. Below `sm` the same rows render as cards.
         */}
-        <Box sx={{ display: { xs: 'none', sm: 'block' }, overflowX: 'auto' }}>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>{t('console.table.venue')}</TableCell>
-                <TableCell>{t('console.table.participant')}</TableCell>
-                <TableCell>{t('console.table.ended')}</TableCell>
-                <TableCell>{t('console.table.verdict')}</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {rows.map((r) => (
-                <TableRow
-                  key={r.sessionId}
-                  hover
-                  onClick={() => setSelected(r.sessionId)}
-                  sx={{
-                    cursor: 'pointer',
-                    bgcolor: fresh.has(r.sessionId) ? 'action.hover' : undefined,
-                  }}
-                >
-                  <TableCell>{r.venueName}</TableCell>
-                  <TableCell>{r.participantId}</TableCell>
-                  <TableCell>{r.endedAt ? new Date(r.endedAt).toLocaleString() : '—'}</TableCell>
-                  <TableCell>
-                    <VerdictChip verdict={r.verdict} score={r.score} />
-                  </TableCell>
+        {/*
+          Hidden entirely when there is nothing in it. A framed table showing a header row and a
+          disclaimer over empty space reads as broken, where the empty-state sentence below reads
+          as an answer.
+        */}
+        {rows.length > 0 && (
+        <Card sx={{ display: { xs: 'none', sm: 'block' }, overflow: 'hidden' }}>
+          <Box sx={{ overflowX: 'auto' }}>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  {/* Empty header over the verdict rail. It is a colour, not a column. */}
+                  <TableCell sx={{ width: 3, p: 0, border: 0 }} />
+                  <TableCell>{t('console.table.venue')}</TableCell>
+                  <TableCell>{t('console.table.participant')}</TableCell>
+                  <TableCell>{t('console.table.ended')}</TableCell>
+                  <TableCell>{t('console.table.verdict')}</TableCell>
+                  <TableCell align="right">{t('console.table.score')}</TableCell>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </Box>
+              </TableHead>
+              <TableBody>
+                {rows.map((r) => (
+                  <TableRow
+                    key={r.sessionId}
+                    hover
+                    onClick={() => setSelected(r.sessionId)}
+                    selected={selected === r.sessionId}
+                    sx={{ cursor: 'pointer' }}
+                  >
+                    {/*
+                      The verdict as a rail on the row's leading edge. `borderLeft` on the row
+                      itself is dropped by MUI's collapsed borders, so it lives on the first
+                      cell — which is why that cell exists at all.
+                    */}
+                    <TableCell
+                      sx={{
+                        width: 3,
+                        p: 0,
+                        borderBottom: 0,
+                        bgcolor: r.verdict ? verdictPalette[r.verdict].main : qa.neutral[200],
+                      }}
+                    />
+                    <TableCell sx={{ fontWeight: 600 }}>
+                      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                        <Box component="span" sx={{ minWidth: 0 }}>
+                          {r.venueName}
+                        </Box>
+                        {/*
+                          Arrived over the stream while this screen was open. A ring and a word
+                          rather than a filled row: "new" is about when it got here, and the row
+                          already spends colour on saying what the verdict is.
+                        */}
+                        {fresh.has(r.sessionId) && (
+                          <Chip
+                            size="small"
+                            label={t('console.table.new')}
+                            sx={{
+                              height: 18,
+                              fontSize: '0.65rem',
+                              bgcolor: qa.teal[100],
+                              color: 'primary.main',
+                            }}
+                          />
+                        )}
+                      </Stack>
+                    </TableCell>
+                    <TableCell sx={{ color: 'text.secondary' }}>{r.participantId}</TableCell>
+                    <TableCell sx={{ color: 'text.secondary', fontVariantNumeric: 'tabular-nums' }}>
+                      {r.endedAt ? (
+                        new Date(r.endedAt).toLocaleString()
+                      ) : (
+                        // A session with no end is still running, which is a different thing
+                        // from a missing value. An em dash here read as "we lost it".
+                        <Box component="span" sx={{ color: 'text.disabled' }}>
+                          {t('console.table.running')}
+                        </Box>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <VerdictDot verdict={r.verdict} />
+                    </TableCell>
+                    <TableCell
+                      align="right"
+                      sx={{
+                        fontVariantNumeric: 'tabular-nums',
+                        fontWeight: 600,
+                        fontSize: '0.95rem',
+                        color: r.verdict ? verdictPalette[r.verdict].main : 'text.disabled',
+                      }}
+                    >
+                      {r.score ?? '—'}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Box>
+
+          {/*
+            The disclaimer, demoted from a full-width Alert above the fold to a footnote under
+            the thing it qualifies. It is a standing caveat about how to read this table, not
+            news, and it was costing the top of the screen on every load.
+          */}
+          <Box
+            sx={{
+              px: 2.5,
+              py: 1.5,
+              borderTop: `1px solid ${qa.neutral[100]}`,
+              bgcolor: 'background.default',
+            }}
+          >
+            <Typography variant="caption" color="text.secondary">
+              {t('console.disclaimer')}
+            </Typography>
+          </Box>
+        </Card>
+        )}
 
         <Stack spacing={1} sx={{ display: { xs: 'flex', sm: 'none' } }}>
           {rows.map((r) => (
@@ -307,25 +548,63 @@ export function Console() {
               onClick={() => setSelected(r.sessionId)}
               sx={{
                 cursor: 'pointer',
+                // Same rail as the table, on the card's leading edge. `borderInlineStart` and
+                // not `borderLeft`, because these screens flip under the Arabic pass (D-022).
+                borderInlineStart: `3px solid ${
+                  r.verdict ? verdictPalette[r.verdict].main : qa.neutral[200]
+                }`,
                 borderColor: fresh.has(r.sessionId) ? 'primary.main' : undefined,
-                bgcolor: fresh.has(r.sessionId) ? 'action.hover' : undefined,
               }}
             >
               <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
-                <Typography variant="h3" sx={{ fontSize: '0.95rem', mb: 0.75 }}>
-                  {r.venueName}
-                </Typography>
+                <Stack direction="row" spacing={1} sx={{ alignItems: 'flex-start', mb: 0.75 }}>
+                  <Typography variant="h3" sx={{ fontSize: '0.95rem', flexGrow: 1, minWidth: 0 }}>
+                    {r.venueName}
+                  </Typography>
+                  {/* The score keeps the verdict's colour, so the card reads at a glance. */}
+                  {r.score !== null && (
+                    <Typography
+                      sx={{
+                        fontVariantNumeric: 'tabular-nums',
+                        fontWeight: 700,
+                        fontSize: '1.05rem',
+                        lineHeight: 1.2,
+                        flexShrink: 0,
+                        color: r.verdict ? verdictPalette[r.verdict].main : 'text.disabled',
+                      }}
+                    >
+                      {r.score}
+                    </Typography>
+                  )}
+                </Stack>
+                {/*
+                  The chip survives here, unlike in the table. A card has room for the full
+                  sentence and no column of siblings for a filled block to compete with.
+                */}
                 <Box sx={{ mb: 1 }}>
-                  <VerdictChip verdict={r.verdict} score={r.score} />
+                  <VerdictChip verdict={r.verdict} />
                 </Box>
                 <Typography variant="caption" color="text.secondary">
                   {r.participantId}
-                  {r.endedAt && ` · ${new Date(r.endedAt).toLocaleString()}`}
+                  {r.endedAt
+                    ? ` · ${new Date(r.endedAt).toLocaleString()}`
+                    : ` · ${t('console.table.running')}`}
                 </Typography>
               </CardContent>
             </Card>
           ))}
         </Stack>
+
+        {/* The desktop footnote lives inside the table Card, which a phone never renders. */}
+        {rows.length > 0 && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ display: { xs: 'block', sm: 'none' }, mt: 2 }}
+          >
+            {t('console.disclaimer')}
+          </Typography>
+        )}
 
         {!loading && rows.length === 0 && (
           <Typography color="text.secondary" sx={{ py: 5, textAlign: 'center' }}>
