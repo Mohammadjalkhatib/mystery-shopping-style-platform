@@ -17,7 +17,15 @@ const LABEL: Record<Verdict, TranslationKey> = {
   rejected: 'verdict.rejected',
 };
 
-const EXPLAIN: Record<Verdict, TranslationKey> = {
+/**
+ * The honest reading of each verdict, in a sentence.
+ *
+ * Exported because the detail drawer prints it under the score rather than hiding it in a
+ * tooltip. It is the same three strings either way, and D-001 is not something to keep two
+ * copies of — if the wording of "this is not proof of presence" ever softens, it should soften
+ * in exactly one place.
+ */
+export const VERDICT_EXPLAIN: Record<Verdict, TranslationKey> = {
   auto_verified: 'verdict.explainAuto',
   needs_review: 'verdict.explainReview',
   rejected: 'verdict.explainRejected',
@@ -30,7 +38,7 @@ export function VerdictChip({ verdict, score }: { verdict: Verdict | null; score
   }
   const c = verdictPalette[verdict];
   return (
-    <Tooltip title={t(EXPLAIN[verdict])}>
+    <Tooltip title={t(VERDICT_EXPLAIN[verdict])}>
       <Chip
         size="small"
         label={score == null ? t(LABEL[verdict]) : `${t(LABEL[verdict])} · ${score}`}
