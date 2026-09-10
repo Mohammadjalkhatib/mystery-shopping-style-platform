@@ -1,21 +1,44 @@
-import type { AuthUser } from '@msp/shared';
+import type { Role } from '@msp/shared';
 
 /**
- * DEMO CREDENTIALS. This is not an identity system and is not pretending to be one.
+ * The demo ROSTER. Since D-037 this is seed data, not the runtime identity store.
  *
- * There is no user collection, no password hashing, no registration, no refresh tokens and
- * no password reset. Accounts are a hardcoded list so a reviewer can log in as any role in
- * one step. See docs/DECISIONS.md D-008 for why this was scoped out rather than half-built.
+ * Accounts now live in the `users` collection and are looked up there on every login and
+ * every request. This file survives for two reasons and no others:
  *
- * What IS real: the token is HMAC-signed and verified, and the role guards are enforced on
- * every protected route and covered by tests. The boundaries are genuine even though the
- * accounts behind them are fake.
+ *  1. The seed needs a fixed list to upsert, so `docker compose up` still hands a reviewer
+ *     working logins with no manual step.
+ *  2. **The ids are load-bearing.** Assignments, sessions, reports and participant stats in
+ *     the deployed database all reference `u-participant-1` .. `u-participant-10` as plain
+ *     strings. The seed upserts on these exact `_id` values; generating new ones would orphan
+ *     every existing visit silently -- blank dashboards, no errors.
+ *
+ * The passwords here are public and in source control, which is correct for a demo and
+ * catastrophic anywhere else. What changed since D-008 is that they are now stored hashed
+ * (scrypt, see password.ts) rather than compared as plaintext, and that new accounts can be
+ * created at runtime by an admin or a business.
  */
 
-export const DEMO_PASSWORD = 'demo1234';
+/**
+ * The password every account gets: the seeded roster, and every account created through the
+ * console. Chosen deliberately over a generated one-time password (D-037) -- there is no mail
+ * transport in this build, so a generated password would have to be displayed once and would
+ * be unrecoverable the moment the dialog closed.
+ *
+ * This is the single thing in the authentication story that is still demo-shaped. Real
+ * onboarding is an invite link or a forced first-login reset, and neither is in scope.
+ */
+export const DEFAULT_PASSWORD = 'demo1234';
 
-export interface DemoUser extends AuthUser {
-  password: string;
+/** Kept as the old name so nothing that reads it has to change. */
+export const DEMO_PASSWORD = DEFAULT_PASSWORD;
+
+export interface DemoUser {
+  id: string;
+  username: string;
+  displayName: string;
+  role: Role;
+  clientOrgId: string | null;
 }
 
 /**
@@ -39,7 +62,6 @@ export const DEMO_USERS: readonly DemoUser[] = [
     displayName: 'Platform Admin',
     role: 'admin',
     clientOrgId: null,
-    password: DEMO_PASSWORD,
   },
   {
     id: 'u-business',
@@ -47,7 +69,6 @@ export const DEMO_USERS: readonly DemoUser[] = [
     displayName: 'Alfa Retail (Business)',
     role: 'business',
     clientOrgId: ORG_A,
-    password: DEMO_PASSWORD,
   },
   // Ten participants, user1 .. user10.
   ...Array.from({ length: 10 }, (_, i) => {
@@ -58,15 +79,6 @@ export const DEMO_USERS: readonly DemoUser[] = [
       displayName: `Participant ${n}`,
       role: 'participant' as const,
       clientOrgId: ORG_A,
-      password: DEMO_PASSWORD,
     };
   }),
 ];
-
-export function findDemoUser(username: string, password: string): DemoUser | undefined {
-  return DEMO_USERS.find((u) => u.username === username && u.password === password);
-}
-
-export function findDemoUserById(id: string): DemoUser | undefined {
-  return DEMO_USERS.find((u) => u.id === id);
-}

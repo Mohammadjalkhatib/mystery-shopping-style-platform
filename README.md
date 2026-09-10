@@ -106,7 +106,8 @@ See `docs/DECISIONS.md` D-001 for the full reasoning.
 
 Built and working end to end:
 
-- [x] Demo auth: three roles, deny-by-default guards, one test per authorization boundary
+- [x] Accounts: an admin creates business accounts, a business creates its own participants
+- [x] Auth: three roles, scrypt-hashed passwords, deny-by-default guards, one test per boundary
 - [x] Participant consent screen, versioned and recorded with a server timestamp
 - [x] Participant starts a visit session, server-authoritative state machine
 - [x] Location sampling while the tab is visible, with Screen Wake Lock
@@ -320,19 +321,30 @@ docker compose down -v
 
 ## Demo credentials
 
-Authentication is deliberately a demo (see `docs/DECISIONS.md` D-008). Authorization is not:
-routes are deny-by-default and role-guarded, with one test per boundary.
-
 **Password for every account: `demo1234`**
 
 | Username | Role | Sees |
 |---|---|---|
-| `admin` | admin | Everything. Creates venues and tasks, assigns participants |
-| `business` | business | The visit console for its own client org only |
+| `admin` | admin | Everything. Creates business accounts, venues, tasks, assignments |
+| `business` | business | The console for its own client org. Creates its own participants |
 | `user1` … `user10` | participant | Their own assigned visits |
 
-`GET /auth/demo-credentials` returns this list at runtime, so a reviewer never has to read the
-source to log in.
+These twelve are seeded (`apps/api/src/db/seed.ts`). Accounts created through the console get
+the same password, because there is no mail transport in this build and so no way to deliver a
+generated one — D-037 covers the trade.
+
+Since D-037 the accounts are real documents in a `users` collection with scrypt-hashed
+passwords, not a hardcoded array. What that buys, beyond the feature itself: deactivating an
+account takes effect on its very next request rather than when its week-long token expires,
+because `AuthService.verify` re-reads the user instead of trusting the token payload.
+
+`GET /auth/demo-credentials` **was removed on that branch.** It was unauthenticated and listed
+every account — fine for an array of twelve published fakes, an open directory of every account
+on the platform once a business names its own staff. The login screen holds the three demo
+names itself instead.
+
+Still deliberately not production auth: no reset, no rotation, no refresh, no second factor,
+and a shared default password. D-008 scoped that out and D-037 keeps it out.
 
 ---
 
@@ -356,7 +368,12 @@ notification stream so it appears in their app without a refresh.
 | `POST /tasks` | admin, business | Inherits its org from the venue |
 | `GET /tasks` | admin, business | With a live assignment count |
 | `POST /assignments` | admin, business | Creates the pending session too |
-| `GET /participants` | admin, business | The demo roster, for the assign form |
+| `GET /participants` | admin, business | The assign form's roster. Scoped to one org; an admin must name it with `?clientOrgId=` |
+| `POST /orgs` | admin | A business account: the organisation and its first sign-in, in one transaction |
+| `GET /orgs` | admin, business | Every org for an admin; your own for a business |
+| `POST /users` | admin, business | A business may create participants in its own org only. Only an admin creates a business user |
+| `GET /users` | admin, business | Scoped to your org. Never returns a password hash |
+| `PATCH /users/:userId` | admin, business | Deactivate or reactivate. Accounts are never deleted |
 
 The participant's own surface is the mirror image, and every read on it is scoped to the token's
 subject — there is no id in any of these paths and there must not be one.
@@ -822,6 +839,25 @@ See `.env.example`. Every value is documented there. The ones worth knowing abou
 ## What is missing, and why
 
 Stated plainly rather than left to be discovered.
+
+**There is no password reset, and every account starts on the same password.** D-037 built
+real accounts with scrypt-hashed passwords, and stopped there: a new user is told their username
+and `demo1234`, and nothing forces them to change it. Onboarding properly means an invite link or
+a forced first-login reset, and both need a mail transport this build does not have. It is the
+last genuinely demo-shaped thing left in the authentication story and the first thing to replace
+if this ever carries real users.
+
+**Deactivating an account does not close a stream it already holds.** Guards run when a request
+starts, and an `@Sse()` connection is one request that stays open, so a deactivated user's live
+console or notification stream survives until it reconnects. Every REST call stops immediately,
+which is what the control is mostly for; terminating live streams needs a signal from
+`AuthService` into the events services, and belongs with whatever adds token revocation.
+
+**Usernames are immutable.** An account id is `u-<username>` and it is copied into sessions,
+assignments, reports and append-only verification results, so a rename would either orphan those
+or leave an id contradicting the name. There is no rename endpoint. Adding one means giving an
+account an id that is not its username, which is the right shape and was not worth the migration
+here.
 
 **Evidence photos never expire, while location pings do.** Rule 10 makes the ping TTL a privacy
 control; a photo taken inside a venue is at least as identifying and currently has no retention

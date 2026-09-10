@@ -202,6 +202,8 @@ export interface NewVenue {
 
 export interface TaskRow {
   id: string;
+  /** Which organisation the task belongs to. The assignment roster is scoped to it (D-037). */
+  clientOrgId: string;
   title: string;
   brief: string;
   venueId: string;
@@ -247,6 +249,29 @@ export interface ConsoleStats {
 
 /* ------------------------------------------------------------------- calls */
 
+export interface OrgRow {
+  id: string;
+  name: string;
+  slug: string;
+  userCount: number;
+}
+
+export interface UserRow {
+  id: string;
+  username: string;
+  displayName: string;
+  role: 'admin' | 'business' | 'participant';
+  clientOrgId: string | null;
+  active: boolean;
+}
+
+export interface NewOrg {
+  name: string;
+  slug: string;
+  businessUsername: string;
+  businessDisplayName: string;
+}
+
 export const api = {
   login: (username: string, password: string) =>
     req<{ token: string; user: AuthUser }>('/auth/login', {
@@ -254,10 +279,6 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
   me: () => req<AuthUser>('/auth/me'),
-  demoCredentials: () =>
-    req<{ password: string; accounts: { username: string; role: string }[] }>(
-      '/auth/demo-credentials',
-    ),
   mySessions: () => req<SessionView[]>('/sessions/mine'),
   session: (id: string) => req<SessionView>(`/sessions/${id}`),
   consent: (id: string, consentVersion: string) =>
@@ -381,7 +402,35 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ taskId, participantId }),
     }),
-  participants: () => req<ParticipantRow[]>('/participants'),
+  /**
+   * Scoped since D-037. A business is pinned to its own organisation and may not pass one;
+   * an admin has none of their own and must say which, because a task can only be assigned
+   * to a participant inside the task's organisation.
+   */
+  participants: (clientOrgId?: string) =>
+    req<ParticipantRow[]>(
+      clientOrgId ? `/participants?clientOrgId=${encodeURIComponent(clientOrgId)}` : '/participants',
+    ),
+
+  /* ------------------------------------------------------ accounts (D-037) */
+
+  orgs: () => req<OrgRow[]>('/orgs'),
+  /** Creates the organisation and its first business sign-in together. Admin only. */
+  createOrg: (body: NewOrg) =>
+    req<{ org: OrgRow; businessUser: UserRow }>('/orgs', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  users: () => req<UserRow[]>('/users'),
+  createUser: (body: {
+    username: string;
+    displayName: string;
+    role: 'participant' | 'business';
+    clientOrgId?: string;
+  }) => req<UserRow>('/users', { method: 'POST', body: JSON.stringify(body) }),
+  /** Deactivate or reactivate. Accounts are never deleted -- visits reference them forever. */
+  setUserActive: (userId: string, active: boolean) =>
+    req<UserRow>(`/users/${userId}`, { method: 'PATCH', body: JSON.stringify({ active }) }),
   /** Address search for the venue map. Proxied by the API — see D-030. */
   geocode: (q: string, signal?: AbortSignal) =>
     req<GeocodeResult[]>(`/geocode?q=${encodeURIComponent(q)}`, { signal }),

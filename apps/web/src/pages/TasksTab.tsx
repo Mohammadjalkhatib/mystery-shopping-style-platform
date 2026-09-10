@@ -50,7 +50,6 @@ export function TasksTab() {
   const t = useT();
   const [venues, setVenues] = useState<VenueRow[]>([]);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
-  const [participants, setParticipants] = useState<ParticipantRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -60,10 +59,9 @@ export function TasksTab() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [v, t, p] = await Promise.all([api.venues(), api.tasks(), api.participants()]);
+      const [v, t] = await Promise.all([api.venues(), api.tasks()]);
       setVenues(v);
       setTasks(t);
-      setParticipants(p);
     } catch (e) {
       setError(e instanceof Error ? e.message : t('common.failedToLoad'));
     } finally {
@@ -201,7 +199,7 @@ export function TasksTab() {
 
       <AssignForm
         tasks={tasks}
-        participants={participants}
+        isAdmin={user?.role === 'admin'}
         onAssigned={(taskId, who) => {
           setTasks((prev) =>
             prev.map((t) =>
@@ -623,19 +621,63 @@ function TaskForm({
 
 function AssignForm({
   tasks,
-  participants,
+  isAdmin,
   onAssigned,
   onError,
 }: {
   tasks: TaskRow[];
-  participants: ParticipantRow[];
+  isAdmin: boolean;
   onAssigned: (taskId: string, who: string) => void;
   onError: (e: unknown) => void;
 }) {
   const t = useT();
   const [taskId, setTaskId] = useState('');
   const [participantId, setParticipantId] = useState('');
+  const [participants, setParticipants] = useState<ParticipantRow[]>([]);
   const [busy, setBusy] = useState(false);
+
+  /**
+   * The roster follows the selected task, because a task can only be assigned to a participant
+   * in its own organisation (D-037).
+   *
+   * It used to be one page-level fetch of every participant. That worked while there was one
+   * organisation and becomes wrong with two: an admin sees tasks across all of them, so a
+   * single roster would offer people the server then refuses -- and would show one customer's
+   * staff list to another's task. A business is pinned to its own organisation by its token
+   * and does not pass one.
+   */
+  const task = tasks.find((x) => x.id === taskId) ?? null;
+  const orgOfTask = task?.clientOrgId ?? null;
+
+  useEffect(() => {
+    if (!orgOfTask) {
+      setParticipants([]);
+      return;
+    }
+    let live = true;
+    api
+      .participants(isAdmin ? orgOfTask : undefined)
+      .then((rows) => {
+        if (live) setParticipants(rows);
+      })
+      .catch((e: unknown) => {
+        if (live) {
+          setParticipants([]);
+          onError(e);
+        }
+      });
+    return () => {
+      live = false;
+    };
+    // `onError` is stable enough here -- it is the page's `fail` helper -- and including it
+    // would refetch the roster on every parent render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgOfTask, isAdmin]);
+
+  /** Changing task can invalidate the chosen person, so the selection is cleared with it. */
+  useEffect(() => {
+    setParticipantId('');
+  }, [taskId]);
   /**
    * The confirmation, held here rather than announced only at the top of the page.
    *
@@ -651,7 +693,6 @@ function AssignForm({
   const submit = async (): Promise<void> => {
     setBusy(true);
     try {
-      const task = tasks.find((x) => x.id === taskId);
       const who = participants.find((p) => p.id === participantId)?.displayName ?? participantId;
       await api.createAssignment(taskId, participantId);
       onAssigned(taskId, who);
@@ -699,7 +740,14 @@ function AssignForm({
           onChange={(e) => setParticipantId(e.target.value)}
           size="small"
           fullWidth
-          helperText=" "
+          disabled={taskId === ''}
+          helperText={
+            taskId === ''
+              ? t('admin.assignForm.pickTaskFirst')
+              : participants.length === 0
+                ? t('admin.assignForm.noParticipants')
+                : ' '
+          }
         >
           {participants.map((p) => (
             <MenuItem key={p.id} value={p.id}>

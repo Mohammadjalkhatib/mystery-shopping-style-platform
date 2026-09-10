@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import type { AuthUser } from '@msp/shared';
 import { CurrentUser, Roles } from '../auth/auth.decorators.js';
 import {
@@ -85,14 +85,19 @@ export class AdminController {
   }
 
   /**
-   * The demo participant roster, so the assignment form has something to choose from.
+   * The participant roster, so the assignment form has something to choose from.
    *
-   * Not `/auth/demo-credentials`: that is public and exists to hand a reviewer a password.
-   * This one is role-guarded and returns ids, which is what an assignment actually needs.
+   * Scoped to one organisation since D-037: a business gets its own and may not ask for
+   * another, an admin must say which. Before real accounts existed this returned the whole
+   * demo roster, which was fine when there was one organisation and is a list of other
+   * people's names as soon as there is more than one.
    */
   @Roles('admin', 'business')
   @Get('participants')
-  listParticipants(): ParticipantRow[] {
-    return this.admin.listParticipants();
+  listParticipants(
+    @CurrentUser() user: AuthUser,
+    @Query('clientOrgId') clientOrgId?: string,
+  ): Promise<ParticipantRow[]> {
+    return this.admin.listParticipants(user, clientOrgId);
   }
 }

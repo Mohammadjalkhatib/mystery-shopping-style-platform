@@ -173,3 +173,43 @@ geofence has a vintage and that mixing vintages is the failure this codebase has
 twice — not any signal the tooling could produce. The honest lesson is narrower than "check your
 assumptions": when a comment tells you an invariant exists, find every reader of that field
 before you rely on it.
+
+
+### 2026-09-10 - I wrote an invariant that did not run, and a comment that said it did
+
+**What it did.** The `users` collection has one combination that must never exist: an admin with
+an organisation, or a business or participant without one. Either way the account is unreachable
+rather than broken-looking — the tenancy filter matches nothing, so the person signs in fine and
+their console is simply empty forever. I put the check in a Mongoose field validator on
+`clientOrgId`, cross-referencing `this.role`, and wrote a comment claiming it held at the schema
+level "for the same reason D-010 bounded `radiusM` here: a seed or a migration must not be able
+to reach past it."
+
+**Why it was wrong.** The validator runs on `create()` and nowhere else that matters. Mongoose
+does not run validators on `updateOne` / `findOneAndUpdate` at all unless asked with
+`runValidators`, and when asked it binds `this` to the **Query**, which has no `role` — so my
+guard clause `if (!this?.role) return true` returned true and the check passed silently on
+exactly the paths that can reach the invalid state. Upserts skip it too, which is what the seed
+was going to use. My comment even described the failure and got it wrong in a specific way: it
+said `this` would be "a bare object on findOneAndUpdate", which is not a thing. So the invariant
+was decorative, and the comment asserting otherwise would have been believed by the next person
+— including me, later.
+
+**What I did instead.** The `schema-reviewer` pass found it before any of it was applied, and
+was precise about which operation does what. I replaced the field validator with a
+`pre('validate')` hook for creation and a `pre(/^(updateOne|updateMany|findOneAndUpdate|...)$/)`
+hook that refuses any update touching `role`, `clientOrgId`, `_id` or `username` outright —
+`role` and `clientOrgId` are set once, and a partial `$set: { role: 'admin' }` carries no
+organisation to check the invariant against anyway. Same shape as the append-only hook already on
+`SessionEventSchema`. Then I wrote four tests that go **at the database directly rather than
+through the API**, because the API refuses all of this already and testing through it would have
+passed against the broken version too.
+
+**The pattern, since this is the third time.** D-012 was a comment saying `sessionEvents` was
+append-only with nothing stopping an `updateOne`. The venue-snapshot note above was a comment
+saying an invariant existed while one reader ignored it. This one is a comment saying a validator
+enforced something it structurally could not. Each time the code was plausible, the tests were
+green, and the comment was the thing that made it look finished. I do not think the lesson is
+"write fewer comments" — it is that a comment claiming an invariant is a claim that needs the
+same verification as a claim about behaviour, and the cheap way to verify it is to try to
+violate the invariant from below, at the layer the comment says is protected.

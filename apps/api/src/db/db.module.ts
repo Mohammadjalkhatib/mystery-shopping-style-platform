@@ -2,7 +2,7 @@ import { Module, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectConnection, MongooseModule } from '@nestjs/mongoose';
 import type { Connection } from 'mongoose';
-import { syncPingTtlIndex } from './indexes.js';
+import { assertUserIndexes, syncPingTtlIndex } from './indexes.js';
 import { ClientOrg, ClientOrgSchema, Venue, VenueSchema } from './schemas/org-venue.schema.js';
 import {
   Assignment,
@@ -15,6 +15,7 @@ import {
   TaskSchema,
 } from './schemas/task-session.schema.js';
 import { Ping, PingSchema } from './schemas/ping.schema.js';
+import { User, UserSchema } from './schemas/user.schema.js';
 import {
   OutboxEntry,
   OutboxSchema,
@@ -28,6 +29,7 @@ import {
 
 const MODELS = MongooseModule.forFeature([
   { name: ClientOrg.name, schema: ClientOrgSchema },
+  { name: User.name, schema: UserSchema },
   { name: Venue.name, schema: VenueSchema },
   { name: Task.name, schema: TaskSchema },
   { name: Assignment.name, schema: AssignmentSchema },
@@ -48,11 +50,13 @@ export class DbModule implements OnModuleInit {
   ) {}
 
   /**
-   * Reconcile the ping TTL with PING_RETENTION_DAYS on every boot.
-   * See indexes.ts for why re-declaring the index is not enough.
+   * Reconcile the ping TTL with PING_RETENTION_DAYS on every boot, and assert that the
+   * `users` indexes exist. See indexes.ts for why re-declaring an index is not enough in
+   * either case.
    */
   async onModuleInit(): Promise<void> {
     const days = Number(this.config.get<string>('PING_RETENTION_DAYS') ?? 30);
     await syncPingTtlIndex(this.connection, days);
+    await assertUserIndexes(this.connection);
   }
 }

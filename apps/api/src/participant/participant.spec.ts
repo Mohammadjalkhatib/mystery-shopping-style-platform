@@ -30,6 +30,8 @@ import { ParticipantEventsService } from './participant-events.service.js';
 import { ParticipantService } from './participant.service.js';
 import type { ParticipantDashboard } from './participant.controller.js';
 import type { ParticipantNotification } from './participant.service.js';
+import { seedDemoUsers } from '../../test/seed-users.js';
+import { testDbModule } from '../../test/nest-db.js';
 
 const ORG = 'org-alfa-retail';
 const ME = 'u-participant-1';
@@ -141,6 +143,8 @@ describe('participant dashboard', () => {
   beforeAll(async () => {
     mongod = await MongoMemoryServer.create();
     conn = await mongoose.createConnection(mongod.getUri('participant')).asPromise();
+    // Real accounts now back /auth/login (D-037), so the roster has to exist.
+    await seedDemoUsers(conn);
 
     Venues = conn.model(Venue.name, VenueSchema) as Model<Venue>;
     Tasks = conn.model(Task.name, TaskSchema) as Model<Task>;
@@ -162,7 +166,11 @@ describe('participant dashboard', () => {
     venueId = String(v._id);
 
     const moduleRef = await Test.createTestingModule({
-      imports: [ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }), AuthModule],
+      imports: [
+        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        testDbModule(conn),
+        AuthModule,
+      ],
       controllers: [ParticipantController],
       providers: [
         ParticipantService,

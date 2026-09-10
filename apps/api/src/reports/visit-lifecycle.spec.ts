@@ -41,6 +41,8 @@ import { EvaluatorRunner } from '../verification/evaluator.runner.js';
 import { EvaluatorService, LEASE_SECONDS } from '../verification/evaluator.service.js';
 import { ReportsController } from './reports.controller.js';
 import { ReportsService } from './reports.service.js';
+import { seedDemoUsers } from '../../test/seed-users.js';
+import { testDbModule } from '../../test/nest-db.js';
 
 /**
  * The whole visit, end to end, against a real replica set.
@@ -138,6 +140,8 @@ describe('visit lifecycle', () => {
   beforeAll(async () => {
     mongod = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     conn = await mongoose.createConnection(mongod.getUri('lifecycle')).asPromise();
+    // Real accounts now back /auth/login (D-037), so the roster has to exist.
+    await seedDemoUsers(conn);
 
     Sessions = conn.model(Session.name, SessionSchema) as Model<Session>;
     Venues = conn.model(Venue.name, VenueSchema) as Model<Venue>;
@@ -165,7 +169,11 @@ describe('visit lifecycle', () => {
     venueId = String(v._id);
 
     const moduleRef = await Test.createTestingModule({
-      imports: [ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }), AuthModule],
+      imports: [
+        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        testDbModule(conn),
+        AuthModule,
+      ],
       controllers: [SessionsController, ReportsController, PingsController],
       providers: [
         SessionsService,
