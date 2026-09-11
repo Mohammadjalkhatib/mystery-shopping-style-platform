@@ -2602,3 +2602,44 @@ venue's own radius; a 25 m geofence arguably deserves a tighter warning threshol
 timeout is a guess. `circleFor` is inline in `MapPicker` rather than in `slippy.ts` and so is
 untested — it is a pixel offset, visible the moment it is wrong, which is the line the testing
 policy draws.
+
+## `fix/participant-nav-inline` — the participant nav actually matches the console now
+
+**Decision:** D-049, completing D-048. Also `docs/AI-NOTES.md`, 2026-09-12.
+
+**What changed.** `ParticipantApp` renders `PillTabs` twice — inline in the `Toolbar` from `lg` up,
+second row inside the same `AppBar` below that — at the identical breakpoint `Console.tsx` uses.
+The nav config and the tab handler are hoisted to `navItems` and `selectTab` so the two placements
+share one definition.
+
+**What was wrong before.** D-048 gave the participant shell the second row ONLY. The console has
+had both placements since D-047, so on any wide window the console's pills were in the bar and the
+participant's were in a strip beneath it — the difference the work was supposed to remove. D-048's
+entry recorded the half-built version as the decision.
+
+**How to check this stays true.** Both files must report the same two lines:
+
+    grep -n "display: { xs: 'none', lg: 'flex' }\|display: { xs: 'block', lg: 'none' }" \
+      apps/web/src/pages/Console.tsx apps/web/src/participant/ParticipantApp.tsx
+
+Two hits per file. A claim that the two surfaces are consistent should be read off both files,
+not inferred from having edited one.
+
+**Note on the breakpoint.** `lg` is generous for two pills — `md` would put the participant nav in
+the bar on a tablet too. Deliberately not done: different breakpoints per surface reintroduces the
+inconsistency. If it is revisited, lower both.
+
+**Files.**
+
+- `apps/web/src/participant/ParticipantApp.tsx`: `navItems` and `selectTab` hoisted, inline
+  placement added, second row gated to below `lg`, title no longer `flexGrow`
+- `docs/DECISIONS.md`: D-049
+- `docs/AI-NOTES.md`: reporting parity that was not built
+
+**Another session is active in this tree.** `feat/use-my-location` (`8e463f5`, the venue picker
+asking the device for a coordinate) merged into `dev` mid-work and this branch was created on top
+of it, so it carries their commits as a base. That is why the suite is 650 rather than 643 — seven
+of those tests are theirs. All pass.
+
+**Verified.** `tsc --noEmit` clean, `vite build` clean, suite 650/650, RTL grep clean, and both
+call sites grepped for matching breakpoints.

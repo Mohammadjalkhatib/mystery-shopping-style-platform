@@ -250,3 +250,30 @@ difference is that the invariant one needed a test to catch and this one needed 
 the rule I want is narrower and cheaper — **any claim about what the repository contains or does
 not contain gets verified before it is written down, not after.** "The app has no X" is a claim
 about the repo. So is "nothing else uses this". Both are one command away.
+
+### 2026-09-12 - I reported parity I had not built
+
+**What happened.** Asked to make the participant nav match the console's, I moved it off the
+bottom bar into the `AppBar` and reported that "both surfaces navigate the same way now". They
+did not. The console renders its pills inline in the toolbar row from `lg` up and only drops to a
+second row below that; I gave the participant shell the second row only. At any wide width the
+two still looked different, which is the exact thing I had been asked to fix. The user found it
+and told me again.
+
+**Why it was wrong.** I built one of the two placements and then described the goal rather than
+the result. The console's inline-vs-second-row split was code I had written myself, in the branch
+immediately before, and D-047 documents it — so this was not a gap in knowledge, it was not
+re-reading my own work before claiming it had been matched. D-048's entry then recorded the
+half-built version as the decision, so the log asserted parity too.
+
+**What I did instead.** Hoisted the nav config, rendered `PillTabs` in both positions at the same
+`lg` breakpoint the console uses, and added D-049 to correct D-048's placement rather than editing
+it. Verified this time by grepping both files for the breakpoint and confirming the two matched,
+instead of concluding it from having done the work.
+
+**The pattern.** The 2026-09-11 note above is about asserting a fact about the repo without
+checking it. This is the same failure pointed inward: asserting a fact about my own change without
+checking it. "Both now do X" is a claim about two things, and I had looked at one. The cheap check
+is the one I ran afterwards and should have run before — diff the two call sites, or grep for the
+property that is supposed to be shared. A claim of consistency between two places needs to be
+read off both places, never inferred from having edited one.

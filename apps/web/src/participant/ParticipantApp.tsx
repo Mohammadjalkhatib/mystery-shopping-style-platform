@@ -106,6 +106,38 @@ export function ParticipantApp() {
     void refreshNotifications();
   }, [loadDashboard, refreshNotifications]);
 
+  /**
+   * The nav's contents, hoisted so the two placements below share one definition.
+   *
+   * Rendered twice -- inline in the toolbar from `lg` up, on its own row below that -- with the
+   * inactive one `display: none`, so only one tablist is ever in the accessibility tree. Same
+   * structure as the console's `ConsoleNav` (D-047), which is the point: the two surfaces should
+   * put their nav in the same place at the same widths.
+   */
+  const navItems = [
+    { key: 'visit' as Tab, label: t('participant.nav.visit'), icon: <StorefrontIcon /> },
+    {
+      key: 'history' as Tab,
+      label: t('participant.nav.history'),
+      icon: (
+        // The dot sits on the tab as well as the bell, because a participant who dismissed the
+        // sheet without tapping through still has an unread decision.
+        <Badge
+          color="secondary"
+          variant="dot"
+          invisible={!notifications.items.some((n) => n.kind === 'outcome')}
+        >
+          <HistoryIcon />
+        </Badge>
+      ),
+    },
+  ];
+
+  const selectTab = (v: Tab): void => {
+    setTab(v);
+    setFocus(null);
+  };
+
   return (
     <Box
       sx={{
@@ -119,11 +151,21 @@ export function ParticipantApp() {
         <Toolbar sx={{ gap: 1, minHeight: { xs: 56, sm: 64 } }}>
           <Typography
             variant="h3"
-            sx={{ fontSize: { xs: '1rem', sm: '1.05rem' }, flexGrow: 1, minWidth: 0 }}
+            sx={{ fontSize: { xs: '1rem', sm: '1.05rem' }, minWidth: 0, flexShrink: 0 }}
             noWrap
           >
             {t('auth.appName')}
           </Typography>
+
+          {/* Inline in the bar itself from `lg` up, exactly as the console does. */}
+          <PillTabs
+            value={tab}
+            onChange={selectTab}
+            items={navItems}
+            sx={{ display: { xs: 'none', lg: 'flex' }, marginInlineStart: '8px' }}
+          />
+
+          <Box sx={{ flexGrow: 1, minWidth: 0 }} />
           {/* The name is what a signed-in participant least needs told; it goes last of the text. */}
           <Typography
             variant="body2"
@@ -149,47 +191,25 @@ export function ParticipantApp() {
         </Toolbar>
 
         {/*
-          The section nav, moved out of a fixed bottom bar and into the app bar, so this shell
-          navigates the same way the console does (D-048).
+          The same nav on its own row, below `lg`, where the toolbar has no room for it beside
+          the title, the account, the bell and two buttons.
 
-          The thumb-reach argument for a bottom bar still holds for PRIMARY actions, and those
-          have not moved: "Start visit", "End visit" and "Submit report" are all still pinned to
-          the bottom of their screens. Switching between the runner and the history list is not
-          a primary action -- it is done a handful of times a day, and it was occupying the most
-          reachable strip on the screen permanently.
+          This lives in the `AppBar` rather than a fixed bottom bar (D-048). The thumb-reach
+          argument for a bottom bar still holds for PRIMARY actions, and those have not moved:
+          "Start visit", "End visit" and "Submit report" are all still pinned to the bottom of
+          their screens. Switching between the runner and the history list is not a primary
+          action -- it is done a handful of times a day, and it was occupying the most reachable
+          strip on the screen permanently.
         */}
         <Box
           sx={{
+            display: { xs: 'block', lg: 'none' },
             borderTop: `1px solid ${qa.neutral[100]}`,
             px: { xs: 1, sm: 2 },
             py: 0.75,
           }}
         >
-          <PillTabs
-            value={tab}
-            onChange={(v) => {
-              setTab(v);
-              setFocus(null);
-            }}
-            items={[
-              { key: 'visit' as Tab, label: t('participant.nav.visit'), icon: <StorefrontIcon /> },
-              {
-                key: 'history' as Tab,
-                label: t('participant.nav.history'),
-                icon: (
-                  // The dot sits on the tab as well as the bell, because a participant who
-                  // dismissed the sheet without tapping through still has an unread decision.
-                  <Badge
-                    color="secondary"
-                    variant="dot"
-                    invisible={!notifications.items.some((n) => n.kind === 'outcome')}
-                  >
-                    <HistoryIcon />
-                  </Badge>
-                ),
-              },
-            ]}
-          />
+          <PillTabs value={tab} onChange={selectTab} items={navItems} />
         </Box>
       </AppBar>
 
