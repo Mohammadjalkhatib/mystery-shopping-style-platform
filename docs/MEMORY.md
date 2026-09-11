@@ -2552,3 +2552,53 @@ three touched files.
 **Open.** The participant artboards still draw a single-row bar reading "Your visit". They were
 never literal about that bar — no bell, no language toggle, no sign-out — and were left as-is
 rather than half-corrected. The sidebar option from D-047 is still drawn and not built.
+
+## `feat/use-my-location` — the venue picker can ask the device where it is
+
+**What exists now.** The map picker (`MapPicker`) has a third way to set a coordinate. Search
+and dragging were already there; "Use my location" is the new one, sitting beside the search
+box, and it is the fast path for the common case of adding a venue while standing in it. It
+takes one `getCurrentPosition` fix, recentres the map, emits the coordinate through the same
+`onPick` the other two use, and shows what it did. Both admins and business users get it —
+there is one `VenueForm` in `TasksTab.tsx` and it serves both roles.
+
+**The part that is not obvious.** The fix is not trusted as an answer, it is drawn as evidence.
+A browser fix reports an accuracy radius that runs from about 5 m on GPS to several kilometres
+on an IP lookup, so:
+
+- the arrival zoom comes from that accuracy (`zoomForAccuracy`), not from a constant, so a coarse
+  fix visibly lands on a whole district and a sharp one lands on a street
+- the accuracy radius is drawn to scale as a circle anchored to the FIX, not to the viewport
+  centre, so it stays over its ground while the map is dragged — the pin leaving the circle is
+  the user seeing that they have chosen a spot the device did not measure
+- above 100 m the caption switches from confirmation to a warning to drag
+- the caption and circle both clear on the first drag, because at that point they describe
+  neither the fix nor the pin
+
+Writing the fix straight into the coordinate field was the obvious version and is D-020 with a
+new entrance: the precision guard counts decimal places, not metres, so a 2 km fix formatted to
+six decimals sails through it. See D-049 for the full argument.
+
+**Files.**
+
+- `apps/web/src/components/slippy.ts`: `metresPerPixel` and `zoomForAccuracy`, both pure
+- `apps/web/src/components/slippy.spec.ts`: covers both, including the zoom cap at 17
+- `apps/web/src/components/MapPicker.tsx`: `LocateState`, `useMyLocation`, the status region,
+  the accuracy circle and `circleFor`
+- `apps/web/src/i18n/en.json`, `ar.json`: six `admin.venueForm.locate*` strings
+- `docs/DECISIONS.md`: D-049
+
+**Trap.** There is no Prettier config and no Prettier dependency in this repo. Running
+`npx prettier --write` pulls a fresh Prettier that defaults to double quotes and reformats every
+touched file end to end — a 350-line diff for a 200-line change. Do not run it. The house style
+is single quotes, 100 columns, enforced by nobody.
+
+**Verified.** `npm run typecheck` clean, full suite 650/650. Not exercised in a live browser —
+geolocation needs a secure context and a real permission prompt, so the fix path, the denial
+path and the circle have been reasoned about and type-checked but not clicked.
+
+**Open.** 100 m is borrowed from the engine's accuracy ceiling rather than derived from the
+venue's own radius; a 25 m geofence arguably deserves a tighter warning threshold. The 30 s
+timeout is a guess. `circleFor` is inline in `MapPicker` rather than in `slippy.ts` and so is
+untested — it is a pixel offset, visible the moment it is wrong, which is the line the testing
+policy draws.

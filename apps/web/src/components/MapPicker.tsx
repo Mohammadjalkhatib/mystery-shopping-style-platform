@@ -1,5 +1,7 @@
+import MyLocationIcon from '@mui/icons-material/MyLocation';
 import {
   Box,
+  Button,
   CircularProgress,
   IconButton,
   List,
@@ -16,10 +18,15 @@ import { useT } from '../i18n/LocaleContext.js';
 import {
   clampZoom,
   decimalsForZoom,
+  latToTileY,
+  lngToTileX,
   MAX_ZOOM,
+  metresPerPixel,
   MIN_ZOOM,
   panCentre,
+  TILE_SIZE,
   tilesForViewport,
+  zoomForAccuracy,
 } from './slippy.js';
 
 /**
@@ -32,6 +39,31 @@ const SEARCH_DEBOUNCE_MS = 450;
 const HEIGHT = 260;
 
 /**
+ * How long to wait for a fix before giving up.
+ *
+ * Longer than the 20 s the visit tracker allows, because the cost of waiting is different:
+ * there a slow fix is one missing sample in a long trace, here it is the only answer the user
+ * asked for, and a receiver indoors routinely takes half a minute to settle.
+ */
+const LOCATE_TIMEOUT_MS = 30_000;
+
+/**
+ * Above this, the fix is shown with a warning rather than presented as the answer.
+ *
+ * 100 m is the accuracy ceiling the verification engine already treats as unusable, reused
+ * deliberately: a fix too coarse to prove a participant stood somewhere is too coarse to define
+ * where that somewhere is.
+ */
+const COARSE_ACCURACY_M = 100;
+
+type LocateState =
+  | { kind: 'idle' }
+  | { kind: 'locating' }
+  | { kind: 'located'; lat: number; lng: number; accuracyM: number }
+  | { kind: 'denied' }
+  | { kind: 'unavailable' };
+
+/**
  * Pick a venue location on a map instead of typing coordinates.
  *
  * This is the structural fix for D-020. A typed coordinate can be imprecise (`31.98, 35.83`
@@ -42,6 +74,12 @@ const HEIGHT = 260;
  * **The pin is fixed at the centre and the map moves under it.** Deliberately, not for novelty:
  * a draggable pin needs click-versus-drag disambiguation, which is fiddly with a mouse and
  * genuinely bad with a thumb, and it puts the target under the finger that is covering it.
+ *
+ * "Use my location" is the third way in, alongside search and dragging, and it is the fast path
+ * for the common case: someone standing in the venue they are adding. It is deliberately not a
+ * shortcut PAST the pin. The fix recentres the map, draws its own accuracy as a circle, and
+ * leaves the user to confirm by looking -- because a browser fix ranges from 5 m to several
+ * kilometres and only the bottom of that range is a venue coordinate. See D-049.
  *
  * No mapping library. Leaflet would give smoother inertia and pinch-zoom for ~150 KB and a
  * dependency; the projection maths it would replace is thirty lines and is separately tested
@@ -67,6 +105,7 @@ export function MapPicker({
   const [results, setResults] = useState<GeocodeResult[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [locate, setLocate] = useState<LocateState>({ kind: 'idle' });
 
   // Tiles are laid out in pixels, so the actual rendered width has to be known, not assumed.
   useEffect(() => {
@@ -138,6 +177,43 @@ export function MapPicker({
   );
 
   /**
+   * Centre the map on the device's own fix.
+   *
+   * `getCurrentPosition`, not `watchPosition`: this answers a question once, and a watch would
+   * keep yanking the map out from under someone who has started fine-tuning the pin.
+   *
+   * The zoom comes from the reported accuracy rather than being fixed, so a 3 km IP-derived fix
+   * lands showing a whole district and a 6 m GPS fix lands on a street. That is the difference
+   * between the two, drawn instead of described.
+   */
+  const useMyLocation = (): void => {
+    if (!('geolocation' in navigator)) {
+      setLocate({ kind: 'unavailable' });
+      return;
+    }
+    setLocate({ kind: 'locating' });
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude, accuracy } = pos.coords;
+        const z = zoomForAccuracy(accuracy, latitude, HEIGHT);
+        setZoom(z);
+        setCentre({ lat: latitude, lng: longitude });
+        emit({ lat: latitude, lng: longitude }, z);
+        setLocate({ kind: 'located', lat: latitude, lng: longitude, accuracyM: accuracy });
+        // Whatever was typed stays in the search box, but a stale result list must not reappear
+        // over a map that has already moved somewhere else.
+        setResults(null);
+      },
+      (err) => {
+        // Denial is separated from failure because only one of them is worth pressing again. A
+        // denied permission needs a browser setting changed; a timeout just needs another go.
+        setLocate({ kind: err.code === err.PERMISSION_DENIED ? 'denied' : 'unavailable' });
+      },
+      { enableHighAccuracy: true, timeout: LOCATE_TIMEOUT_MS, maximumAge: 0 },
+    );
+  };
+
+  /**
    * Jump to a result, then hand the coordinate straight to the form.
    *
    * The zoom is chosen from what was found (`zoomForKind` on the server): dropping street level
@@ -150,6 +226,7 @@ export function MapPicker({
     setCentre({ lat: r.lat, lng: r.lng });
     emit({ lat: r.lat, lng: r.lng }, z);
     setResults(null);
+    setLocate({ kind: 'idle' });
     setQuery(r.label.split(',')[0] ?? r.label);
   };
 
@@ -177,6 +254,9 @@ export function MapPicker({
       emit(c, zoom);
       return c;
     });
+    // The accuracy note described the fix, not the pin. Once the pin has been dragged it is true
+    // of neither, so it goes rather than sitting there contradicting the map.
+    setLocate((l) => (l.kind === 'idle' ? l : { kind: 'idle' }));
   };
 
   const changeZoom = (delta: number): void => {
@@ -192,28 +272,79 @@ export function MapPicker({
 
   const tiles = tilesForViewport(centre, zoom, width, HEIGHT);
   const decimals = decimalsForZoom(zoom);
+  const accuracyCircle = locate.kind === 'located' ? circleFor(locate, centre, zoom, width) : null;
 
   return (
     <Box>
       <Box sx={{ position: 'relative', mb: 1 }}>
-        <TextField
-          fullWidth
-          size="small"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder={t('admin.venueForm.searchPlaceholder')}
-          slotProps={{
-            input: {
-              endAdornment: searching ? <CircularProgress size={16} /> : undefined,
-            },
-          }}
-        />
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+          <TextField
+            fullWidth
+            size="small"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t('admin.venueForm.searchPlaceholder')}
+            slotProps={{
+              input: {
+                endAdornment: searching ? <CircularProgress size={16} /> : undefined,
+              },
+            }}
+          />
+
+          {/*
+            Labelled, not a bare crosshair on the map. A crosshair is the convention in a map
+            that IS the product; this one sits in a form next to a search box, where an
+            unlabelled icon is one more thing to decode.
+          */}
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={useMyLocation}
+            disabled={locate.kind === 'locating'}
+            startIcon={
+              locate.kind === 'locating' ? <CircularProgress size={16} /> : <MyLocationIcon />
+            }
+            sx={{ flexShrink: 0, whiteSpace: 'nowrap' }}
+          >
+            {locate.kind === 'locating'
+              ? t('admin.venueForm.locating')
+              : t('admin.venueForm.useMyLocation')}
+          </Button>
+        </Stack>
 
         {searchError && (
           <Typography variant="caption" color="error" sx={{ display: 'block', mt: 0.5 }}>
             {t('admin.venueForm.searchFailed')}
           </Typography>
         )}
+
+        {/*
+          Announced, because the visible feedback for this button is the map moving and that is
+          exactly the feedback a screen reader does not get.
+        */}
+        <Box role="status" aria-live="polite">
+          {locate.kind === 'denied' && (
+            <Typography variant="caption" color="error" sx={{ display: 'block', mt: 0.5 }}>
+              {t('admin.venueForm.locateDenied')}
+            </Typography>
+          )}
+          {locate.kind === 'unavailable' && (
+            <Typography variant="caption" color="error" sx={{ display: 'block', mt: 0.5 }}>
+              {t('admin.venueForm.locateFailed')}
+            </Typography>
+          )}
+          {locate.kind === 'located' && (
+            <Typography
+              variant="caption"
+              color={locate.accuracyM > COARSE_ACCURACY_M ? 'warning.main' : 'text.secondary'}
+              sx={{ display: 'block', mt: 0.5 }}
+            >
+              {locate.accuracyM > COARSE_ACCURACY_M
+                ? t('admin.venueForm.locatedCoarse', { metres: Math.round(locate.accuracyM) })
+                : t('admin.venueForm.located', { metres: Math.round(locate.accuracyM) })}
+            </Typography>
+          )}
+        </Box>
 
         {results !== null && (
           <Paper
@@ -294,6 +425,28 @@ export function MapPicker({
           />
         ))}
 
+        {/*
+          The reported accuracy of the fix, drawn to scale. A number in a caption is easy to skim
+          past; a circle covering half the district is not.
+        */}
+        {accuracyCircle && (
+          <Box
+            aria-hidden
+            sx={{
+              position: 'absolute',
+              left: accuracyCircle.left,
+              top: accuracyCircle.top,
+              width: accuracyCircle.size,
+              height: accuracyCircle.size,
+              borderRadius: '50%',
+              border: '1px solid',
+              borderColor: 'primary.main',
+              bgcolor: 'rgba(25, 118, 210, 0.14)',
+              pointerEvents: 'none',
+            }}
+          />
+        )}
+
         {/* The pin. Fixed at the centre; the map moves beneath it. */}
         <Box
           sx={{
@@ -349,6 +502,33 @@ export function MapPicker({
       </Stack>
     </Box>
   );
+}
+
+/**
+ * Where to draw the accuracy circle, in viewport pixels.
+ *
+ * Anchored to the fix rather than to the viewport centre, so it stays over the ground it
+ * describes while the map is dragged away from it. That is the point of drawing it at all: the
+ * moment the pin leaves the circle, the user has chosen a spot their device did not measure, and
+ * they can see that they have.
+ *
+ * Returns null once the circle is entirely off screen, which happens quickly at street zoom and
+ * is not worth a DOM node.
+ */
+function circleFor(
+  fix: { lat: number; lng: number; accuracyM: number },
+  centre: { lat: number; lng: number },
+  zoom: number,
+  width: number,
+): { left: number; top: number; size: number } | null {
+  const dx = (lngToTileX(fix.lng, zoom) - lngToTileX(centre.lng, zoom)) * TILE_SIZE;
+  const dy = (latToTileY(fix.lat, zoom) - latToTileY(centre.lat, zoom)) * TILE_SIZE;
+  const cx = width / 2 + dx;
+  const cy = HEIGHT / 2 + dy;
+  const radius = fix.accuracyM / metresPerPixel(fix.lat, zoom);
+  if (cx + radius < 0 || cx - radius > width) return null;
+  if (cy + radius < 0 || cy - radius > HEIGHT) return null;
+  return { left: cx - radius, top: cy - radius, size: radius * 2 };
 }
 
 /**

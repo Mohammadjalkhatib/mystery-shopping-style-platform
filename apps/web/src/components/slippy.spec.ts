@@ -4,11 +4,14 @@ import {
   latToTileY,
   lngToTileX,
   MAX_LAT,
+  metresPerPixel,
+  MIN_ZOOM,
   normaliseLng,
   panCentre,
   tileXToLng,
   tileYToLat,
   tilesForViewport,
+  zoomForAccuracy,
 } from './slippy.js';
 
 /**
@@ -139,6 +142,56 @@ describe('web mercator tiles', () => {
     it('always meets the minimum the geofence rule needs', () => {
       // D-020: four decimals is required for the tightest fence the schema allows.
       for (let z = 2; z <= 19; z++) expect(decimalsForZoom(z)).toBeGreaterThanOrEqual(4);
+    });
+  });
+  describe('metresPerPixel', () => {
+    it('matches the known equatorial scale at zoom 0', () => {
+      expect(metresPerPixel(0, 0)).toBeCloseTo(156543.03, 1);
+    });
+
+    it('halves with every zoom level', () => {
+      expect(metresPerPixel(31.95, 13)).toBeCloseTo(metresPerPixel(31.95, 12) / 2, 6);
+    });
+
+    it('shrinks away from the equator', () => {
+      // Mercator's distortion. A pixel at 60 degrees covers half the ground a pixel at 0 does.
+      expect(metresPerPixel(60, 12)).toBeCloseTo(metresPerPixel(0, 12) / 2, 2);
+    });
+  });
+
+  describe('zoomForAccuracy', () => {
+    const H = 260;
+
+    it('frames a coarse fix wider than a sharp one', () => {
+      // The whole point of the function: a 3 km IP lookup must not be drawn at the same zoom as
+      // a 6 m GPS fix, because that shows a guess and a measurement as the same picture.
+      expect(zoomForAccuracy(3000, AMMAN.lat, H)).toBeLessThan(zoomForAccuracy(6, AMMAN.lat, H));
+    });
+
+    it('actually fits the accuracy circle in the viewport', () => {
+      for (const accuracy of [8, 40, 150, 900, 4000]) {
+        const z = zoomForAccuracy(accuracy, AMMAN.lat, H);
+        const spanM = metresPerPixel(AMMAN.lat, z) * H;
+        expect({ accuracy, fits: spanM >= 2 * accuracy }).toEqual({ accuracy, fits: true });
+        // ...and no wider than it needs to be, except where the zoom cap deliberately holds back.
+        if (z < 17) expect(spanM).toBeLessThan(2 * accuracy * 8);
+      }
+    });
+
+    it('stops short of maximum zoom even for an implausibly sharp fix', () => {
+      // A 1 m fix is still not a doorway, and zooming past the surrounding streets removes the
+      // context the user needs to correct it.
+      expect(zoomForAccuracy(1, AMMAN.lat, H)).toBe(17);
+      expect(zoomForAccuracy(0, AMMAN.lat, H)).toBe(17);
+    });
+
+    it('never returns a zoom the picker cannot render', () => {
+      for (const accuracy of [1, 50, 1e4, 1e7]) {
+        const z = zoomForAccuracy(accuracy, AMMAN.lat, H);
+        expect(z).toBeGreaterThanOrEqual(MIN_ZOOM);
+        expect(z).toBeLessThanOrEqual(17);
+        expect(Number.isInteger(z)).toBe(true);
+      }
     });
   });
 });
