@@ -127,3 +127,37 @@ export function tilesForViewport(
 export function decimalsForZoom(zoom: number): number {
   return clamp(Math.round(zoom / 3) + 1, 4, 6);
 }
+
+/**
+ * Ground distance covered by one screen pixel, at a latitude and zoom.
+ *
+ * The `cos(lat)` is the whole of Mercator's distortion: a pixel at 60 degrees north covers half
+ * the ground a pixel at the equator does. Dropping it is the classic way to get a scale that is
+ * right in Jordan and wrong in Norway.
+ */
+export function metresPerPixel(lat: number, zoom: number): number {
+  return (EQUATORIAL_M_PER_PX * Math.cos((clampLat(lat) * Math.PI) / 180)) / 2 ** zoom;
+}
+
+/** One pixel at zoom 0 on the equator, in metres. The earth's circumference over 256 px. */
+const EQUATORIAL_M_PER_PX = 156543.03392;
+
+/**
+ * The zoom at which a fix of this reported accuracy fills a viewport of this height.
+ *
+ * This is the honest half of "use my location". A browser fix carries an accuracy radius that
+ * runs from about 5 m on GPS to several kilometres on an IP lookup, and dropping the pin at
+ * street zoom in both cases draws a guess and a measurement identically. Framing the uncertainty
+ * instead means a coarse fix visibly lands on a whole district, which is itself the prompt to
+ * drag the pin somewhere better.
+ *
+ * Capped at 17 rather than MAX_ZOOM: a 5 m fix is still not a doorway, and zooming past the
+ * point where the surrounding streets are visible removes the context needed to correct it.
+ */
+export function zoomForAccuracy(accuracyM: number, lat: number, viewportPx: number): number {
+  // Accuracy is a radius, so the diameter is what has to fit, and it is fitted to half the
+  // viewport rather than all of it so there is map left around the circle to drag against.
+  const needed = (2 * Math.max(accuracyM, 1)) / Math.max(viewportPx / 2, 1);
+  const z = Math.log2((EQUATORIAL_M_PER_PX * Math.cos((clampLat(lat) * Math.PI) / 180)) / needed);
+  return clamp(Math.round(z), MIN_ZOOM, 17);
+}
