@@ -2201,3 +2201,34 @@ long an indoor receiver needs; nothing measured it. The button is available to a
 business users alike because they share one `VenueForm`, so a business user adding a venue from
 head office gets an office-accuracy fix and a warning telling them to drag — correct, but it
 means the fast path is only fast for the people actually on site.
+
+## D-049: The participant nav sits inline in the toolbar at the same width the console's does
+
+**Date:** 2026-09-12
+**Status:** accepted. Completes D-048, which described only half of the placement.
+
+**Decision.** The participant shell renders `PillTabs` twice, exactly as the console does since
+D-047: inline in the `Toolbar` beside the title from `lg` up, and on its own row inside the same
+`AppBar` below that.
+
+**Context.** D-048 moved the participant nav off the bottom bar and into the `AppBar`, and its
+entry says "on a second row inside its `AppBar`" — which is what was built. The console, however,
+puts the pills inline in the toolbar row itself from `lg` up and only falls back to a second row
+below that. So on any wide window the two surfaces still looked different: the console's nav was
+in the bar, the participant's was in a strip under it. D-048 claimed parity it had not delivered.
+
+**Alternatives considered.**
+
+- *Use `md` for the participant instead, since two pills need far less room than the console's
+  five.* Genuinely better on its own terms — it would put the nav in the bar on a tablet too.
+  Rejected because it makes the two surfaces change shape at different widths, which is the
+  inconsistency this entry exists to remove. If it is ever revisited, lower BOTH.
+- *Drop the second row and let the nav scroll inside the toolbar at every width.* Rejected: the
+  participant toolbar already carries the title, the account name, the bell and two buttons, and
+  on a 360 px phone adding a scrolling nav to that row makes five things compete in 360 px.
+
+**Consequences.** Two `PillTabs` instances per surface now, the hidden one `display: none` so only
+one tablist reaches the accessibility tree. The practical effect for participants is close to nil:
+this shell is used on phones, which are below `lg` essentially always, so the second row is what
+they will see. The change is really about the two surfaces agreeing when someone opens the
+participant view on a laptop — which is exactly how it is reviewed.
