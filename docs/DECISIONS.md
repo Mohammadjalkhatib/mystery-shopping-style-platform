@@ -2160,3 +2160,44 @@ two callers, so a change to it moves both surfaces at once, which is the point a
 The participant artboards on the design canvas still draw a simplified single-row bar reading
 "Your visit"; they were never literal about that bar (they omit the bell, the language toggle and
 sign-out too) and were left alone rather than half-corrected.
+
+## D-049: "Use my location" recentres the map and draws its own accuracy, rather than filling the field
+
+**Date:** 2026-09-12
+**Status:** accepted
+
+**Decision.** The venue map picker gains a third way in, alongside address search and dragging:
+a "Use my location" button that takes one `getCurrentPosition` fix, recentres the map on it and
+emits the coordinate. The zoom is derived from the fix's reported accuracy
+(`zoomForAccuracy` in `slippy.ts`), and the accuracy radius is drawn to scale as a circle
+anchored to the fix. Above 100 m the caption changes from confirmation to a warning.
+
+**Context.** Asked for it: the common case for adding a venue is someone standing in it, and
+making them type a name into a geocoder to find the building they are inside is silly. The real
+question is not whether to add the button but how much to trust what it returns — a browser fix
+is 5 m on GPS and several kilometres on an IP lookup, and the API reports which it gave you.
+
+**Alternatives considered.**
+
+- *Write the fix straight into the coordinate field and skip the map.* The obvious version, and
+  rejected as exactly the D-020 failure with a new entrance. A 2 km IP fix formatted to six
+  decimals looks identical to a 6 m GPS fix, so the geofence gets anchored on a guess and the
+  precision guard — which counts decimal places, not metres — waves it through.
+- *Refuse to emit a coordinate when accuracy is worse than 100 m.* Tempting and rejected: it
+  leaves the form in a state where the button visibly did something (the map moved) and the
+  field did not change, which reads as a bug. Emitting plus a warning plus a visible circle puts
+  the same information in front of the user without a dead end.
+- *Fixed street-level zoom on arrival, like the geocoder results use.* Rejected because it draws
+  a guess and a measurement as the same picture. Zoom-from-accuracy costs about ten lines of
+  pure maths and makes a bad fix look bad.
+- *`watchPosition`, so the pin tracks the user.* Rejected: this answers a question once. A watch
+  keeps yanking the map away from someone who has started fine-tuning the pin.
+
+**Consequences.** 100 m is borrowed, not derived — it is the accuracy ceiling the verification
+engine already treats as unusable, on the argument that a fix too coarse to prove presence is
+too coarse to define the place. A venue whose true radius is 25 m deserves a tighter threshold
+and does not get one. The 30 s timeout is longer than the tracker's 20 s and is a guess at how
+long an indoor receiver needs; nothing measured it. The button is available to admins and
+business users alike because they share one `VenueForm`, so a business user adding a venue from
+head office gets an office-accuracy fix and a warning telling them to drag — correct, but it
+means the fast path is only fast for the people actually on site.

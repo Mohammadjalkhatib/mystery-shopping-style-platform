@@ -339,7 +339,13 @@
       "searching": "Searching…",
       "noResults": "Nothing found for that search.",
       "searchFailed": "Address search is unavailable right now — drag the map instead.",
-      "searchHint": "Search, then fine-tune by dragging."
+      "searchHint": "Search, then fine-tune by dragging.",
+      "useMyLocation": "Use my location",
+      "locating": "Locating…",
+      "located": "Your device located you to within about {metres} m. Check the pin is on the venue.",
+      "locatedCoarse": "Your device is only sure to within about {metres} m — the shaded circle. That is too coarse for a geofence, so drag the pin onto the venue itself.",
+      "locateDenied": "Location permission is off for this site. Turn it on in the browser, or search for the address instead.",
+      "locateFailed": "Could not get a location from this device. Search for the address instead."
     },
     "venueList": {
       "title": "Venues",

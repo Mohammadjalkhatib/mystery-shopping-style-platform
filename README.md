@@ -128,7 +128,8 @@ Built and working end to end:
 - [x] Console Overview: stat tiles, verdicts per day, and a ranking of the signals that fail most
 - [x] Console People: per-participant results, ranked by what needs attention (D-031)
 - [x] S3-compatible evidence storage (MinIO in compose), hand-signed, with a GridFS fallback
-- [x] Venue coordinates picked on a map, with address search, rather than typed
+- [x] Venue coordinates picked on a map, with address search and a "use my location" button
+      that draws the fix's own accuracy rather than pretending to a precision it does not have
 - [x] Capture watchdog: a silent `watchPosition` is re-attached, and restarts are shown
 - [x] Live presence: the participant is told during the visit when they are not at the venue
 - [x] Participant dashboard: every visit ever assigned, its outcome, and the feedback on it
@@ -785,8 +786,8 @@ behaviour. A wrong verdict is silent and expensive; a broken button is loud and 
 The same five steps in all three environments. What differs is only the URL and where the data
 lands.
 
-1. Sign in as `business`, create a venue (search for it, or drop the map pin), create a task
-   against it, assign it to a participant.
+1. Sign in as `business`, create a venue (search for it, press "Use my location", or drop the
+   map pin by hand), create a task against it, assign it to a participant.
 2. Sign in as that participant, read the consent screen, start the visit.
 3. Leave the tab open and in the foreground. Fixes are sampled every 30 s. To simulate being
    on site, use DevTools → ⋮ → **Sensors** → Location → **Manage** and add the venue's
