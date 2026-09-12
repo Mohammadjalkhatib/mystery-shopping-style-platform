@@ -2605,7 +2605,8 @@ policy draws.
 
 ## `fix/participant-nav-inline` — the participant nav actually matches the console now
 
-**Decision:** D-049, completing D-048. Also `docs/AI-NOTES.md`, 2026-09-12.
+**Decision:** D-050, completing D-048. Also `docs/AI-NOTES.md`, 2026-09-12.
+(Shipped as a duplicate `D-049`; renumbered on `docs/readme-truth-pass`.)
 
 **What changed.** `ParticipantApp` renders `PillTabs` twice — inline in the `Toolbar` from `lg` up,
 second row inside the same `AppBar` below that — at the identical breakpoint `Console.tsx` uses.
@@ -2633,7 +2634,7 @@ inconsistency. If it is revisited, lower both.
 
 - `apps/web/src/participant/ParticipantApp.tsx`: `navItems` and `selectTab` hoisted, inline
   placement added, second row gated to below `lg`, title no longer `flexGrow`
-- `docs/DECISIONS.md`: D-049
+- `docs/DECISIONS.md`: D-050 (committed as a duplicate `D-049`, renumbered later)
 - `docs/AI-NOTES.md`: reporting parity that was not built
 
 **Another session is active in this tree.** `feat/use-my-location` (`8e463f5`, the venue picker
@@ -2643,3 +2644,68 @@ of those tests are theirs. All pass.
 
 **Verified.** `tsc --noEmit` clean, `vite build` clean, suite 650/650, RTL grep clean, and both
 call sites grepped for matching breakpoints.
+
+## `docs/readme-truth-pass` — the README stops contradicting the code
+
+**No decision.** Nothing about the system changed on this branch. Six documentation claims were
+wrong, and three of them described features that exist as though they did not.
+
+**What was wrong, and why it matters.** The README's "What is missing, and why" section is the
+part a reviewer is most likely to trust, because a document that volunteers its own gaps reads as
+candid. Three of its paragraphs had been overtaken by branches that never came back to edit them:
+
+- **"There is no MinIO service ... nothing in the repo speaks S3."** MinIO has been in
+  `docker-compose.yml` since `feat/s3-object-store`, `sigv4.ts` signs by hand, and the deployed
+  demo writes to R2. Written when evidence upload was cut; never revisited when D-026 and D-028
+  reversed the cut.
+- **"There is no capture watchdog."** `watchdog.ts` has existed since `feat/capture-watchdog`
+  (D-023). The same README listed it as a shipped feature eleven lines from the top, so the
+  document contradicted itself rather than merely being stale.
+- **"The brand theme is placeholder ... invented hex values."** Superseded by D-039, which
+  transcribed theQA's real `--qa-*` tokens. A reviewer reading that line while looking at the
+  actual teal learns to discount the rest of the file.
+
+Also: the out-of-scope list still said the deployed demo had no bucket, which the deployment
+section two hundred lines earlier already contradicted; the Features section had a **`Not built:`
+header with nothing under it**; and every headline count was from `chore/submission`, four days
+and twenty-six branches ago.
+
+**Counts corrected, and measured rather than copied.** `npm test` was run: **650 passed across 25
+suites**, and `engine.spec` on its own is **117** — the figure the README already claimed for the
+engine, which was the one number that had stayed true. The README and `docs/ASSESSMENT.md` had
+said 543/22, 33 decisions, 35 memory entries, 4 AI notes, 71 commits. Now 650/25, 50 decisions,
+51 memory entries, 7 AI notes, 110 commits.
+
+**The duplicate decision number.** `D-049` had been used twice — the venue picker's "use my
+location" entry and the participant nav entry, both on 2026-09-12, from two sessions working the
+same tree. `MapPicker.tsx` carries a `See D-049` pointer, so the collision made that reference a
+coin flip. The later of the two is now **D-050**, with a note in its own entry saying it was
+renumbered and why. The `decision-log` skill says never to edit an entry; a heading is not
+reasoning, and leaving two entries sharing a number is the larger violation of what that rule is
+protecting.
+
+**Files.**
+
+- `README.md`: the three false paragraphs rewritten to describe what is actually there, each
+  keeping the honest limitation underneath it — MinIO's missing healthcheck and why, the
+  watchdog's deliberate narrowness and that it has never run on an iPhone, the brand tokens'
+  transcription shelf life and the Google Fonts dependency. Evidence retention replaces the
+  bucket bullet in the out-of-scope list, because retention is the part that is genuinely not
+  built. The empty `Not built:` header now points at the two sections that already carry it
+- `docs/ASSESSMENT.md`: the five counts in the deliverables map and section 4
+- `docs/DECISIONS.md`: the second `D-049` renumbered to `D-050` with a renumbering note
+- `docs/MEMORY.md`, `docs/AI-NOTES.md`: the `D-049` cross-references that pointed at it
+
+**Now true.** Every "there is no X" sentence in `README.md` was re-checked against the tree rather
+than trusted. The three that were wrong had one shape in common: **each was written when a feature
+was cut, and none was revisited when the cut was reversed.** A reversal is a decision entry, a
+memory entry and a feature-list tick, and it was none of those things in the section that claims
+what the system cannot do. Worth a grep for "there is no" before the next submission pass.
+
+**Verified.** Full suite 650/650 across 25 suites, exit 0. `engine.spec` 117/117. No source file
+was touched on this branch, so nothing else could have moved.
+
+**Open.** `apps/web/src/components/MapPicker.tsx:82` still says `See D-049`, which is now correct
+and unambiguous — left alone deliberately, since that entry kept its number. The front-end work
+merged since D-039 has still never been looked at in a browser; this branch does not change that
+and the README now says so in the brand paragraph.
