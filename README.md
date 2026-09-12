@@ -21,13 +21,13 @@ Five minutes, in order:
    "verified" can honestly mean, what the participant is told, scaling, and what I would push
    back on about the idea itself. It ends with an improvement analysis across frontend,
    backend, security and features.
-4. **Skim `docs/DECISIONS.md`.** 33 entries, each with the alternatives and why they lost. If
+4. **Skim `docs/DECISIONS.md`.** 50 entries, each with the alternatives and why they lost. If
    you read five, read D-001, D-005, D-010, D-016 and D-032.
 5. **`docs/AI-NOTES.md`** is where the AI got things wrong, written when it happened rather
-   than reconstructed afterwards. Four entries.
+   than reconstructed afterwards. Seven entries.
 
-**What is here, in numbers:** 543 tests across 22 suites, 33 recorded decisions, 35 memory
-entries, 71 commits on a `feat/* → dev → main` flow where `main` is the deployed branch.
+**What is here, in numbers:** 650 tests across 25 suites, 50 recorded decisions, 52 memory
+entries, 111 commits on a `feat/* → dev → main` flow where `main` is the deployed branch.
 
 **The three things I would want looked at**, because they are where the actual work went:
 
@@ -138,8 +138,11 @@ Built and working end to end:
 - [x] Reviewers write two texts: an internal reason, and optional feedback the participant reads
 - [x] Assigning shows a confirmation dialog naming the participant and venue, visible on a phone
 
-Not built:
-
+**Not built**, in two lists further down, because the distinction matters: **What is missing, and
+why** covers the things this build reaches for and does not finish — evidence retention, deletion
+across the admin surface, a real scheduler for the reaper, the dwell and coverage that an honest
+offline flush still loses. **Deliberately out of scope** covers the cuts — payments, participant
+reputation, native apps, a commercial geocoder, full i18n of the server-composed signal reasons.
 
 ---
 
@@ -292,9 +295,15 @@ set. A standalone container meant `submit` failed locally while working on Atlas
 kind of bug, invisible until someone ran the documented command. The healthcheck initiates the
 set on first start.
 
-**There is no MinIO service.** It existed for evidence upload, which is out of scope and not
-built; nothing in the repo speaks S3. The `S3_*` values stay in `.env.example` so the shape is
-documented if that work resumes.
+**MinIO is part of the stack**, so `docker compose up` exercises the same S3 code path the
+deployed API takes rather than a fallback nobody runs. Two services: `minio` itself, and a
+one-shot `minio-init` that waits for it, creates the bucket and exits — which is the readiness
+signal `api` waits on. There is deliberately **no healthcheck on minio**, because recent images
+ship neither `curl` nor `wget` and a healthcheck using either hangs `depends_on` forever, which
+presents as a broken build rather than a missing binary. Both images are pinned. See D-028.
+
+Remove the four `S3_*` values from the `api` service and evidence falls back to MongoDB GridFS
+with no code change.
 
 Re-running `docker compose up` re-seeds, and the seed is idempotent. It re-clocks demo
 sessions that have **not started**, so the reaper cannot leave them stranded, and it creates
@@ -764,7 +773,7 @@ than being rejected for distance. If it is rejected, check the seed logged
 ### The automated suite
 
 ```bash
-npm test              # 543 tests, 22 suites
+npm test              # 650 tests, 25 suites
 npm run test:watch
 npm test -- engine.spec          # just the verification engine (117 tests)
 npm test -- --coverage
@@ -903,12 +912,22 @@ shape of "re-attached, delivered one cached position, then went quiet". A screen
 genuinely only on for twenty seconds twice would look identical from the trace, and that
 ambiguity is the point below.
 
-**There is no capture watchdog.** If `watchPosition` stops delivering without raising an error,
-nothing notices and nothing restarts it. Treating a missing fix as a gap rather than a failure
-is right for *scoring* — it is what `coverageRatio` exists to weigh — but it also makes a stuck
-watch indistinguishable from an honest dark screen, both to the system and to anyone reading
-the trace afterwards. Distinguishing them needs a deliberate lock/unlock test, not another
-drive.
+**That drive is what produced the capture watchdog** (D-023, `apps/web/src/participant/watchdog.ts`).
+Treating a missing fix as a gap rather than a failure is right for *scoring* — it is what
+`coverageRatio` exists to weigh — but it also made a stuck watch indistinguishable from an honest
+dark screen. So: while the page is visible, if `watchPosition` has said nothing at all — no fix
+**and no error** — for three sampling intervals, the watch is presumed dead and re-attached.
+Restarts are counted and shown to the participant.
+
+It is deliberately narrow. It never runs while the page is hidden, because a silent watch on a
+locked screen is correct behaviour and recording anything there would claim an observation that
+did not happen. It restarts on a missing *callback* rather than a missing *fix*, because a
+receiver that cannot get a lock still fires the error callback on its 20 s timeout — it is alive
+and struggling, and restarting it would throw away a warm watch every time someone walked into a
+basement. And it narrows the ambiguity rather than removing it: a participant in a basement will
+accumulate restarts that fixed nothing, and it cannot help at all while the screen is off, which
+is where most of that 48-minute hole probably came from. **It is still unverified against the
+failure it was written for — nothing here has been run on an iPhone.**
 
 **The offline queue is still untested.** This run was expected to exercise it and did not. Every
 fix arrived with 1–2 seconds of clock skew, so none of them ever sat in the buffer: the 43-minute
@@ -962,8 +981,24 @@ stream is in-process like the console's, so a second API replica would split it 
 truth and the push is an optimisation, so the failure mode is a late notification, not a lost
 one.
 
-**The brand theme is placeholder.** `apps/web/src/theme/theme.ts` still carries invented hex
-values with a comment explaining how to extract the real ones.
+**The brand theme is real, and it is a transcription with a shelf life.**
+`apps/web/src/theme/theme.ts` carries theQA's own `--qa-*` design tokens — primary
+`--qa-teal-700` `#15868c`, IBM Plex Sans Arabic for both scripts, plus the neutral ramp, radii,
+shadows, motion curves and line-heights — read on 2026-09-10 out of the static CSS chunks
+theqa.io publishes (D-039). It replaced invented hexes that had shipped since the first UI
+commit, and an `Inter` that sat at the front of the font stack and was **never fetched by
+anything**, so every screen had been rendering in whatever `system-ui` resolved to.
+
+Two costs. The tokens will silently go stale if theQA rebrands — the source URLs and the read
+date are in the file header so the next person re-reads rather than re-guesses. And loading the
+face from Google Fonts is a hard runtime dependency: offline, or with that host blocked, it falls
+back to `system-ui`. Self-hosting via `@fontsource/ibm-plex-sans-arabic` is the fix and was
+declined only because it costs a dependency and a `<link>` costs none.
+
+**What has still never been done is looking at it.** The brand pass and every front-end branch
+after it were merged on the strength of the compiler and the test suite, with no browser
+connected in those sessions. Each memory entry says so in its own words; it is the largest open
+risk on the front end.
 
 ---
 
@@ -1031,9 +1066,12 @@ Named so it is clear these are cuts, not omissions:
   uses OSM community tiles (D-029, D-030) — no API key, no billing, and not sized for production
   volume. Small-business coverage in Jordan and the Gulf is thinner than Google's
 
-- A provisioned production bucket. Evidence storage speaks S3 (D-028) and MinIO runs in compose,
-  but the DEPLOYED demo has no credentials, so it falls back to MongoDB GridFS and photos share
-  the 512 MB Atlas tier. Four environment variables switch it over; no code changes
+- A retention window on evidence photos. Storage itself is provisioned — the deployed demo writes
+  to Cloudflare R2, compose writes to MinIO, and with no `S3_*` set it falls back to GridFS, all
+  through one interface and a hand-signed SigV4 (D-028). What is missing is expiry: raw pings are
+  deleted on a TTL and photos are kept for ever. A TTL index is the wrong fix on GridFS — it drops
+  the file document without cascading to `evidence.chunks` — so the correct shape is a sweep
+  calling `bucket.delete()`, and it is not built
 - A full task authoring UI. Venues, tasks and assignments can be created, and a venue can be
   corrected; nothing can be deleted and tasks cannot be edited
 - Participant reputation scoring, which is the strongest long-run verification signal but

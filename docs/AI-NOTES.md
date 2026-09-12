@@ -267,7 +267,7 @@ re-reading my own work before claiming it had been matched. D-048's entry then r
 half-built version as the decision, so the log asserted parity too.
 
 **What I did instead.** Hoisted the nav config, rendered `PillTabs` in both positions at the same
-`lg` breakpoint the console uses, and added D-049 to correct D-048's placement rather than editing
+`lg` breakpoint the console uses, and added D-050 to correct D-048's placement rather than editing
 it. Verified this time by grepping both files for the breakpoint and confirming the two matched,
 instead of concluding it from having done the work.
 

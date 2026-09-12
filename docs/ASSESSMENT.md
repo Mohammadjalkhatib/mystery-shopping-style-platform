@@ -305,7 +305,7 @@ dispute, and the reasons are already written in plain language.
 
 ## 4. Where the AI got it wrong
 
-Four entries in `docs/AI-NOTES.md`, written when they happened. The most instructive:
+Seven entries in `docs/AI-NOTES.md`, written when they happened. The most instructive:
 
 **I described venue editing as "safe" before checking whether it was.** I said started sessions
 pin a `venueSnapshot` so an edit is safe — confident, specific, and half true. The evaluator did
@@ -413,9 +413,9 @@ a number.
 | Working code, runnable by someone else | `README.md` — three sections: without Docker, with Docker, and against the live deployment |
 | Agent / subagent configuration, unedited | `.claude/agents/` (3), `.claude/skills/` (2), `.claude/settings.json`, `CLAUDE.md` |
 | System design writeup with a diagram | This file, plus the two ASCII diagrams in `README.md` → **Architecture** |
-| Decision log, 3–5 key decisions with alternatives | `docs/DECISIONS.md` — 33 entries. The five that matter most are listed below |
-| Tests, where judged worth having | 543 across 22 suites. Rationale in `README.md` → **Testing** |
-| Where AI got it wrong | `docs/AI-NOTES.md` — 4 entries, and section 4 above |
+| Decision log, 3–5 key decisions with alternatives | `docs/DECISIONS.md` — 50 entries. The five that matter most are listed below |
+| Tests, where judged worth having | 650 across 25 suites. Rationale in `README.md` → **Testing** |
+| Where AI got it wrong | `docs/AI-NOTES.md` — 7 entries, and section 4 above |
 
 **If you only read five decisions**, read these:
 
@@ -427,6 +427,6 @@ a number.
 - **D-032** — fixing two false positives re-opened the fraud engine, and the two red-team passes
   that caught it.
 
-`docs/MEMORY.md` is the running state of the system, one entry per merged branch, 35 of them.
+`docs/MEMORY.md` is the running state of the system, one entry per merged branch, 52 of them.
 It is what lets a fresh session pick up without re-reading the codebase, and it is the most
 useful thing in the repo for understanding *how* this was built rather than what it does.
