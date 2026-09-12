@@ -2202,10 +2202,16 @@ business users alike because they share one `VenueForm`, so a business user addi
 head office gets an office-accuracy fix and a warning telling them to drag — correct, but it
 means the fast path is only fast for the people actually on site.
 
-## D-049: The participant nav sits inline in the toolbar at the same width the console's does
+## D-050: The participant nav sits inline in the toolbar at the same width the console's does
 
 **Date:** 2026-09-12
 **Status:** accepted. Completes D-048, which described only half of the placement.
+
+> **Renumbered.** This shipped as a second `D-049`, colliding with the venue-picker entry above
+> it, which is the one `MapPicker.tsx` points at. The log is append-only and a heading is not
+> reasoning, but two entries cannot share a number without making every cross-reference a coin
+> flip — so the later of the two moved to D-050 rather than the collision being left in place.
+> Recorded here rather than fixed silently.
 
 **Decision.** The participant shell renders `PillTabs` twice, exactly as the console does since
 D-047: inline in the `Toolbar` beside the title from `lg` up, and on its own row inside the same
