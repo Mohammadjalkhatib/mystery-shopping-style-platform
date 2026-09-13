@@ -55,6 +55,81 @@ export const noUsableEvidence: SignalFn = (_e, rollups) => {
   return null;
 };
 
+/* ------------------------------------------- coarse fixes that still exclude */
+
+/**
+ * How many multiples of the reported accuracy a fix must clear the fence by before we call it
+ * an exclusion.
+ *
+ * A browser's `accuracy` is nominally a 68% confidence radius, so 3x is roughly a 99.7% bound
+ * IF the error were Gaussian -- which it is not. Wi-Fi positioning fails by landing at the
+ * wrong ADDRESS (an ISP's registered location, a stale access-point entry), and that error is
+ * not a wider circle around the truth, it is a confident circle somewhere else. The multiplier
+ * is therefore a margin against a badly-placed fix rather than a derived confidence level, and
+ * it is arbitrary in the same way every other weight in this file is (D-009).
+ *
+ * What would make it principled: the distribution of |reported accuracy - actual error| for
+ * desktop Wi-Fi fixes, which needs labelled visits from known positions. Until then it is set
+ * wide deliberately. The cost of being wrong here is accusing an honest participant, so the
+ * signal stays silent on anything close: at a 120 m fence with a 50 m buffer and a 182 m fix,
+ * nothing under 716 m from the centre fires at all.
+ */
+export const EXCLUSION_SIGMA = 3;
+
+/**
+ * A fix too coarse to prove presence can still prove ABSENCE, and the distinction is the whole
+ * signal.
+ *
+ * `presenceFor` short-circuits to `unknown` above `ACCURACY_CAP_M` before it looks at distance,
+ * which is right for the question it asks -- a 182 m circle overlapping a 120 m fence cannot
+ * place anyone inside it. But it also throws away the case where the circle does not overlap the
+ * fence AT ALL. A fix 5 km away with 182 m of uncertainty is not ambiguous about whether the
+ * participant was at the venue. It is conclusive, and the engine was discarding it.
+ *
+ * That gap became exploitable the moment absence stopped being able to reject (D-051): an
+ * attacker anywhere on earth could report accuracy just above the cap on every fix and land on
+ * the same 35 and the same single reason string as an honest laptop sitting in the shop -- a
+ * score that reads to a reviewer as "their device was not good enough", with the server quietly
+ * holding a `distanceM` of 5,100 m on every ping. Found by the spoof-adversary pass, which
+ * correctly called it the cheapest attack the D-051 floor created.
+ *
+ * Scoped to traces with NO usable fix, because `proximity` already speaks whenever there is one.
+ * Firing alongside `noUsableEvidence` is intentional and is what lifts D-051's floor: the floor
+ * applies only when absence is the ONLY thing the engine found, and this is not absence. It is
+ * evidence, and it points one way.
+ */
+export const coarseFixesExcludeVenue: SignalFn = (evidence, rollups) => {
+  if (rollups.minDistanceM !== null) return null;
+  const coarse = evidence.fixes.filter((f) => f.presence === 'unknown');
+  if (coarse.length === 0) return null;
+
+  const { radiusM, nearBufferM } = evidence.venue;
+  // The CLOSEST coarse fix decides. If even that one cannot reach the fence, none of them can,
+  // so this is "every fix excludes the venue" expressed without a second pass.
+  let nearest = Infinity;
+  let slack = Infinity;
+  for (const f of coarse) {
+    if (f.distanceM < nearest) nearest = f.distanceM;
+    const margin = f.distanceM - (radiusM + nearBufferM + f.accuracyM * EXCLUSION_SIGMA);
+    if (margin < slack) slack = margin;
+  }
+  if (slack <= 0) return null;
+
+  const accuracies = coarse.map((f) => f.accuracyM);
+  const lo = Math.round(Math.min(...accuracies));
+  const hi = Math.round(Math.max(...accuracies));
+  return {
+    code: 'coarseFixesExcludeVenue',
+    /**
+     * -25, matching `proximity`'s "well outside the geofence", because it is the same finding
+     * arrived at through a different statistic. With `noUsableEvidence`'s -15 this lands at 10:
+     * rejected, and below the honest laptop's 35, which is the ordering that was missing.
+     */
+    contribution: -25,
+    reason: `No fix was precise enough to confirm presence, but the closest was centred ${Math.round(nearest)} m from the venue — too far for even its reported accuracy of ${lo === hi ? `${lo} m` : `${lo}-${hi} m`} to reach the ${radiusM} m geofence.`,
+  };
+};
+
 /* ------------------------------------------------------------------- dwell */
 
 /**
@@ -481,6 +556,7 @@ export const teleport: SignalFn = (evidence, _rollups, config) => {
 /** Evaluation order is display order in the console, so most decisive first. */
 export const ALL_SIGNALS: readonly SignalFn[] = [
   noUsableEvidence,
+  coarseFixesExcludeVenue,
   jitterFingerprint,
   teleport,
   presenceDwell,

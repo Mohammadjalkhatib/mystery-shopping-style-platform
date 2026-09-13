@@ -2757,8 +2757,42 @@ how: the moment absence alone stopped being able to reject, `noUsableEvidence` c
 not to weaken the test but to add the case the table was missing — `unreadableAndReplayed` — which
 is precisely the boundary of the new floor.
 
-**Verified.** Full suite **656/656 across 25 suites**, exit 0. `engine.spec` 123/123.
-`npm run typecheck` clean. `spoof-adversary` run against the new rules per CLAUDE.md §6.
+**Then the adversary pass changed the branch.** `spoof-adversary` (CLAUDE.md §6) found that the
+fix above had created the cheapest attack on the engine, and a second defect that was worse. Both
+are closed here, D-052:
+
+- **A safe harbour.** Report accuracy just above the 100 m cap from anywhere on earth and you
+  scored 35 with one `noUsableEvidence` signal — identical to an honest laptop in the shop, with
+  the reason string volunteering the alibi while the server held `distanceM: 5100` on every ping.
+  Closed by `coarseFixesExcludeVenue`: `presenceFor` short-circuits above the cap *before* it looks
+  at distance, so a 182 m circle 5 km out was being discarded as unknown when it is conclusive. A
+  coarse fix cannot confirm presence; it can still exclude a venue. Now 10, `rejected`
+- **A zero-evidence auto-verify.** `bandFor` tests `auto_verified` first and nothing validated that
+  reject sat below auto, so `VERIFY_REJECT_THRESHOLD=80` floored an empty session at 80 and **paid
+  it with no human**. Reproduced, not theorised. `EvaluatorService` now refuses that pair at config
+  load and logs why; `evaluate`'s floor is clamped below `autoThreshold`; the engine test grid runs
+  4 x 7 x 3 threshold/scenario combinations instead of a hand-picked list of four
+
+The ordering that was the whole point: attacker 5 km out **10 rejected**, honest laptop **35
+review**, real phone visit **88 auto_verified**.
+
+**Verified.** Full suite **662/662 across 25 suites**, exit 0. `engine.spec` 129/129.
+`npm run typecheck` clean. Real Atlas traces replayed through the fixed engine: both laptop
+sessions 35 `needs_review`, including a synthesised third ping to prove `jitterFingerprint` stays
+silent.
+
+**Open — three findings from the adversary pass, left deliberately.** Each is pre-existing rather
+than introduced here, and each needs its own decision. (1) `presenceFor`'s tolerance doubles as a
+geofence bonus: 157 m from a 75 m fence with a *reported* `accuracyM: 82` and otherwise entirely
+real coordinates reaches **78, auto_verified**. It is the cheapest attack that actually passes, and
+it is a modelling error first — an honest 90 m fix 160 m out is scored `inside` too. (2)
+`dwellDetail` is now the last place in the engine that walks the raw fix array, so one interleaved
+coarse fix can cost an honest visit ~16 points. (3) A frozen override keeping only two fixes usable
+dodges both `< 3` length guards and scores 52, above the honest laptop's 35 in a score-sorted
+queue — bounded, since under three usable fixes caps a trace at 55. Also unverified: whether
+Chrome DevTools' location override emits an accuracy above or below the cap, which decides whether
+`staticSpoof`'s `accuracyM: 12` still models the commonest real spoof. The README hedges both ways
+rather than guessing.
 
 **Open.** The four test visits already in Atlas keep their stored verdicts — results are
 append-only (rule 8), so the two 15s do not retroactively become 35s. Re-run a visit to see the

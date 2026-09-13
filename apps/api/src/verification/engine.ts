@@ -64,7 +64,20 @@ export function evaluate(
    * replay can still reject.
    */
   const onlyAbsence = signals.length === 1 && signals[0]!.code === 'noUsableEvidence';
-  const floor = onlyAbsence ? config.rejectThreshold : 0;
+  /**
+   * Clamped below `autoThreshold`, because a floor that can cross it is worse than no floor.
+   *
+   * `bandFor` tests `auto_verified` FIRST, and `evaluator.service.ts` validates the two
+   * thresholds only for being finite and positive -- it never checks that reject sits below
+   * auto. So `VERIFY_REJECT_THRESHOLD=80` against the default `autoThreshold: 75` floored a
+   * zero-fix session at 80 and **auto-verified a visit with no evidence whatsoever**, paying it
+   * with no human ever looking. A guard written to stop the engine over-accusing people turned
+   * into one that silently approved everything.
+   *
+   * Found by the spoof-adversary pass. The test loop that was supposed to cover this ran
+   * thresholds 30/40/55/70 and stopped one step short of the inversion; it now runs past it.
+   */
+  const floor = onlyAbsence ? Math.min(config.rejectThreshold, config.autoThreshold - 1) : 0;
   const score = Math.max(floor, Math.min(100, Math.round(raw)));
 
   return {

@@ -240,6 +240,39 @@ export const honestLaptopWifiOnly = (): VisitEvidence =>
   );
 
 /**
+ * The attack D-051's floor created, and the reason D-052 exists.
+ *
+ * An attacker anywhere on earth reports accuracy just above the 100 m cap on every fix. Before
+ * `coarseFixesExcludeVenue` this scored 35 with a single `noUsableEvidence` signal -- the same
+ * score, the same verdict and the same reason string as `honestLaptopWifiOnly`, a participant
+ * standing 9 m from the venue centre. The server held a `distanceM` of ~5,100 m on every ping
+ * and the engine said "their device was not good enough".
+ *
+ * Accuracy is varied and the coordinates are jittered on purpose, so that no other signal can
+ * be credited with catching this. The only thing that can is the exclusion geometry.
+ */
+export const coarseFixesFarFromVenue = (): VisitEvidence =>
+  buildTrace(
+    OUTDOOR_VENUE,
+    everyN(8, 30, (i) => ({ offsetM: 5100, accuracyM: 176 + (i % 4) * 3 })),
+  );
+
+/**
+ * The honest counterpart, and the pair is the point.
+ *
+ * Same coarse accuracy as `coarseFixesFarFromVenue`, but the fixes are where the venue is. The
+ * exclusion margin is nowhere near met -- at a 120 m fence with a 50 m buffer and 182 m of
+ * reported accuracy, nothing inside 716 m of the centre fires -- so this stays `needs_review`
+ * while the far trace rejects. If a change ever collapses these two back onto the same score,
+ * the engine has lost the distinction D-051 and D-052 were both written to protect.
+ */
+export const coarseFixesAtVenue = (): VisitEvidence =>
+  buildTrace(
+    OUTDOOR_VENUE,
+    everyN(8, 30, (i) => ({ offsetM: 30, accuracyM: 176 + (i % 4) * 3 })),
+  );
+
+/**
  * Unreadable AND hand-crafted: coarse fixes, plus an hour of clock offset.
  *
  * This fixture exists to hold open the escape hatch in `evaluate`'s absence floor, and the
@@ -438,6 +471,8 @@ export const ALL_SCENARIOS: Record<string, () => VisitEvidence> = {
   wrongVenue,
   allFixesUnusable,
   honestLaptopWifiOnly,
+  coarseFixesFarFromVenue,
+  coarseFixesAtVenue,
   unreadableAndReplayed,
   noFixes,
   replayedClock,

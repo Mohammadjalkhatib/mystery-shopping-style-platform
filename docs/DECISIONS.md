@@ -2308,3 +2308,85 @@ We accept it because the alternative is telling someone standing in the right pl
 evidence does not support their visit, which is a claim this engine has no basis to make. What
 would change it: any device-side signal that distinguishes "no GPS hardware" from "GPS withheld"
 would let the two be scored apart instead of both landing in review.
+
+---
+
+## D-052: A coarse fix cannot confirm presence, but it can still exclude a venue
+
+**Date:** 2026-09-13
+**Status:** accepted. Closes the attack D-051 opened, in the same branch.
+
+**Decision.** New signal `coarseFixesExcludeVenue`, contributing -25 when a trace has no usable
+fix and the *closest* coarse one is further from the venue than
+`radiusM + nearBufferM + accuracyM * EXCLUSION_SIGMA`, with `EXCLUSION_SIGMA = 3`. Separately,
+`EvaluatorService` now refuses a `VERIFY_REJECT_THRESHOLD >= VERIFY_AUTO_THRESHOLD` pair at config
+load and falls back to the default, and `evaluate`'s absence floor is clamped below
+`autoThreshold`.
+
+**Context.** The `spoof-adversary` pass CLAUDE.md §6 requires after a signal change found that
+D-051 had created a safe harbour, and it was the cheapest attack on the engine. Report accuracy
+just above the 100 m cap on every fix, from anywhere on earth, and you scored **35 with a single
+`noUsableEvidence` signal** — the same score, verdict and reason string as an honest laptop 9 m
+from the venue centre. The reason string even volunteered the exculpatory explanation ("a laptop
+normally reports this kind of accuracy") while the server held a `distanceM` of 5,100 m on every
+ping. Before D-051 that trace scored 15 and was rejected, so this was a regression, and one
+worth two minutes of an attacker's effort.
+
+The same pass found a second, worse defect that D-051 introduced. `bandFor` tests `auto_verified`
+first, and nothing validated that the reject threshold sat below the auto threshold, so
+`VERIFY_REJECT_THRESHOLD=80` floored a **zero-fix session at 80 and auto-verified it** — paid, no
+human. Verified, not theorised. A guard written to stop the engine over-accusing people inverted
+into one that approved everything.
+
+The insight the signal rests on: `presenceFor` short-circuits to `unknown` above the accuracy cap
+*before* it looks at distance. Correct for the question it asks — a 182 m circle overlapping a
+120 m fence places nobody inside it. But it discards the case where the circle does not overlap
+the fence **at all**, and that case is not ambiguous. Absence of evidence was never the right
+description of a fix 5 km away; it is evidence, and it points one way.
+
+**Alternatives considered.**
+
+- *Raise `noUsableEvidence`'s penalty back toward -35.* Rejected: it re-breaks the laptop, which
+  is the entire point of D-051. The two situations need different scores, not one shared score.
+- *Let `presenceFor` return `outside` for a coarse fix that geometrically excludes the fence.*
+  Cleaner in principle and rejected on evidence: `signals.ts` documents a cached cell-tower fix at
+  the carrier's registered address as "routine on mobile web", and that fix would then read
+  `outside` and feed `presenceDwell`, `coverage` and `proximity` as though it were a real
+  observation. Keeping the exclusion in one signal confines the blast radius to one number.
+- *`EXCLUSION_SIGMA = 1`, i.e. exclude as soon as the reported circle misses the fence.* Rejected
+  as too tight to be safe. Wi-Fi positioning fails by landing at the wrong *address*, and that
+  error is a confident circle somewhere else rather than a wider circle around the truth — so the
+  reported accuracy understates it exactly when it matters. 3x is arbitrary (see below).
+- *Throw on an incoherent threshold pair instead of falling back.* Rejected: an API that refuses
+  to boot over a threshold is a worse failure than one that runs on documented defaults and logs
+  the reason at `error`.
+- *Read `rollups.unusableFixCount`, which is computed and has no reader.* The adversary pass
+  suggested firing `noUsableEvidence` when a *majority* of fixes are unusable, to close a related
+  dodge. Deferred, not rejected — it is a real hole (see Consequences) but it changes scoring for
+  mixed traces, which is a wider blast radius than this branch should carry.
+
+**Consequences.** `EXCLUSION_SIGMA` is arbitrary. What would make it principled is the
+distribution of `|reported accuracy - actual error|` for desktop Wi-Fi fixes, which needs labelled
+visits from known positions; until then it is set wide on purpose, so at a 120 m fence with a 50 m
+buffer and a 182 m fix nothing inside 716 m of the centre fires at all. The cost of that width is
+that a coarse trace from 300 m away still reaches a human rather than being refused — the right
+way to be wrong here.
+
+Three findings from the same pass are **knowingly left open**, because they are pre-existing rather
+than introduced by this branch and each needs its own decision:
+
+1. **`presenceFor`'s tolerance is a geofence bonus.** `min(accuracyM, 100)` means a participant
+    157 m from a 75 m fence who reports `accuracyM: 82` is scored `inside` on real coordinates,
+    with every other signal genuine. It reaches **78, `auto_verified`** — the cheapest attack that
+    actually passes, and a modelling error before it is an attack, since an honest 90 m fix 160 m
+    out is scored `inside` too. Capping the tolerance at a fraction of the radius is the likely
+    fix and it changes presence for every trace in the system.
+2. **`dwellDetail` still walks the raw fix array** while all six geometric signals now filter to
+    usable ones. One interleaved coarse fix — "routine on mobile web" by this file's own
+    admission — breaks the inside-to-inside chain and can cost an honest visit ~16 points. This
+    branch made five of six populations consistent and left this one as the last place an unknown
+    fix is treated as absence rather than as silence.
+3. **A frozen override that keeps only two fixes usable** dodges both `jitterFingerprint` and
+    `accuracyRealism` via their `< 3` length guards, scoring 52 against 39 for the same trace
+    fully usable — so it outranks the honest laptop's 35 in a queue sorted by score. Bounded: no
+    trace with fewer than three usable fixes can exceed 55, so it cannot auto-verify.

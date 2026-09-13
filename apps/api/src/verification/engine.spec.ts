@@ -365,7 +365,7 @@ describe('verification engine', () => {
       // signal's contribution to sit above a constant.
       for (const rejectThreshold of [30, 40, 55, 70]) {
         const r = evaluate(ALL_SCENARIOS.honestLaptopWifiOnly!(), { ...cfg, rejectThreshold });
-        expect(r.verdict).not.toBe('rejected');
+        expect(r.verdict).toBe('needs_review');
       }
     });
 
@@ -380,6 +380,67 @@ describe('verification engine', () => {
       const r = evaluate(ALL_SCENARIOS.unreadableAndReplayed!(), cfg);
       expect(r.verdict).toBe('rejected');
       expect(r.signals.map((x) => x.code)).toEqual(['noUsableEvidence', 'clockSkew']);
+    });
+
+    it('never lets the absence floor cross the auto threshold', () => {
+      /**
+       * `bandFor` tests `auto_verified` first and `evaluator.service.ts` never validates that
+       * the reject threshold sits below the auto one. An unclamped floor of 80 against the
+       * default auto of 75 therefore AUTO-VERIFIED a session with no fixes at all -- a guard
+       * against over-accusing people, inverted into one that approved everything.
+       */
+      const r = evaluate(ALL_SCENARIOS.noFixes!(), { ...cfg, rejectThreshold: 80 });
+      expect(r.verdict).not.toBe('auto_verified');
+      expect(r.score).toBeLessThan(cfg.autoThreshold);
+    });
+
+    it('never auto-verifies an absence-only trace, at any threshold pair', () => {
+      /**
+       * The property that actually protects money, asserted across the whole grid rather than a
+       * hand-picked list. `needs_review` is deliberately NOT asserted here: a pair where reject
+       * sits at or above auto has no middle band to land in, so the honest invariant is the
+       * narrower one. `EvaluatorService` rejects that pair at config load and logs why, which is
+       * where an incoherent configuration belongs -- but the engine is pure and must not depend
+       * on its caller having validated anything.
+       */
+      for (const autoThreshold of [50, 60, 75, 90]) {
+        for (const rejectThreshold of [10, 30, 55, 74, 75, 80, 95]) {
+          for (const name of ['noFixes', 'allFixesUnusable', 'honestLaptopWifiOnly'] as const) {
+            const r = evaluate(ALL_SCENARIOS[name]!(), { ...cfg, autoThreshold, rejectThreshold });
+            expect(r.verdict).not.toBe('auto_verified');
+          }
+        }
+      }
+    });
+
+    it('rejects coarse fixes whose uncertainty cannot reach the venue', () => {
+      /**
+       * The attack the floor created, and the distinction that closes it: a fix too coarse to
+       * prove presence can still prove absence. `presenceFor` short-circuits above the accuracy
+       * cap before it looks at distance, so a 182 m circle 5 km away was being discarded as
+       * "unknown" when it is in fact conclusive.
+       */
+      const r = evaluate(ALL_SCENARIOS.coarseFixesFarFromVenue!(), cfg);
+      expect(r.verdict).toBe('rejected');
+      expect(r.signals.map((x) => x.code)).toContain('coarseFixesExcludeVenue');
+      expect(r.rollups.minDistanceM).toBeNull();
+    });
+
+    it('does not fire the exclusion on an honest laptop at the venue', () => {
+      // Same coarse accuracy, fixes at the venue. The margin is deliberately wide enough that
+      // a badly-placed Wi-Fi fix does not get an honest participant rejected.
+      const r = evaluate(ALL_SCENARIOS.coarseFixesAtVenue!(), cfg);
+      expect(r.verdict).toBe('needs_review');
+      expect(r.signals.map((x) => x.code)).not.toContain('coarseFixesExcludeVenue');
+    });
+
+    it('scores an attacker 5 km out below an honest laptop in the shop', () => {
+      // The ordering that was missing, and the whole reason D-052 exists. Before it, these two
+      // traces were indistinguishable: same score, same verdict, same single reason string.
+      const far = evaluate(ALL_SCENARIOS.coarseFixesFarFromVenue!(), cfg);
+      const atVenue = evaluate(ALL_SCENARIOS.honestLaptopWifiOnly!(), cfg);
+      expect(far.score).toBeLessThan(atVenue.score);
+      expect(far.verdict).not.toBe(atVenue.verdict);
     });
 
     it('ranks a trace that showed us nothing below one we merely could not read', () => {
