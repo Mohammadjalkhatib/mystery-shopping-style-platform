@@ -133,14 +133,44 @@ export const coarseFixesExcludeVenue: SignalFn = (evidence, rollups) => {
 /* ------------------------------------------------------------------- dwell */
 
 /**
- * Separate inside-to-inside observations needed before dwell can score in full.
- *
- * Five, because the dwell integrator caps one interval at three sampling periods, so five
- * intervals is the point at which the elapsed time being claimed cannot come from a single
- * observation however the task's expectation is authored. It is a corroboration floor, not a
- * duration: a short task stays short, it just has to be watched rather than asserted.
+ * Ceiling on the corroboration requirement: the most separate inside-to-inside observations any
+ * task can be asked for before dwell scores in full.
  */
 export const MIN_DWELL_INTERVALS = 5;
+
+/**
+ * Floor on it. Two, because the attack D-032 found was that a SINGLE capped interval could
+ * saturate dwell -- two fixes, two minutes, and the largest positive signal in the engine paid
+ * out in full. Requiring two intervals means three fixes, which ends that specific attack for
+ * every task length, however short.
+ */
+export const MIN_CORROBORATION_INTERVALS = 2;
+
+/**
+ * How many inside-to-inside observations THIS task can fairly be asked for.
+ *
+ * D-032 set a flat floor of five and claimed "a short task stays short, it just has to be watched
+ * rather than asserted". That claim was false, and the arithmetic is not subtle: `useVisitTracker`
+ * throttles to one fix per `expectedSampleIntervalSeconds` (30 s), so five intervals needs six
+ * fixes and **two and a half minutes of wall time**. A task authored at one minute -- which the
+ * admin form allows, the schema stores and `dwellExpectationFor` reads -- could therefore never
+ * reach full dwell credit, no matter how honestly it was performed. The participant did exactly
+ * what the task asked and the engine charged them for the task being short.
+ *
+ * This was a real regression and it was caught in production, not in review: four visits from one
+ * location, two of them 77 s long on a 60 s task, scoring 67 and sent to review. Before D-032 the
+ * same trace scored 88 and auto-verified.
+ *
+ * So the requirement scales with what the task's own expectation can physically produce, clamped
+ * between `MIN_CORROBORATION_INTERVALS` and `MIN_DWELL_INTERVALS`. A 5 min task still needs five
+ * observations, exactly as D-032 intended. A 1 min task needs two -- three fixes -- which is all a
+ * minute at a 30 s cadence can yield, and still more than the single interval D-032 was written to
+ * stop. Corroboration stays proportional to the claim instead of being absolute.
+ */
+export function requiredDwellIntervals(config: EngineConfig): number {
+  const affordable = Math.floor(config.expectedDwellSeconds / config.expectedSampleIntervalSeconds);
+  return Math.min(MIN_DWELL_INTERVALS, Math.max(MIN_CORROBORATION_INTERVALS, affordable));
+}
 
 export const presenceDwell: SignalFn = (_e, rollups, config) => {
   // noUsableEvidence has already spoken. Piling on here would count one fact three times
@@ -168,19 +198,24 @@ export const presenceDwell: SignalFn = (_e, rollups, config) => {
    * inversion D-010's dwell cap was written to end.
    *
    * The fix keeps short tasks authorable and makes them cost more EVIDENCE rather than more
-   * time: saturation requires `MIN_DWELL_INTERVALS` separate inside-to-inside observations.
-   * An honest participant standing still and sampling every 30 s reaches that in about two
-   * and a half minutes; a fabricator has to keep the forgery running just as long.
+   * time: saturation requires `requiredDwellIntervals(config)` separate inside-to-inside
+   * observations. A fabricator has to keep the forgery running for as long as the task claims.
+   *
+   * That requirement is PROPORTIONAL, not flat, and the difference is D-053. D-032 hard-coded
+   * five, which silently made every task shorter than 2.5 min unverifiable however honestly it
+   * was performed -- see `requiredDwellIntervals` for the arithmetic and the production
+   * regression that exposed it. A one-minute task now needs the two intervals a minute can
+   * actually yield, which is still more than the single interval D-032 existed to stop.
    */
   const ratio = Math.min(1, dwellSeconds / expected);
-  const corroboration = Math.min(1, rollups.dwellIntervals / MIN_DWELL_INTERVALS);
+  const corroboration = Math.min(1, rollups.dwellIntervals / requiredDwellIntervals(config));
   const contribution = round(-5 + 23 * ratio * corroboration);
   const thin = corroboration < 1;
   return {
     code: 'presenceDwell',
     contribution,
     reason: thin
-      ? `Spent about ${Math.round(dwellSeconds / 60)} min inside the venue geofence, but across only ${rollups.dwellIntervals} location update${rollups.dwellIntervals === 1 ? '' : 's'} — too few to corroborate continuous presence.`
+      ? `Spent about ${Math.round(dwellSeconds / 60)} min inside the venue geofence, but across only ${rollups.dwellIntervals} location update${rollups.dwellIntervals === 1 ? '' : 's'} — this task needs ${requiredDwellIntervals(config)} to corroborate continuous presence.`
       : `Spent about ${Math.round(dwellSeconds / 60)} min inside the venue geofence, against an expected ${Math.round(expected / 60)} min.`,
   };
 };
@@ -188,7 +223,7 @@ export const presenceDwell: SignalFn = (_e, rollups, config) => {
 /* ---------------------------------------------------------------- coverage */
 
 /** D-005: gaps are normal on mobile web. This scores how much we saw, not whether it is "complete". */
-export const coverage: SignalFn = (_e, rollups) => {
+export const coverage: SignalFn = (_e, rollups, config) => {
   if (rollups.minDistanceM === null) return null;
   const r = rollups.coverageRatio;
 
@@ -210,7 +245,7 @@ export const coverage: SignalFn = (_e, rollups) => {
    *
    * Found by the second spoof-adversary pass.
    */
-  const wellObserved = rollups.dwellIntervals >= MIN_DWELL_INTERVALS;
+  const wellObserved = rollups.dwellIntervals >= requiredDwellIntervals(config);
 
   if (r >= 0.8 && wellObserved) {
     return {

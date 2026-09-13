@@ -2781,6 +2781,27 @@ review**, real phone visit **88 auto_verified**.
 sessions 35 `needs_review`, including a synthesised third ping to prove `jitterFingerprint` stays
 silent.
 
+**Then the 1-minute regression, D-053.** The user pushed back on being told 3 minutes was the
+minimum — "it used to work before" — and was right. `git log -S MIN_DWELL_INTERVALS` dates it to
+33b1287 (D-032): before that commit `presenceDwell` was `-5 + 23 * ratio` with no corroboration
+term and `coverage` had no density gate, so the same 77 s trace scored **88**. D-032's comment
+claimed "a short task stays short, it just has to be watched rather than asserted", and that was
+**false** — at the client's 30 s cadence five intervals needs six fixes and 2.5 min of wall time,
+so a task authored at 60 s (which the DTO, schema and admin form all allow) could never be verified
+however honestly performed.
+
+`requiredDwellIntervals(config)` now replaces the constant in both places:
+`clamp(floor(expectedDwell / sampleInterval), 2, 5)`. 60 s task -> 2 intervals, 120 s -> 4, 180 s+
+-> 5 unchanged. The user's real visit now scores **88, auto_verified**; a single capped interval
+still scores 66, which was D-032's actual finding. Knowingly loosened: `minimalShortTaskSpoof` now
+auto-verifies on a 60 s task, because three fixes across two minutes on a one-minute task is not
+distinguishable from an honest visit — the test was rewritten to assert that with the reasoning
+beside it rather than deleted. The lost strictness is replaced by a product control: `TasksTab`
+warns an author that under 3 min verifies more weakly, and the participant screen says to stay at
+least 3 minutes. Both strings in `en.json` and `ar.json`; `unknownHint` now also tells a
+participant a laptop will never be precise enough and to use a phone, which is the thing that
+would have saved this whole session.
+
 **Open — three findings from the adversary pass, left deliberately.** Each is pre-existing rather
 than introduced here, and each needs its own decision. (1) `presenceFor`'s tolerance doubles as a
 geofence bonus: 157 m from a 75 m fence with a *reported* `accuracyM: 82` and otherwise entirely

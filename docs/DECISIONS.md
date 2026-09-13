@@ -2390,3 +2390,69 @@ than introduced by this branch and each needs its own decision:
     `accuracyRealism` via their `< 3` length guards, scoring 52 against 39 for the same trace
     fully usable — so it outranks the honest laptop's 35 in a queue sorted by score. Bounded: no
     trace with fewer than three usable fixes can exceed 55, so it cannot auto-verify.
+
+---
+
+## D-053: Corroboration scales with what the task asks for, not a flat five
+
+**Date:** 2026-09-13
+**Status:** accepted. Revises the corroboration floor D-032 introduced; keeps its purpose.
+
+**Decision.** `requiredDwellIntervals(config)` replaces the constant `MIN_DWELL_INTERVALS` in
+`presenceDwell`'s corroboration divisor and `coverage`'s `wellObserved` gate. It is
+`clamp(floor(expectedDwellSeconds / expectedSampleIntervalSeconds), 2, 5)`: a 1 min task needs 2
+inside-to-inside observations, 2 min needs 4, and anything from 3 min up needs 5, exactly as
+D-032 intended. The new floor `MIN_CORROBORATION_INTERVALS = 2` is what still kills the attack
+D-032 was written for. Two user-facing notes accompany it: the participant screen now says to stay
+at least 3 minutes, and the task form warns an author that under 3 minutes verifies more weakly.
+
+**Context.** D-032 set the floor at five and its comment claimed "a short task stays short, it just
+has to be watched rather than asserted". **That claim was false.** `useVisitTracker` throttles to
+one fix per 30 s, so five intervals needs six fixes and **two and a half minutes of wall time**. The
+admin form offers a dwell field, the DTO allows 60 s, the schema stores it and
+`dwellExpectationFor` reads it — so a task could be authored at one minute and then be impossible
+to verify, however honestly it was performed. The requirement was absolute where the claim it
+tested was relative.
+
+Found in production, not in review: four visits from one location during pre-submission testing,
+two of them 77 s on a 60 s task, scoring 67 and sent to review. The user reported that short visits
+"used to work", which was correct — `git log -S MIN_DWELL_INTERVALS` dates the change to 33b1287
+(D-032), and before it `presenceDwell` was `-5 + 23 * ratio` with no corroboration term and
+`coverage` had no density gate, so the same trace scored 88.
+
+**Alternatives considered.**
+
+- *Keep the flat five and document the 3 min minimum.* The status quo, and the honest objection to
+  it is that it charges a participant for a task design that is not theirs — the same mistake
+  `approachDeparture` made (D-032) and `accuracyRealism`'s indoor threshold made (D-032) — docking
+  someone for complying with instructions the product gave them.
+- *Lower the client sampling interval below 30 s so five intervals fits in a minute.* Rejected:
+  battery and privacy, and it fixes the symptom by making every honest participant's phone work
+  harder to satisfy a constant that was arbitrary in the first place.
+- *Require 2 intervals flat, for every task length.* Simpler, and it throws away the part of D-032
+  that was right: a 10 min task genuinely should need more corroboration than a 1 min one, because
+  it is claiming more.
+- *Block short tasks in the DTO, raising `@Min(60)` to `@Min(180)`.* Rejected: short tasks are
+  legitimate — a drive-through check really is a one-minute job. Steering the author with a warning
+  keeps the capability and puts the information where the choice is made.
+
+**Consequences.** A knowingly accepted loosening, and the number is concrete: on a 60 s task
+`minimalShortTaskSpoof` — three fixes across two minutes — now scores **88 and auto-verifies**,
+where D-032 held it at 67. That fixture's name overstates what it is. Three fixes inside the fence
+across two minutes, on a task whose author asked for one minute, is **not distinguishable from an
+honest visit**; it is what an honest visit looks like. D-032 appeared to catch it and what it
+actually caught was every real participant doing a short task. The engine no longer pretends to a
+discrimination it cannot make, and `engine.spec.ts` asserts the new behaviour with that reasoning
+written next to it rather than deleting the test.
+
+What still holds: a **single** capped interval cannot saturate dwell at any task length (2 fixes on
+a 60 s task score 66, not 88), which was D-032's actual finding. Tasks of 3 min and longer are
+bit-for-bit unchanged. `expectedDwellSeconds` is bounded `[60, 7200]` by both the DTO and the
+schema, so `requiredDwellIntervals` cannot be driven below 2 by a tiny expectation, and
+`dwellExpectationFor`'s fallback is the 300 s default — *stricter* than a short task, so forcing a
+lookup failure buys an attacker a harsher bar, not an easier one.
+
+The control that replaces the lost strictness is a product control, not an engine one: short tasks
+are inherently weaker evidence, so the author is told so at the moment they choose. If that proves
+insufficient, the next move is a per-task minimum verifiability rather than a global constant —
+scoring what the task asked for is the part worth keeping.

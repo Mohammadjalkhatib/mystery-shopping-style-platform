@@ -1,9 +1,15 @@
 import type { Verdict } from '@msp/shared';
 import { ALL_SCENARIOS } from '../../test/fixtures/scenarios.js';
-import { buildTrace, everyN, INDOOR_VENUE } from '../../test/fixtures/trace-builder.js';
+import { buildTrace, everyN, INDOOR_VENUE, OUTDOOR_VENUE } from '../../test/fixtures/trace-builder.js';
 import { BASE_SCORE, evaluate } from './engine.js';
 import { computeRollups } from './rollups.js';
-import { ALL_SIGNALS, MIN_DWELL_INTERVALS, type SignalFn } from './signals.js';
+import {
+  ALL_SIGNALS,
+  MIN_CORROBORATION_INTERVALS,
+  MIN_DWELL_INTERVALS,
+  requiredDwellIntervals,
+  type SignalFn,
+} from './signals.js';
 import { DEFAULT_ENGINE_CONFIG, type VisitEvidence } from './types.js';
 
 /**
@@ -532,10 +538,61 @@ describe('verification engine', () => {
     describe('a short task expectation cannot buy full dwell credit', () => {
       const shortTask = { ...cfg, expectedDwellSeconds: 60 };
 
-      it('refuses to auto-verify three fixes across two minutes', () => {
-        // 88 before the corroboration floor: ONE capped 90 s interval saturated presenceDwell.
-        const r = evaluate(ALL_SCENARIOS.minimalShortTaskSpoof!(), shortTask);
-        expect(r.verdict).not.toBe('auto_verified');
+      it('refuses to auto-verify a SINGLE capped interval', () => {
+        /**
+         * The D-032 attack, and the part of that floor worth keeping: two fixes 90 s apart, one
+         * capped interval, dwell fully saturated on a 60 s task. It scored 88 before the floor
+         * and 66 now, because `MIN_CORROBORATION_INTERVALS` is 2 however short the task.
+         */
+        const singleInterval = buildTrace(
+          OUTDOOR_VENUE,
+          [
+            { atSeconds: 0, offsetM: 28, accuracyM: 9.4 },
+            { atSeconds: 90, offsetM: 24, accuracyM: 12.1 },
+          ],
+          { sessionSeconds: 90 },
+        );
+        expect(evaluate(singleInterval, shortTask).verdict).not.toBe('auto_verified');
+      });
+
+      it('DOES auto-verify three fixes across two minutes, and that is deliberate (D-053)', () => {
+        /**
+         * This inverts what D-032 asserted here, knowingly. `minimalShortTaskSpoof` is three
+         * fixes inside the fence across two minutes, and on a task whose author asked for ONE
+         * minute that is not distinguishable from an honest visit -- it is what an honest visit
+         * looks like. D-032's flat floor of five intervals only appeared to catch it: what it
+         * actually caught was every real participant doing a short task, because five intervals
+         * needs 2.5 min of wall time at the client's 30 s cadence. It cost four real visits
+         * before it was noticed.
+         *
+         * The engine cannot tell these apart and no longer pretends to. A one-minute task is
+         * inherently less verifiable than a five-minute one -- that is a property of the task,
+         * not a defect in the scoring -- so the control moved to where the choice is actually
+         * made: `TasksTab` warns an author that anything under three minutes yields weaker
+         * verification. Scoring what the task asked for, and steering authors, beats charging
+         * participants for their employer's task design.
+         */
+        expect(evaluate(ALL_SCENARIOS.minimalShortTaskSpoof!(), shortTask).verdict).toBe(
+          'auto_verified',
+        );
+        // Unchanged for any task long enough to ask for real corroboration.
+        expect(evaluate(ALL_SCENARIOS.minimalShortTaskSpoof!(), cfg).verdict).not.toBe(
+          'auto_verified',
+        );
+      });
+
+      it('scales the requirement with what the task can physically produce', () => {
+        // The bug in one assertion: a 60 s task cannot yield five intervals at a 30 s cadence,
+        // so demanding five made it unverifiable by construction.
+        expect(requiredDwellIntervals({ ...cfg, expectedDwellSeconds: 60 })).toBe(2);
+        expect(requiredDwellIntervals({ ...cfg, expectedDwellSeconds: 120 })).toBe(4);
+        expect(requiredDwellIntervals({ ...cfg, expectedDwellSeconds: 300 })).toBe(
+          MIN_DWELL_INTERVALS,
+        );
+        // Never below two, so a single interval can never saturate however short the task.
+        expect(requiredDwellIntervals({ ...cfg, expectedDwellSeconds: 5 })).toBe(
+          MIN_CORROBORATION_INTERVALS,
+        );
       });
 
       it('does not let a padded forgery outrank the honest visit it imitates', () => {

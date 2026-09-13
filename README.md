@@ -775,13 +775,14 @@ whatever the coordinates say. A laptop sitting 9 m from the venue centre still p
 verdict you get is `needs_review` with a single `noUsableEvidence` signal saying exactly that, and
 a laptop **cannot** reach `auto_verified` by design (D-051). Test the happy path on a phone.
 
-*Keep the visit open for about three minutes.* Verification wants corroboration, not just
-elapsed time: `MIN_DWELL_INTERVALS` is 5, so the two largest positive signals only pay in full
-after five separate inside-to-inside location updates, which is ~2.5 min at the 30 s sampling
-cadence. Standing still at the venue, an honest visit scores roughly 67 at 3 fixes, 72 at 4, 76 at
-5 and 88 from 6 fixes on. **Shortening the task's `expectedDwellSeconds` does not help** — the
-tasks already default to 60 s, so the duration term is saturated long before the corroboration
-term is, and a 60-second test lands in `needs_review` no matter how the task is authored.
+*Longer visits verify more strongly.* Verification wants corroboration, not just elapsed time: the
+two largest positive signals only pay in full once there have been
+`requiredDwellIntervals` separate inside-to-inside location updates, which is
+`clamp(expectedDwellSeconds / 30, 2, 5)` — proportional to what the task actually asks for (D-053).
+A task authored at 1 min needs 2 observations, which is all a minute at the 30 s sampling cadence
+can yield; a task of 3 min or more needs 5. So a short task is verifiable, but it is verified on
+less evidence, which is why the task form warns an author when they go under three minutes. Three
+minutes or more is the recommendation for a real demo run.
 
 ---
 
