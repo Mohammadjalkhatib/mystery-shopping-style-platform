@@ -2238,3 +2238,221 @@ one tablist reaches the accessibility tree. The practical effect for participant
 this shell is used on phones, which are below `lg` essentially always, so the second row is what
 they will see. The change is really about the two surfaces agreeing when someone opens the
 participant view on a laptop — which is exactly how it is reviewed.
+
+---
+
+## D-051: Absence of evidence never rejects on its own
+
+**Date:** 2026-09-13
+**Status:** accepted. Corrects the arithmetic of D-001/D-005 rather than their principle.
+
+**Decision.** `evaluate` floors the score at `config.rejectThreshold` when `noUsableEvidence` is
+the *only* signal that fired. `noUsableEvidence` softens from -40/-35 to -20/-15, so an
+absence-only trace lands at 30-35 — the bottom of `needs_review`, below every trace that showed
+us something. `jitterFingerprint` now filters to usable fixes, as `teleport`, `proximity` and
+`accuracyRealism` already did. Rejection now requires evidence that contradicts the visit.
+
+**Context.** Four real visits from one location during pre-submission testing. The two from a
+phone scored 67; the two from a laptop scored **15 — `rejected`**, which the console renders as
+"Not supported by the evidence". The laptop was 9 m from the venue centre and reported it
+correctly; it declared 182 m of *uncertainty*, because a desktop has no GPS radio and Chrome
+answers from a cached Wi-Fi scan. Every fix exceeded the 100 m cap, presence was `unknown`
+throughout, every other signal correctly self-suppressed, and the one remaining signal docked
+enough to reject. A desktop participant was structurally incapable of scoring anything but 15.
+
+Three parts of this repo already said that was wrong. D-001 says we cannot distinguish "absent"
+from "no evidence". `BASE_SCORE`'s comment says 50 exists so that "a visit we learned nothing
+about lands in `needs_review` — which is the honest answer". The signal's own reason string says
+"This is not evidence of absence, only an absence of evidence." The arithmetic disagreed with all
+three, and shipped the conclusion the prose forbids.
+
+The second bug was latent and worse. A cached Wi-Fi scan that has not changed returns the *same*
+fix each call — byte-identical, because it is literally the same cached object. `jitterFingerprint`
+was the last signal reading the raw `fixes` array, so a third laptop ping would have fired its -45
+branch and put an honest visit at 0, reporting "characteristic of an overridden location" about a
+machine sitting still.
+
+**Alternatives considered.**
+
+- *Raise `ACCURACY_CAP_M` above 182.* The direct fix, and wrong. The cap's comment gives the
+  reason: a 400 m fix would let anyone within half a kilometre appear inside the fence. It would
+  trade a false rejection for a false *verification*, which is the more expensive error.
+- *Scale the cap against the venue radius.* Plausible, and it fails on these numbers — 182 m of
+  uncertainty against a 120 m fence still cannot place anyone, whatever the ratio. The laptop fix
+  genuinely proves nothing; the bug was never that we refused to use it, only what we concluded.
+- *Bake the floor into the contribution — e.g. -15 and no engine change.* Simpler, and it was
+  half-adopted (the contributions did soften). Rejected as the *sole* mechanism because
+  `rejectThreshold` is config: setting `VERIFY_REJECT_THRESHOLD=40` would silently re-open the
+  hole. The floor reads the threshold so tuning cannot resurrect the bug. A test asserts this at
+  30, 40, 55 and 70.
+- *Let the participant screen warn and leave the engine alone.* Rejected: `PresenceBanner`
+  **already** shows `unknown` honestly. The participant was told the truth live and the engine
+  overrode it days later. The defect was never in the UI.
+- *Suppress `noUsableEvidence` entirely for desktop user agents.* Rejected: the client is
+  untrusted (rule 2), so the user agent is an attacker-controlled string, and branching
+  verification on it makes "claim to be a laptop" a spoof primitive.
+
+**Consequences.** The floor is deliberately narrow — *exactly one* signal, and that signal
+`noUsableEvidence`. `clockSkew` still fires on an unreadable trace, so coarse fixes plus an hour
+of device-clock offset still rejects: the accuracy says nothing about *where*, but the skew is
+positive evidence about how the trace was *made*. The new `unreadableAndReplayed` fixture holds
+that boundary open, and it exists because the `no decorative signals` meta-test caught the real
+cost of this change — once absence alone could not reject, `noUsableEvidence` could not make any
+verdict stricter in any existing scenario, which is the correct complaint about a table missing
+its one discriminating case.
+
+What this costs: unreadable visits now reach the review queue instead of being closed
+automatically, so reviewer volume goes up, and a participant with a permanently coarse device can
+never be *auto-verified* — only reviewed. Both are the honest outcome rather than a regression.
+We accept it because the alternative is telling someone standing in the right place that the
+evidence does not support their visit, which is a claim this engine has no basis to make. What
+would change it: any device-side signal that distinguishes "no GPS hardware" from "GPS withheld"
+would let the two be scored apart instead of both landing in review.
+
+---
+
+## D-052: A coarse fix cannot confirm presence, but it can still exclude a venue
+
+**Date:** 2026-09-13
+**Status:** accepted. Closes the attack D-051 opened, in the same branch.
+
+**Decision.** New signal `coarseFixesExcludeVenue`, contributing -25 when a trace has no usable
+fix and the *closest* coarse one is further from the venue than
+`radiusM + nearBufferM + accuracyM * EXCLUSION_SIGMA`, with `EXCLUSION_SIGMA = 3`. Separately,
+`EvaluatorService` now refuses a `VERIFY_REJECT_THRESHOLD >= VERIFY_AUTO_THRESHOLD` pair at config
+load and falls back to the default, and `evaluate`'s absence floor is clamped below
+`autoThreshold`.
+
+**Context.** The `spoof-adversary` pass CLAUDE.md §6 requires after a signal change found that
+D-051 had created a safe harbour, and it was the cheapest attack on the engine. Report accuracy
+just above the 100 m cap on every fix, from anywhere on earth, and you scored **35 with a single
+`noUsableEvidence` signal** — the same score, verdict and reason string as an honest laptop 9 m
+from the venue centre. The reason string even volunteered the exculpatory explanation ("a laptop
+normally reports this kind of accuracy") while the server held a `distanceM` of 5,100 m on every
+ping. Before D-051 that trace scored 15 and was rejected, so this was a regression, and one
+worth two minutes of an attacker's effort.
+
+The same pass found a second, worse defect that D-051 introduced. `bandFor` tests `auto_verified`
+first, and nothing validated that the reject threshold sat below the auto threshold, so
+`VERIFY_REJECT_THRESHOLD=80` floored a **zero-fix session at 80 and auto-verified it** — paid, no
+human. Verified, not theorised. A guard written to stop the engine over-accusing people inverted
+into one that approved everything.
+
+The insight the signal rests on: `presenceFor` short-circuits to `unknown` above the accuracy cap
+*before* it looks at distance. Correct for the question it asks — a 182 m circle overlapping a
+120 m fence places nobody inside it. But it discards the case where the circle does not overlap
+the fence **at all**, and that case is not ambiguous. Absence of evidence was never the right
+description of a fix 5 km away; it is evidence, and it points one way.
+
+**Alternatives considered.**
+
+- *Raise `noUsableEvidence`'s penalty back toward -35.* Rejected: it re-breaks the laptop, which
+  is the entire point of D-051. The two situations need different scores, not one shared score.
+- *Let `presenceFor` return `outside` for a coarse fix that geometrically excludes the fence.*
+  Cleaner in principle and rejected on evidence: `signals.ts` documents a cached cell-tower fix at
+  the carrier's registered address as "routine on mobile web", and that fix would then read
+  `outside` and feed `presenceDwell`, `coverage` and `proximity` as though it were a real
+  observation. Keeping the exclusion in one signal confines the blast radius to one number.
+- *`EXCLUSION_SIGMA = 1`, i.e. exclude as soon as the reported circle misses the fence.* Rejected
+  as too tight to be safe. Wi-Fi positioning fails by landing at the wrong *address*, and that
+  error is a confident circle somewhere else rather than a wider circle around the truth — so the
+  reported accuracy understates it exactly when it matters. 3x is arbitrary (see below).
+- *Throw on an incoherent threshold pair instead of falling back.* Rejected: an API that refuses
+  to boot over a threshold is a worse failure than one that runs on documented defaults and logs
+  the reason at `error`.
+- *Read `rollups.unusableFixCount`, which is computed and has no reader.* The adversary pass
+  suggested firing `noUsableEvidence` when a *majority* of fixes are unusable, to close a related
+  dodge. Deferred, not rejected — it is a real hole (see Consequences) but it changes scoring for
+  mixed traces, which is a wider blast radius than this branch should carry.
+
+**Consequences.** `EXCLUSION_SIGMA` is arbitrary. What would make it principled is the
+distribution of `|reported accuracy - actual error|` for desktop Wi-Fi fixes, which needs labelled
+visits from known positions; until then it is set wide on purpose, so at a 120 m fence with a 50 m
+buffer and a 182 m fix nothing inside 716 m of the centre fires at all. The cost of that width is
+that a coarse trace from 300 m away still reaches a human rather than being refused — the right
+way to be wrong here.
+
+Three findings from the same pass are **knowingly left open**, because they are pre-existing rather
+than introduced by this branch and each needs its own decision:
+
+1. **`presenceFor`'s tolerance is a geofence bonus.** `min(accuracyM, 100)` means a participant
+    157 m from a 75 m fence who reports `accuracyM: 82` is scored `inside` on real coordinates,
+    with every other signal genuine. It reaches **78, `auto_verified`** — the cheapest attack that
+    actually passes, and a modelling error before it is an attack, since an honest 90 m fix 160 m
+    out is scored `inside` too. Capping the tolerance at a fraction of the radius is the likely
+    fix and it changes presence for every trace in the system.
+2. **`dwellDetail` still walks the raw fix array** while all six geometric signals now filter to
+    usable ones. One interleaved coarse fix — "routine on mobile web" by this file's own
+    admission — breaks the inside-to-inside chain and can cost an honest visit ~16 points. This
+    branch made five of six populations consistent and left this one as the last place an unknown
+    fix is treated as absence rather than as silence.
+3. **A frozen override that keeps only two fixes usable** dodges both `jitterFingerprint` and
+    `accuracyRealism` via their `< 3` length guards, scoring 52 against 39 for the same trace
+    fully usable — so it outranks the honest laptop's 35 in a queue sorted by score. Bounded: no
+    trace with fewer than three usable fixes can exceed 55, so it cannot auto-verify.
+
+---
+
+## D-053: Corroboration scales with what the task asks for, not a flat five
+
+**Date:** 2026-09-13
+**Status:** accepted. Revises the corroboration floor D-032 introduced; keeps its purpose.
+
+**Decision.** `requiredDwellIntervals(config)` replaces the constant `MIN_DWELL_INTERVALS` in
+`presenceDwell`'s corroboration divisor and `coverage`'s `wellObserved` gate. It is
+`clamp(floor(expectedDwellSeconds / expectedSampleIntervalSeconds), 2, 5)`: a 1 min task needs 2
+inside-to-inside observations, 2 min needs 4, and anything from 3 min up needs 5, exactly as
+D-032 intended. The new floor `MIN_CORROBORATION_INTERVALS = 2` is what still kills the attack
+D-032 was written for. Two user-facing notes accompany it: the participant screen now says to stay
+at least 3 minutes, and the task form warns an author that under 3 minutes verifies more weakly.
+
+**Context.** D-032 set the floor at five and its comment claimed "a short task stays short, it just
+has to be watched rather than asserted". **That claim was false.** `useVisitTracker` throttles to
+one fix per 30 s, so five intervals needs six fixes and **two and a half minutes of wall time**. The
+admin form offers a dwell field, the DTO allows 60 s, the schema stores it and
+`dwellExpectationFor` reads it — so a task could be authored at one minute and then be impossible
+to verify, however honestly it was performed. The requirement was absolute where the claim it
+tested was relative.
+
+Found in production, not in review: four visits from one location during pre-submission testing,
+two of them 77 s on a 60 s task, scoring 67 and sent to review. The user reported that short visits
+"used to work", which was correct — `git log -S MIN_DWELL_INTERVALS` dates the change to 33b1287
+(D-032), and before it `presenceDwell` was `-5 + 23 * ratio` with no corroboration term and
+`coverage` had no density gate, so the same trace scored 88.
+
+**Alternatives considered.**
+
+- *Keep the flat five and document the 3 min minimum.* The status quo, and the honest objection to
+  it is that it charges a participant for a task design that is not theirs — the same mistake
+  `approachDeparture` made (D-032) and `accuracyRealism`'s indoor threshold made (D-032) — docking
+  someone for complying with instructions the product gave them.
+- *Lower the client sampling interval below 30 s so five intervals fits in a minute.* Rejected:
+  battery and privacy, and it fixes the symptom by making every honest participant's phone work
+  harder to satisfy a constant that was arbitrary in the first place.
+- *Require 2 intervals flat, for every task length.* Simpler, and it throws away the part of D-032
+  that was right: a 10 min task genuinely should need more corroboration than a 1 min one, because
+  it is claiming more.
+- *Block short tasks in the DTO, raising `@Min(60)` to `@Min(180)`.* Rejected: short tasks are
+  legitimate — a drive-through check really is a one-minute job. Steering the author with a warning
+  keeps the capability and puts the information where the choice is made.
+
+**Consequences.** A knowingly accepted loosening, and the number is concrete: on a 60 s task
+`minimalShortTaskSpoof` — three fixes across two minutes — now scores **88 and auto-verifies**,
+where D-032 held it at 67. That fixture's name overstates what it is. Three fixes inside the fence
+across two minutes, on a task whose author asked for one minute, is **not distinguishable from an
+honest visit**; it is what an honest visit looks like. D-032 appeared to catch it and what it
+actually caught was every real participant doing a short task. The engine no longer pretends to a
+discrimination it cannot make, and `engine.spec.ts` asserts the new behaviour with that reasoning
+written next to it rather than deleting the test.
+
+What still holds: a **single** capped interval cannot saturate dwell at any task length (2 fixes on
+a 60 s task score 66, not 88), which was D-032's actual finding. Tasks of 3 min and longer are
+bit-for-bit unchanged. `expectedDwellSeconds` is bounded `[60, 7200]` by both the DTO and the
+schema, so `requiredDwellIntervals` cannot be driven below 2 by a tiny expectation, and
+`dwellExpectationFor`'s fallback is the 300 s default — *stricter* than a short task, so forcing a
+lookup failure buys an attacker a harsher bar, not an easier one.
+
+The control that replaces the lost strictness is a product control, not an engine one: short tasks
+are inherently weaker evidence, so the author is told so at the moment they choose. If that proves
+insufficient, the next move is a per-task minimum verifiability rather than a global constant —
+scoring what the task asked for is the part worth keeping.

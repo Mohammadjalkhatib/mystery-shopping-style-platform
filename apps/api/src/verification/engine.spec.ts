@@ -1,9 +1,15 @@
 import type { Verdict } from '@msp/shared';
 import { ALL_SCENARIOS } from '../../test/fixtures/scenarios.js';
-import { buildTrace, everyN, INDOOR_VENUE } from '../../test/fixtures/trace-builder.js';
+import { buildTrace, everyN, INDOOR_VENUE, OUTDOOR_VENUE } from '../../test/fixtures/trace-builder.js';
 import { BASE_SCORE, evaluate } from './engine.js';
 import { computeRollups } from './rollups.js';
-import { ALL_SIGNALS, MIN_DWELL_INTERVALS, type SignalFn } from './signals.js';
+import {
+  ALL_SIGNALS,
+  MIN_CORROBORATION_INTERVALS,
+  MIN_DWELL_INTERVALS,
+  requiredDwellIntervals,
+  type SignalFn,
+} from './signals.js';
 import { DEFAULT_ENGINE_CONFIG, type VisitEvidence } from './types.js';
 
 /**
@@ -65,17 +71,17 @@ const TABLE: Case[] = [
   },
   {
     scenario: 'allFixesUnusable',
-    expected: 'rejected',
+    expected: 'needs_review',
     mustFire: ['noUsableEvidence'],
-    mustNotFire: ['presenceDwell', 'coverage', 'accuracyRealism'],
-    why: 'every fix exceeded the accuracy cap; one signal says so rather than three restating it',
+    mustNotFire: ['presenceDwell', 'coverage', 'accuracyRealism', 'jitterFingerprint'],
+    why: 'every fix exceeded the accuracy cap, so one signal says so rather than four restating it -- and an unreadable trace is not a refused one: this is the honest laptop case, where a device with no GPS radio reports 100-500 m accuracy from a Wi-Fi scan, and it must reach a human rather than be told its visit is not supported by the evidence',
   },
   {
     scenario: 'noFixes',
-    expected: 'rejected',
+    expected: 'needs_review',
     mustFire: ['noUsableEvidence'],
     mustNotFire: ['presenceDwell', 'coverage', 'proximity'],
-    why: 'nothing was captured at all, and exactly one signal should say so',
+    why: 'nothing was captured at all, exactly one signal should say so, and D-001 forbids reading that as absence -- a human decides',
   },
   {
     scenario: 'replayedClock',
@@ -334,6 +340,126 @@ describe('verification engine', () => {
     });
   });
 
+  describe('absence of evidence is not evidence of absence (D-038)', () => {
+    it('does not reject an honest laptop visit whose every fix is a coarse Wi-Fi scan', () => {
+      /**
+       * The exact production failure. Four visits were run from one location; the two from a
+       * laptop scored 15 and read "Not supported by the evidence" in the console, while the two
+       * from a phone at the same desk scored 67. The laptop was 9 m from the venue centre and
+       * said so -- it just reported 182 m of uncertainty, which is what a device with no GPS
+       * radio always reports.
+       */
+      const r = evaluate(ALL_SCENARIOS.honestLaptopWifiOnly!(), cfg);
+      expect(r.verdict).toBe('needs_review');
+      expect(r.score).toBeGreaterThanOrEqual(cfg.rejectThreshold);
+      expect(r.rollups.minDistanceM).toBeNull();
+      expect(r.rollups.unusableFixCount).toBe(6);
+    });
+
+    it('does not read a cached Wi-Fi scan repeating itself as a location override', () => {
+      // The same cached fix returned six times is byte-identical by construction. Before the
+      // usable-fixes filter this earned -45 for being "characteristic of an overridden
+      // location", about a machine that was doing nothing but sitting still.
+      const codes = evaluate(ALL_SCENARIOS.honestLaptopWifiOnly!(), cfg).signals.map((x) => x.code);
+      expect(codes).not.toContain('jitterFingerprint');
+      expect(codes).toEqual(['noUsableEvidence']);
+    });
+
+    it('holds the floor for any configured reject threshold, not just the default', () => {
+      // VERIFY_REJECT_THRESHOLD is config. Raising it must not silently re-open the hole,
+      // which is why the floor in `evaluate` reads the threshold instead of trusting the
+      // signal's contribution to sit above a constant.
+      for (const rejectThreshold of [30, 40, 55, 70]) {
+        const r = evaluate(ALL_SCENARIOS.honestLaptopWifiOnly!(), { ...cfg, rejectThreshold });
+        expect(r.verdict).toBe('needs_review');
+      }
+    });
+
+    it('still rejects an unreadable trace that is ALSO hand-crafted', () => {
+      /**
+       * The floor is narrow on purpose: it applies only when absence is the ONLY thing the
+       * engine found. Coarse fixes say nothing about where the participant was, but an hour of
+       * device-clock offset is positive evidence about how the trace was MADE, and that is a
+       * different kind of claim. This is the boundary of the whole change: same unreadable
+       * accuracy as the laptop case, opposite verdict, and the clock is the only difference.
+       */
+      const r = evaluate(ALL_SCENARIOS.unreadableAndReplayed!(), cfg);
+      expect(r.verdict).toBe('rejected');
+      expect(r.signals.map((x) => x.code)).toEqual(['noUsableEvidence', 'clockSkew']);
+    });
+
+    it('never lets the absence floor cross the auto threshold', () => {
+      /**
+       * `bandFor` tests `auto_verified` first and `evaluator.service.ts` never validates that
+       * the reject threshold sits below the auto one. An unclamped floor of 80 against the
+       * default auto of 75 therefore AUTO-VERIFIED a session with no fixes at all -- a guard
+       * against over-accusing people, inverted into one that approved everything.
+       */
+      const r = evaluate(ALL_SCENARIOS.noFixes!(), { ...cfg, rejectThreshold: 80 });
+      expect(r.verdict).not.toBe('auto_verified');
+      expect(r.score).toBeLessThan(cfg.autoThreshold);
+    });
+
+    it('never auto-verifies an absence-only trace, at any threshold pair', () => {
+      /**
+       * The property that actually protects money, asserted across the whole grid rather than a
+       * hand-picked list. `needs_review` is deliberately NOT asserted here: a pair where reject
+       * sits at or above auto has no middle band to land in, so the honest invariant is the
+       * narrower one. `EvaluatorService` rejects that pair at config load and logs why, which is
+       * where an incoherent configuration belongs -- but the engine is pure and must not depend
+       * on its caller having validated anything.
+       */
+      for (const autoThreshold of [50, 60, 75, 90]) {
+        for (const rejectThreshold of [10, 30, 55, 74, 75, 80, 95]) {
+          for (const name of ['noFixes', 'allFixesUnusable', 'honestLaptopWifiOnly'] as const) {
+            const r = evaluate(ALL_SCENARIOS[name]!(), { ...cfg, autoThreshold, rejectThreshold });
+            expect(r.verdict).not.toBe('auto_verified');
+          }
+        }
+      }
+    });
+
+    it('rejects coarse fixes whose uncertainty cannot reach the venue', () => {
+      /**
+       * The attack the floor created, and the distinction that closes it: a fix too coarse to
+       * prove presence can still prove absence. `presenceFor` short-circuits above the accuracy
+       * cap before it looks at distance, so a 182 m circle 5 km away was being discarded as
+       * "unknown" when it is in fact conclusive.
+       */
+      const r = evaluate(ALL_SCENARIOS.coarseFixesFarFromVenue!(), cfg);
+      expect(r.verdict).toBe('rejected');
+      expect(r.signals.map((x) => x.code)).toContain('coarseFixesExcludeVenue');
+      expect(r.rollups.minDistanceM).toBeNull();
+    });
+
+    it('does not fire the exclusion on an honest laptop at the venue', () => {
+      // Same coarse accuracy, fixes at the venue. The margin is deliberately wide enough that
+      // a badly-placed Wi-Fi fix does not get an honest participant rejected.
+      const r = evaluate(ALL_SCENARIOS.coarseFixesAtVenue!(), cfg);
+      expect(r.verdict).toBe('needs_review');
+      expect(r.signals.map((x) => x.code)).not.toContain('coarseFixesExcludeVenue');
+    });
+
+    it('scores an attacker 5 km out below an honest laptop in the shop', () => {
+      // The ordering that was missing, and the whole reason D-052 exists. Before it, these two
+      // traces were indistinguishable: same score, same verdict, same single reason string.
+      const far = evaluate(ALL_SCENARIOS.coarseFixesFarFromVenue!(), cfg);
+      const atVenue = evaluate(ALL_SCENARIOS.honestLaptopWifiOnly!(), cfg);
+      expect(far.score).toBeLessThan(atVenue.score);
+      expect(far.verdict).not.toBe(atVenue.verdict);
+    });
+
+    it('ranks a trace that showed us nothing below one we merely could not read', () => {
+      // Softening the contributions must not invert the ordering they exist to preserve.
+      // Deliberately NOT asserted against `tooFewFixes`: two readable fixes across 15% of the
+      // session score 34, just under the unreadable 35, and that ordering is not meaningful --
+      // one has thin evidence, the other none, and both correctly land in review.
+      expect(evaluate(ALL_SCENARIOS.noFixes!(), cfg).score).toBeLessThan(
+        evaluate(ALL_SCENARIOS.allFixesUnusable!(), cfg).score,
+      );
+    });
+  });
+
   describe('the rules stopped punishing honest behaviour (D-032)', () => {
     it('auto-verifies an indoor visit on a phone with good GPS, started on arrival', () => {
       /**
@@ -412,10 +538,61 @@ describe('verification engine', () => {
     describe('a short task expectation cannot buy full dwell credit', () => {
       const shortTask = { ...cfg, expectedDwellSeconds: 60 };
 
-      it('refuses to auto-verify three fixes across two minutes', () => {
-        // 88 before the corroboration floor: ONE capped 90 s interval saturated presenceDwell.
-        const r = evaluate(ALL_SCENARIOS.minimalShortTaskSpoof!(), shortTask);
-        expect(r.verdict).not.toBe('auto_verified');
+      it('refuses to auto-verify a SINGLE capped interval', () => {
+        /**
+         * The D-032 attack, and the part of that floor worth keeping: two fixes 90 s apart, one
+         * capped interval, dwell fully saturated on a 60 s task. It scored 88 before the floor
+         * and 66 now, because `MIN_CORROBORATION_INTERVALS` is 2 however short the task.
+         */
+        const singleInterval = buildTrace(
+          OUTDOOR_VENUE,
+          [
+            { atSeconds: 0, offsetM: 28, accuracyM: 9.4 },
+            { atSeconds: 90, offsetM: 24, accuracyM: 12.1 },
+          ],
+          { sessionSeconds: 90 },
+        );
+        expect(evaluate(singleInterval, shortTask).verdict).not.toBe('auto_verified');
+      });
+
+      it('DOES auto-verify three fixes across two minutes, and that is deliberate (D-053)', () => {
+        /**
+         * This inverts what D-032 asserted here, knowingly. `minimalShortTaskSpoof` is three
+         * fixes inside the fence across two minutes, and on a task whose author asked for ONE
+         * minute that is not distinguishable from an honest visit -- it is what an honest visit
+         * looks like. D-032's flat floor of five intervals only appeared to catch it: what it
+         * actually caught was every real participant doing a short task, because five intervals
+         * needs 2.5 min of wall time at the client's 30 s cadence. It cost four real visits
+         * before it was noticed.
+         *
+         * The engine cannot tell these apart and no longer pretends to. A one-minute task is
+         * inherently less verifiable than a five-minute one -- that is a property of the task,
+         * not a defect in the scoring -- so the control moved to where the choice is actually
+         * made: `TasksTab` warns an author that anything under three minutes yields weaker
+         * verification. Scoring what the task asked for, and steering authors, beats charging
+         * participants for their employer's task design.
+         */
+        expect(evaluate(ALL_SCENARIOS.minimalShortTaskSpoof!(), shortTask).verdict).toBe(
+          'auto_verified',
+        );
+        // Unchanged for any task long enough to ask for real corroboration.
+        expect(evaluate(ALL_SCENARIOS.minimalShortTaskSpoof!(), cfg).verdict).not.toBe(
+          'auto_verified',
+        );
+      });
+
+      it('scales the requirement with what the task can physically produce', () => {
+        // The bug in one assertion: a 60 s task cannot yield five intervals at a 30 s cadence,
+        // so demanding five made it unverifiable by construction.
+        expect(requiredDwellIntervals({ ...cfg, expectedDwellSeconds: 60 })).toBe(2);
+        expect(requiredDwellIntervals({ ...cfg, expectedDwellSeconds: 120 })).toBe(4);
+        expect(requiredDwellIntervals({ ...cfg, expectedDwellSeconds: 300 })).toBe(
+          MIN_DWELL_INTERVALS,
+        );
+        // Never below two, so a single interval can never saturate however short the task.
+        expect(requiredDwellIntervals({ ...cfg, expectedDwellSeconds: 5 })).toBe(
+          MIN_CORROBORATION_INTERVALS,
+        );
       });
 
       it('does not let a padded forgery outrank the honest visit it imitates', () => {

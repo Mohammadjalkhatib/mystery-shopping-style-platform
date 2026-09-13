@@ -2709,3 +2709,116 @@ was touched on this branch, so nothing else could have moved.
 and unambiguous — left alone deliberately, since that entry kept its number. The front-end work
 merged since D-039 has still never been looked at in a browser; this branch does not change that
 and the README now says so in the brand paragraph.
+
+---
+
+## `fix/absence-of-evidence-is-not-rejection` — a laptop could not pass, by construction
+
+**Why.** Pre-submission testing: four visits, one location, two accounts. The two from a phone
+scored 67 (`needs_review`); the two from a laptop scored **15 (`rejected`)** — "Not supported by
+the evidence". Read from Atlas, the laptop pings were `accuracyM: 182`, `presence: unknown`,
+`distanceM: 9.1`. The laptop knew where it was to within 9 m. It declared 182 m of *uncertainty*,
+because a desktop has no GPS radio and Chrome answers `getCurrentPosition` from a cached Wi-Fi
+scan. Above the 100 m cap every fix is `unknown`, `minDistanceM` is null, every other signal
+self-suppresses by design, and `noUsableEvidence` alone docked -35 from a base of 50. **No desktop
+participant could ever score anything but 15.**
+
+Second bug, latent and worse: a cached Wi-Fi scan that has not changed returns the same fix object
+each call, so the coordinates are byte-identical. `jitterFingerprint` was the only signal still
+reading the raw `fixes` array, so a *third* laptop ping would have fired its -45 branch — an
+honest visit at 0, reported as "characteristic of an overridden location". Both laptop sessions
+sent only two fixes, which is the sole reason this had not been seen yet.
+
+**Files.**
+
+- `apps/api/src/verification/engine.ts`: `evaluate` floors the score at `config.rejectThreshold`
+  when the signal list is exactly `[noUsableEvidence]`. Reads the configured threshold rather than
+  trusting a constant, so raising `VERIFY_REJECT_THRESHOLD` cannot re-open the hole
+- `apps/api/src/verification/signals.ts`: `noUsableEvidence` -40/-35 → -20/-15, so absence lands
+  at 30-35 inside `needs_review` instead of relying on the floor; its coarse-fix reason string now
+  names the cap from `ACCURACY_CAP_M` and says a laptop normally reports this. `jitterFingerprint`
+  filters to `presence !== 'unknown'`, matching `teleport`, `proximity` and `accuracyRealism`
+- `apps/api/test/fixtures/scenarios.ts`: `honestLaptopWifiOnly` (the real trace — 6 frozen fixes at
+  182 m) and `unreadableAndReplayed` (coarse fixes *plus* an hour of clock skew)
+- `apps/api/src/verification/engine.spec.ts`: `allFixesUnusable` and `noFixes` expectations flip
+  `rejected` → `needs_review`; new D-038 block asserts the laptop case, that no
+  `jitterFingerprint` fires on it, that the floor holds at thresholds 30/40/55/70, and that an
+  unreadable *and* replayed trace still rejects
+- `docs/DECISIONS.md`: D-051
+
+**Now true.** Rejection requires evidence that *contradicts* the visit — a spoof fingerprint, an
+impossible movement, a position provably elsewhere, a device clock an hour out. Not merely a trace
+we could not read. Three places in the repo already said this (D-001, the `BASE_SCORE` comment,
+the signal's own reason string) and the arithmetic shipped the opposite.
+
+The `no decorative signals` meta-test is what made this change honest, and it is worth recording
+how: the moment absence alone stopped being able to reject, `noUsableEvidence` could no longer make
+*any* verdict stricter in any existing scenario, and the meta-test failed. The right response was
+not to weaken the test but to add the case the table was missing — `unreadableAndReplayed` — which
+is precisely the boundary of the new floor.
+
+**Then the adversary pass changed the branch.** `spoof-adversary` (CLAUDE.md §6) found that the
+fix above had created the cheapest attack on the engine, and a second defect that was worse. Both
+are closed here, D-052:
+
+- **A safe harbour.** Report accuracy just above the 100 m cap from anywhere on earth and you
+  scored 35 with one `noUsableEvidence` signal — identical to an honest laptop in the shop, with
+  the reason string volunteering the alibi while the server held `distanceM: 5100` on every ping.
+  Closed by `coarseFixesExcludeVenue`: `presenceFor` short-circuits above the cap *before* it looks
+  at distance, so a 182 m circle 5 km out was being discarded as unknown when it is conclusive. A
+  coarse fix cannot confirm presence; it can still exclude a venue. Now 10, `rejected`
+- **A zero-evidence auto-verify.** `bandFor` tests `auto_verified` first and nothing validated that
+  reject sat below auto, so `VERIFY_REJECT_THRESHOLD=80` floored an empty session at 80 and **paid
+  it with no human**. Reproduced, not theorised. `EvaluatorService` now refuses that pair at config
+  load and logs why; `evaluate`'s floor is clamped below `autoThreshold`; the engine test grid runs
+  4 x 7 x 3 threshold/scenario combinations instead of a hand-picked list of four
+
+The ordering that was the whole point: attacker 5 km out **10 rejected**, honest laptop **35
+review**, real phone visit **88 auto_verified**.
+
+**Verified.** Full suite **662/662 across 25 suites**, exit 0. `engine.spec` 129/129.
+`npm run typecheck` clean. Real Atlas traces replayed through the fixed engine: both laptop
+sessions 35 `needs_review`, including a synthesised third ping to prove `jitterFingerprint` stays
+silent.
+
+**Then the 1-minute regression, D-053.** The user pushed back on being told 3 minutes was the
+minimum — "it used to work before" — and was right. `git log -S MIN_DWELL_INTERVALS` dates it to
+33b1287 (D-032): before that commit `presenceDwell` was `-5 + 23 * ratio` with no corroboration
+term and `coverage` had no density gate, so the same 77 s trace scored **88**. D-032's comment
+claimed "a short task stays short, it just has to be watched rather than asserted", and that was
+**false** — at the client's 30 s cadence five intervals needs six fixes and 2.5 min of wall time,
+so a task authored at 60 s (which the DTO, schema and admin form all allow) could never be verified
+however honestly performed.
+
+`requiredDwellIntervals(config)` now replaces the constant in both places:
+`clamp(floor(expectedDwell / sampleInterval), 2, 5)`. 60 s task -> 2 intervals, 120 s -> 4, 180 s+
+-> 5 unchanged. The user's real visit now scores **88, auto_verified**; a single capped interval
+still scores 66, which was D-032's actual finding. Knowingly loosened: `minimalShortTaskSpoof` now
+auto-verifies on a 60 s task, because three fixes across two minutes on a one-minute task is not
+distinguishable from an honest visit — the test was rewritten to assert that with the reasoning
+beside it rather than deleted. The lost strictness is replaced by a product control: `TasksTab`
+warns an author that under 3 min verifies more weakly, and the participant screen says to stay at
+least 3 minutes. Both strings in `en.json` and `ar.json`; `unknownHint` now also tells a
+participant a laptop will never be precise enough and to use a phone, which is the thing that
+would have saved this whole session.
+
+**Open — three findings from the adversary pass, left deliberately.** Each is pre-existing rather
+than introduced here, and each needs its own decision. (1) `presenceFor`'s tolerance doubles as a
+geofence bonus: 157 m from a 75 m fence with a *reported* `accuracyM: 82` and otherwise entirely
+real coordinates reaches **78, auto_verified**. It is the cheapest attack that actually passes, and
+it is a modelling error first — an honest 90 m fix 160 m out is scored `inside` too. (2)
+`dwellDetail` is now the last place in the engine that walks the raw fix array, so one interleaved
+coarse fix can cost an honest visit ~16 points. (3) A frozen override keeping only two fixes usable
+dodges both `< 3` length guards and scores 52, above the honest laptop's 35 in a score-sorted
+queue — bounded, since under three usable fixes caps a trace at 55. Also unverified: whether
+Chrome DevTools' location override emits an accuracy above or below the cap, which decides whether
+`staticSpoof`'s `accuracyM: 12` still models the commonest real spoof. The README hedges both ways
+rather than guessing.
+
+**Open.** The four test visits already in Atlas keep their stored verdicts — results are
+append-only (rule 8), so the two 15s do not retroactively become 35s. Re-run a visit to see the
+new behaviour. Separately and **not a bug**: the phone's 67 is correct. Those sessions ran 77 s
+with 3 fixes, giving 2 inside-to-inside intervals against `MIN_DWELL_INTERVALS = 5`, so
+`presenceDwell` paid +4.2 of a possible +18 and `coverage` +3 of +10. Auto-verify needs roughly
+6 fixes over ~3 minutes on site; a 70-second visit cannot reach 75 under any configuration, and
+the thresholds that make that true were each set by an adversary pass.

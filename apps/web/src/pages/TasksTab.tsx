@@ -530,6 +530,8 @@ function TaskForm({
   const [title, setTitle] = useState('');
   const [brief, setBrief] = useState('');
   const [minutes, setMinutes] = useState('5');
+  /** Under three minutes the engine has fewer than five observations to reason about. */
+  const shortDwell = Number(minutes) > 0 && Number(minutes) < 3;
   const [busy, setBusy] = useState(false);
 
   const submit = async (): Promise<void> => {
@@ -587,7 +589,22 @@ function TaskForm({
             onChange={(e) => setMinutes(e.target.value)}
             size="small"
             sx={{ width: { xs: '100%', sm: 200 } }}
-            helperText=" "
+            /**
+             * The warning is on the field that causes it, not in a banner at the end of the form.
+             *
+             * Verification corroboration scales with this number (D-053): the engine asks for one
+             * inside-to-inside location update per 30 s of expected dwell, capped at five. A task
+             * authored at one minute can only ever produce two, so it is verified on two
+             * observations and a short task is genuinely weaker evidence than a long one. That is
+             * a real consequence of a choice being made right here, so it is said right here.
+             *
+             * Deliberately NOT a validation error. Short tasks are legitimate -- a drive-through
+             * check really is a one-minute job -- and blocking them would be the same mistake
+             * D-032 made in the engine: charging someone for a task design that is not theirs.
+             */
+            helperText={shortDwell ? t('admin.taskForm.dwellShortWarning') : ' '}
+            // `slotProps.formHelperText`, not `FormHelperTextProps` -- v9 dropped the flat prop.
+            slotProps={shortDwell ? { formHelperText: { sx: { color: 'warning.dark' } } } : undefined}
           />
         </Stack>
         <TextField
