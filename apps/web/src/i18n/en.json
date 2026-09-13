@@ -44,7 +44,7 @@
       "venueIndoor": "Indoor venue",
       "venueOutdoor": "Outdoor venue",
       "geofence": "{radius} m geofence",
-      "advice": "Start the visit as you arrive, and keep this page open and in front of you while you are inside. Give it at least 3 minutes — verification needs several location readings spread over time, so a very short visit cannot be confirmed even when you are in the right place. Your phone can go back in your pocket between interactions — the gaps are expected. Use a phone, not a laptop: laptops have no GPS and cannot be verified.",
+      "advice": "Start the visit as you arrive, and keep this page open and in front of you while you are inside. Staying 3 minutes or more is recommended — more location readings make the result more reliable. Your phone can go back in your pocket between interactions — the gaps are expected.",
       "start": "Start visit",
       "starting": "Starting…"
     },
@@ -169,13 +169,13 @@
       "checking": "Checking where you are…",
       "checkingHint": "Your first location reading is on its way. This takes up to half a minute.",
       "inside": "You are at {venue}",
-      "insideHint": "Stay on site with this page open for at least 3 minutes. Verification needs several location readings over time, so a very short visit cannot be confirmed even when you are in the right place.",
+      "insideHint": "Stay on site and keep this page open until you are done. 3 minutes or more is recommended.",
       "near": "You are close to {venue}, but not inside it",
       "nearHint": "Move closer, or further in. Right now this would not count as a visit at the venue.",
       "outside": "You do not seem to be at {venue}",
       "outsideHint": "Check you are at the right branch. Nothing is wrong yet — the visit is still open and this will change as soon as you arrive.",
       "unknown": "Your location is not accurate enough to tell",
-      "unknownHint": "This is normal indoors and is not counted against you. Near a window or a door usually helps. On a laptop or desktop it will not improve — those have no GPS, so their location is never precise enough to confirm a visit. Use a phone.",
+      "unknownHint": "This is normal indoors and is not counted against you. Near a window or a door usually helps.",
       "stale": "Last checked {mins} min ago",
       "staleNow": "Just checked"
     }

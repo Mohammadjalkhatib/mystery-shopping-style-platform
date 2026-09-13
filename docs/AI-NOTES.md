@@ -277,3 +277,33 @@ checking it. "Both now do X" is a claim about two things, and I had looked at on
 is the one I ran afterwards and should have run before — diff the two call sites, or grep for the
 property that is supposed to be shared. A claim of consistency between two places needs to be
 read off both places, never inferred from having edited one.
+
+### 2026-09-13 - Three verification fixes that each passed their tests and none fixed the product
+
+**What happened.** The user reported laptop visits failing and phone visits landing in review. I
+shipped D-051 (absence floor), D-052 (coarse exclusion signal) and D-053 (proportional
+corroboration), each with an adversary pass, green tests and a real-trace replay, and it went to
+`main`. The user retested on the deployed demo and wrote "whatever you did is not working …
+SIMPLIFY and make it work". The laptop still could not pass and the screen still told the
+participant their location could not be read. Earlier in the same session I had also presented
+"3 minutes is the minimum" as design; it was a regression from D-032, which the user caught by
+remembering that short visits used to work.
+
+**Why it was wrong.** My first Atlas read showed the laptop 9 m from the venue centre and I wrote
+that down — then treated "every fix is above the accuracy cap" as a fixed constraint to design
+around, instead of recognising it as the bug. Each fix moved the laptop's score around inside a
+band while the actual requirement, "a person in the right place passes", was never tested. My
+replays asserted the verdicts I had decided were defensible, not the verdict the user needed. The
+adversary passes kept attention on what an attacker could gain, which is the right question for a
+change and the wrong one when honest users cannot pass at all.
+
+**What I did instead.** Removed the veto: accuracy widens the fence up to the cap and never discards
+the fix. Made presence the deciding signal and turned fraud signals into explicit blocks instead of
+weights, after watching pure arithmetic let `teleportIn` pass with its penalty firing. Replayed the
+seven most recent real sessions from Atlas through the new engine before reporting anything.
+
+**The pattern.** When a user reports a real person failing, the first test to write is that
+person's real trace asserting the outcome they expect — not the outcome the current model says is
+defensible. A constraint that is producing the reported failure is a candidate for deletion before
+it is a design input. Three careful refinements of the wrong model cost more than one blunt
+question: what rule does the product actually want?

@@ -48,17 +48,39 @@ describe('presence rule', () => {
   });
 
   it('does not let accuracy beyond the cap manufacture presence', () => {
-    // Without the cap, a 400 m accuracy fix 400 m away would read as "inside".
-    expect(presenceFor(400, 400, fence)).toBe('unknown');
+    // The cap bounds the TOLERANCE, so 400 m of claimed accuracy still only widens a 50 m fence
+    // to 150 m. A fix 400 m out therefore reads outside, not inside -- which is the thing the cap
+    // exists to prevent.
+    expect(presenceFor(400, 400, fence)).toBe('outside');
   });
 
   it('treats a fix at exactly the accuracy cap as usable', () => {
-    expect(presenceFor(150, ACCURACY_CAP_M, fence)).toBe('inside');
+    expect(presenceFor(100, ACCURACY_CAP_M, fence)).toBe('inside');
   });
 
-  it('treats one metre past the cap as unknown, not outside', () => {
-    // The distinction matters: unknown is missing evidence, outside is evidence of absence.
-    expect(presenceFor(150, ACCURACY_CAP_M + 1, fence)).toBe('unknown');
+  it('keeps using a fix whose accuracy is past the cap, rather than discarding it (D-054)', () => {
+    /**
+     * The cap bounds how much the fence may widen. It is NOT a veto on the fix.
+     *
+     * Discarding was the single worst bug this engine has had: a laptop has no GPS radio, so
+     * Chrome answers from a Wi-Fi scan and reports 100-500 m of uncertainty routinely. The
+     * measured traces put the laptop 5-7 m from the venue centre -- indistinguishable from the
+     * phone beside it -- and every visit scored as "no usable evidence" while the server held a
+     * 7 m distance. Where a fix says you are and how sure the browser claims to be are different
+     * facts, and only the second one was ever in doubt.
+     */
+    expect(presenceFor(7, 182, fence)).toBe('inside');
+    // Tolerance is still capped, so a coarse fix cannot claim the whole distance it is out by.
+    expect(presenceFor(100, ACCURACY_CAP_M + 1, fence)).toBe('inside'); // 100 <= 50 + 50
+    // The cafe case: a coarse laptop fix well past the fence edge does not get pulled inside.
+    expect(presenceFor(170, 182, fence)).not.toBe('inside');
+    expect(presenceFor(500, 5000, fence)).toBe('outside'); // not 50 + 5000
+  });
+
+  it('reports unknown only when there is no usable accuracy number at all', () => {
+    expect(presenceFor(7, Number.NaN, fence)).toBe('unknown');
+    expect(presenceFor(7, Number.POSITIVE_INFINITY, fence)).toBe('unknown');
+    expect(presenceFor(7, -1, fence)).toBe('unknown');
   });
 
   it('reports near inside the buffer ring', () => {

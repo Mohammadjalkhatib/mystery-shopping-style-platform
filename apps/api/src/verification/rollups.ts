@@ -129,8 +129,20 @@ export function computeRollups(
   return {
     fixCount: fixes.length,
     dwellSeconds: dwellDetail(fixes, expectedIntervalSeconds * 3).seconds,
-    // Half the expected cadence: every honest interval clears it, no burst of pings does.
-    dwellIntervals: dwellDetail(fixes, expectedIntervalSeconds * 3, expectedIntervalSeconds / 2)
+    /**
+     * 0.8x the expected cadence, not half of it.
+     *
+     * The comment here used to read "half the expected cadence: every honest interval clears it,
+     * no burst of pings does", and the second clause was false. `useVisitTracker` throttles at
+     * `SAMPLE_MS = 30_000`, so an honest client CANNOT emit a gap under 30 s -- while a script
+     * posting straight to the ingest endpoint can send one every 15 s and still clear a 15 s bar.
+     * The spoof-adversary pass used exactly that to buy full corroboration in 30 seconds.
+     *
+     * 0.8x rather than 1.0x leaves margin for timer jitter and clock granularity on the honest
+     * path, where gaps land a hair either side of 30 s. It costs an honest trace nothing and
+     * doubles the wall time a fabricator has to spend.
+     */
+    dwellIntervals: dwellDetail(fixes, expectedIntervalSeconds * 3, expectedIntervalSeconds * 0.8)
       .intervals,
     coverageRatio: coverageRatio(evidence, expectedIntervalSeconds),
     // reduce, not Math.min(...spread): a long offline flush would blow the argument limit

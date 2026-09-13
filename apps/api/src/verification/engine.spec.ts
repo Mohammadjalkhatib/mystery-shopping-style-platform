@@ -1,7 +1,7 @@
 import type { Verdict } from '@msp/shared';
 import { ALL_SCENARIOS } from '../../test/fixtures/scenarios.js';
 import { buildTrace, everyN, INDOOR_VENUE, OUTDOOR_VENUE } from '../../test/fixtures/trace-builder.js';
-import { BASE_SCORE, evaluate } from './engine.js';
+import { BASE_SCORE, BLOCKING_CONTRIBUTION, evaluate } from './engine.js';
 import { computeRollups } from './rollups.js';
 import {
   ALL_SIGNALS,
@@ -47,15 +47,15 @@ const TABLE: Case[] = [
   },
   {
     scenario: 'honestWithGaps',
-    expected: 'needs_review',
+    expected: 'auto_verified',
     mustNotFire: ['teleport'],
-    why: 'only 58% of this visit was observed, so a human should look — it cleared the auto threshold before D-032 only on the strength of a bonus for being seen arriving, which is not evidence of what happened during the six minutes nobody saw',
+    why: 'D-054 inverts this deliberately: the participant was repeatedly confirmed inside the fence, and gaps in between are the normal condition on mobile web (D-005), not an argument against a visit. Coverage still costs a few points; it no longer withholds the verdict',
   },
   {
     scenario: 'staticSpoof',
-    expected: 'rejected',
+    expected: 'needs_review',
     mustFire: ['jitterFingerprint', 'accuracyRealism'],
-    why: 'a frozen DevTools override: identical coordinates and one constant accuracy value',
+    why: 'a frozen DevTools override: identical coordinates and one constant accuracy value. Both signals fire and both block auto-verification, so it cannot be paid; it lands in review rather than refused because D-054 credits the position it CLAIMS, and a human reading "identical coordinates" and "every fix reported exactly 12 m" has what they need',
   },
   {
     scenario: 'teleportIn',
@@ -71,10 +71,9 @@ const TABLE: Case[] = [
   },
   {
     scenario: 'allFixesUnusable',
-    expected: 'needs_review',
-    mustFire: ['noUsableEvidence'],
-    mustNotFire: ['presenceDwell', 'coverage', 'accuracyRealism', 'jitterFingerprint'],
-    why: 'every fix exceeded the accuracy cap, so one signal says so rather than four restating it -- and an unreadable trace is not a refused one: this is the honest laptop case, where a device with no GPS radio reports 100-500 m accuracy from a Wi-Fi scan, and it must reach a human rather than be told its visit is not supported by the evidence',
+    expected: 'auto_verified',
+    mustNotFire: ['noUsableEvidence'],
+    why: 'renamed in spirit by D-054: these fixes are coarse, not unusable. They put the participant 40-70 m inside a 75 m fence and are scored on that, which is the whole point -- a laptop with no GPS radio reports this accuracy routinely and was previously refused for it',
   },
   {
     scenario: 'noFixes',
@@ -132,7 +131,7 @@ const TABLE: Case[] = [
   },
   {
     scenario: 'unobservedDwellPadded',
-    expected: 'needs_review',
+    expected: 'auto_verified',
     mustFire: ['presenceDwell'],
     mustNotFire: ['teleport'],
     why: 'two typed coordinates five minutes apart bought 300 s of dwell from two observed instants',
@@ -140,8 +139,8 @@ const TABLE: Case[] = [
   {
     scenario: 'batchFlushedHonestVisit',
     expected: 'needs_review',
-    mustFire: ['teleport'],
-    why: 'receivedAt stamped per batch rather than per fix; the ingest spec, expressed as a test',
+    mustNotFire: ['teleport'],
+    why: 'receivedAt stamped per batch rather than per fix. Since D-054 teleport measures each pair on the wider of the two clocks, so walking-pace movement inside a batch is checked and passes; the flush still lands in review because coverage is measured on the server clock, which is recorded as open',
   },
 ];
 
@@ -306,7 +305,17 @@ describe('verification engine', () => {
       // observed instants. Capped, it buys 90.
       const r = evaluate(ALL_SCENARIOS.unobservedDwellPadded!(), cfg);
       expect(r.rollups.dwellSeconds).toBeLessThanOrEqual(MAX_GAP);
-      expect(r.verdict).not.toBe('auto_verified');
+      /**
+       * The CAP is the invariant, and it still holds: 90 s of credit, not 300.
+       *
+       * The verdict assertion that used to sit here was removed by D-054. Two fixes five minutes
+       * apart, both confirmed inside the fence, now auto-verify -- because that is also exactly
+       * what an honest visit looks like when a phone sleeps in a pocket between readings, which
+       * D-005 says is the normal condition on mobile web. The engine has no way to tell those
+       * apart, and the three attempts to do it by arithmetic all ended up refusing real visits.
+       * What the cap still guarantees is that the fabrication cannot claim MORE dwell than it
+       * showed us.
+       */
     });
 
     it('no longer credits the 360 s pocketed gap in honestWithGaps', () => {
@@ -325,13 +334,24 @@ describe('verification engine', () => {
   });
 
   describe('teleport survives a per-batch receivedAt (ingest spec, D-010)', () => {
-    it('does not silently skip pairs that share a server timestamp', () => {
-      // `if (seconds <= 0) continue` disabled the movement check for every fix in a batch.
-      // If feat/ping-ingest stamps receivedAt per batch, this is what catches it.
-      const r = evaluate(ALL_SCENARIOS.batchFlushedHonestVisit!(), cfg);
-      const codes = r.signals.map((s) => s.code);
-      expect(codes).toContain('teleport');
-      expect(r.signals.find((s) => s.code === 'teleport')!.reason).toMatch(/same server timestamp/);
+    it('still checks movement inside a batch, using the device clock (D-054)', () => {
+      /**
+       * `if (seconds <= 0) continue` once disabled the movement check for every fix in a batch.
+       * D-010 answered that by counting same-server-timestamp pairs as unchecked (-12). D-054
+       * measures each pair on the wider of the two clocks instead, so a batch is CHECKED rather
+       * than flagged: the honest flush below moves at walking pace and says nothing, and a batch
+       * that hides a 10 km jump behind one server timestamp still fires the full -30.
+       */
+      const honest = evaluate(ALL_SCENARIOS.batchFlushedHonestVisit!(), cfg);
+      expect(honest.signals.map((s) => s.code)).not.toContain('teleport');
+
+      const hiddenJump = buildTrace(OUTDOOR_VENUE, [
+        { atSeconds: 0, offsetM: 20, accuracyM: 9, receivedAtSeconds: 300 },
+        { atSeconds: 30, offsetM: 0, at: { lat: OUTDOOR_VENUE.lat + 0.09, lng: OUTDOOR_VENUE.lng }, jitterAt: true, accuracyM: 10, receivedAtSeconds: 300 },
+        { atSeconds: 60, offsetM: 22, accuracyM: 11, receivedAtSeconds: 300 },
+      ], { sessionSeconds: 300 });
+      const jump = evaluate(hiddenJump, cfg).signals.find((s) => s.code === 'teleport');
+      expect(jump?.contribution).toBe(-30);
     });
 
     it('an honest offline flush is not rejected outright', () => {
@@ -340,123 +360,138 @@ describe('verification engine', () => {
     });
   });
 
-  describe('absence of evidence is not evidence of absence (D-038)', () => {
-    it('does not reject an honest laptop visit whose every fix is a coarse Wi-Fi scan', () => {
+  describe('a coarse fix is evidence, not an excuse (D-054)', () => {
+    it('auto-verifies an honest laptop that was actually at the venue', () => {
       /**
-       * The exact production failure. Four visits were run from one location; the two from a
-       * laptop scored 15 and read "Not supported by the evidence" in the console, while the two
-       * from a phone at the same desk scored 67. The laptop was 9 m from the venue centre and
-       * said so -- it just reported 182 m of uncertainty, which is what a device with no GPS
-       * radio always reports.
+       * The production failure this whole line of work started from, in one assertion. A laptop
+       * has no GPS radio, so Chrome answers from a Wi-Fi scan reporting ~182 m of uncertainty.
+       * The measured traces put it 5-7 m from the venue centre, indistinguishable from the phone
+       * beside it, and it scored 15 (`rejected`, "Not supported by the evidence"), then 35
+       * (`needs_review`) after the first two attempts at this.
+       *
+       * Reported accuracy now widens the fence up to the cap instead of discarding the fix.
        */
       const r = evaluate(ALL_SCENARIOS.honestLaptopWifiOnly!(), cfg);
-      expect(r.verdict).toBe('needs_review');
-      expect(r.score).toBeGreaterThanOrEqual(cfg.rejectThreshold);
-      expect(r.rollups.minDistanceM).toBeNull();
-      expect(r.rollups.unusableFixCount).toBe(6);
+      expect(r.verdict).toBe('auto_verified');
+      expect(r.rollups.minDistanceM).not.toBeNull();
+      expect(r.rollups.unusableFixCount).toBe(0);
+      expect(r.signals.map((x) => x.code)).not.toContain('noUsableEvidence');
     });
 
-    it('does not read a cached Wi-Fi scan repeating itself as a location override', () => {
-      // The same cached fix returned six times is byte-identical by construction. Before the
-      // usable-fixes filter this earned -45 for being "characteristic of an overridden
-      // location", about a machine that was doing nothing but sitting still.
+    it('does not read a refreshing Wi-Fi scan as a location override', () => {
+      // The scan moves a few metres and a few metres of claimed accuracy between readings, which
+      // is not the signature the drift test is looking for.
       const codes = evaluate(ALL_SCENARIOS.honestLaptopWifiOnly!(), cfg).signals.map((x) => x.code);
       expect(codes).not.toContain('jitterFingerprint');
-      expect(codes).toEqual(['noUsableEvidence']);
     });
 
-    it('holds the floor for any configured reject threshold, not just the default', () => {
-      // VERIFY_REJECT_THRESHOLD is config. Raising it must not silently re-open the hole,
-      // which is why the floor in `evaluate` reads the threshold instead of trusting the
-      // signal's contribution to sit above a constant.
-      for (const rejectThreshold of [30, 40, 55, 70]) {
-        const r = evaluate(ALL_SCENARIOS.honestLaptopWifiOnly!(), { ...cfg, rejectThreshold });
-        expect(r.verdict).toBe('needs_review');
-      }
-    });
-
-    it('still rejects an unreadable trace that is ALSO hand-crafted', () => {
+    it('still refuses a frozen override that hides behind coarse accuracy', () => {
       /**
-       * The floor is narrow on purpose: it applies only when absence is the ONLY thing the
-       * engine found. Coarse fixes say nothing about where the participant was, but an hour of
-       * device-clock offset is positive evidence about how the trace was MADE, and that is a
-       * different kind of claim. This is the boundary of the whole change: same unreadable
-       * accuracy as the laptop case, opposite verdict, and the clock is the only difference.
+       * The other half of scoping the drift test to GPS-quality fixes: it must not become a free
+       * pass. Byte-identical coordinates are something a refreshing scan does not produce, so the
+       * coarse population is still tested at its extreme.
        */
-      const r = evaluate(ALL_SCENARIOS.unreadableAndReplayed!(), cfg);
+      const r = evaluate(ALL_SCENARIOS.frozenOverrideCoarseAccuracy!(), cfg);
+      expect(r.verdict).not.toBe('auto_verified');
+      expect(r.signals.map((x) => x.code)).toContain('jitterFingerprint');
+    });
+
+    it('rejects a coarse trace that is genuinely far from the venue', () => {
+      // No special signal for this any more. The fix keeps its position, so `proximity` charges
+      // it -25 for being well outside the fence, exactly as it would a precise fix.
+      const r = evaluate(ALL_SCENARIOS.coarseFixesFarFromVenue!(), cfg);
       expect(r.verdict).toBe('rejected');
-      expect(r.signals.map((x) => x.code)).toEqual(['noUsableEvidence', 'clockSkew']);
+      expect(r.signals.map((x) => x.code)).toContain('proximity');
     });
 
-    it('never lets the absence floor cross the auto threshold', () => {
+    it('scores a coarse trace at the venue far above the same trace 5 km away', () => {
+      // The ordering that matters, and the reason the accuracy cap stopped being a veto: these
+      // two used to be indistinguishable, both landing on 35 with one reason string that read as
+      // "your device was not good enough".
+      const atVenue = evaluate(ALL_SCENARIOS.coarseFixesAtVenue!(), cfg);
+      const farAway = evaluate(ALL_SCENARIOS.coarseFixesFarFromVenue!(), cfg);
+      expect(atVenue.verdict).toBe('auto_verified');
+      expect(farAway.verdict).toBe('rejected');
+      expect(atVenue.score - farAway.score).toBeGreaterThan(50);
+    });
+
+    it('never auto-verifies a session with no fixes at all, at any threshold pair', () => {
       /**
-       * `bandFor` tests `auto_verified` first and `evaluator.service.ts` never validates that
-       * the reject threshold sits below the auto one. An unclamped floor of 80 against the
-       * default auto of 75 therefore AUTO-VERIFIED a session with no fixes at all -- a guard
-       * against over-accusing people, inverted into one that approved everything.
+       * The one case where absence is still all there is. `noUsableEvidence` fires alone, the
+       * floor keeps it out of `rejected` (D-001: absence of evidence is not evidence of absence),
+       * and the clamp keeps it out of `auto_verified` even if the thresholds are misconfigured so
+       * that reject sits at or above auto -- a pair with no middle band at all.
        */
-      const r = evaluate(ALL_SCENARIOS.noFixes!(), { ...cfg, rejectThreshold: 80 });
+      for (const autoThreshold of [50, 60, 75, 90]) {
+        for (const rejectThreshold of [10, 30, 55, 74, 75, 80, 95]) {
+          const r = evaluate(ALL_SCENARIOS.noFixes!(), { ...cfg, autoThreshold, rejectThreshold });
+          expect(r.verdict).not.toBe('auto_verified');
+        }
+      }
+      const d = evaluate(ALL_SCENARIOS.noFixes!(), cfg);
+      expect(d.verdict).toBe('needs_review');
+      expect(d.signals.map((x) => x.code)).toEqual(['noUsableEvidence']);
+    });
+  });
+
+  describe('the adversary pass on D-054: honest visits the block rule must not stop', () => {
+    it('auto-verifies a five-minute laptop visit whose Wi-Fi accuracy barely moves', () => {
+      const r = evaluate(ALL_SCENARIOS.honestLaptopLongIndoor!(), cfg);
+      expect(r.signals.map((x) => x.code)).not.toContain('accuracyRealism');
+      expect(r.verdict).toBe('auto_verified');
+    });
+
+    it('auto-verifies a phone visit with one cell-tower fallback fix in the middle', () => {
+      const r = evaluate(ALL_SCENARIOS.phoneWithCellTowerBlip!(), cfg);
+      expect(r.signals.map((x) => x.code)).not.toContain('teleport');
+      expect(r.verdict).toBe('auto_verified');
+    });
+
+    it('does not read a real offline flush as impossible movement', () => {
+      // Coverage still charges a flush (it measures the server clock), which is recorded as open
+      // in D-054. What this pins is that `teleport` no longer blocks it.
+      const r = evaluate(ALL_SCENARIOS.realOfflineFlush!(), cfg);
+      expect(r.signals.map((x) => x.code)).not.toContain('teleport');
+    });
+
+    it('refuses three fixes POSTed within five seconds', () => {
+      const r = evaluate(ALL_SCENARIOS.threeFixBurst!(), cfg);
+      expect(r.rollups.dwellIntervals).toBe(0);
+      expect(r.verdict).not.toBe('auto_verified');
+    });
+  });
+
+  describe('a substantial negative finding blocks auto-verification (D-054)', () => {
+    /**
+     * The mechanism that replaced balancing weights against each other. Once `proximity` became
+     * the deciding signal at +25 the reachable maximum passed 110, and every penalty quietly
+     * stopped mattering -- `teleportIn` auto-verified at 77 WITH its -30 firing, `replayedClock`
+     * at 87 with an hour of clock offset on the record. Arithmetic said pass, evidence said stop.
+     */
+    it.each([
+      ['teleportIn', 'teleport'],
+      ['replayedClock', 'clockSkew'],
+      ['constantAccuracy', 'accuracyRealism'],
+      ['staticSpoof', 'jitterFingerprint'],
+      ['indoorTightAccuracyNoApproach', 'accuracyRealism'],
+      ['accuracyLaunderedByOneUnusableFix', 'accuracyRealism'],
+    ] as const)('%s cannot auto-verify while %s is firing', (scenario, code) => {
+      const r = evaluate(ALL_SCENARIOS[scenario]!(), cfg);
+      expect(r.signals.some((x) => x.code === code && x.contribution <= BLOCKING_CONTRIBUTION)).toBe(
+        true,
+      );
       expect(r.verdict).not.toBe('auto_verified');
       expect(r.score).toBeLessThan(cfg.autoThreshold);
     });
 
-    it('never auto-verifies an absence-only trace, at any threshold pair', () => {
-      /**
-       * The property that actually protects money, asserted across the whole grid rather than a
-       * hand-picked list. `needs_review` is deliberately NOT asserted here: a pair where reject
-       * sits at or above auto has no middle band to land in, so the honest invariant is the
-       * narrower one. `EvaluatorService` rejects that pair at config load and logs why, which is
-       * where an incoherent configuration belongs -- but the engine is pure and must not depend
-       * on its caller having validated anything.
-       */
-      for (const autoThreshold of [50, 60, 75, 90]) {
-        for (const rejectThreshold of [10, 30, 55, 74, 75, 80, 95]) {
-          for (const name of ['noFixes', 'allFixesUnusable', 'honestLaptopWifiOnly'] as const) {
-            const r = evaluate(ALL_SCENARIOS[name]!(), { ...cfg, autoThreshold, rejectThreshold });
-            expect(r.verdict).not.toBe('auto_verified');
-          }
-        }
+    it('does not block on the small negatives an honest visit collects', () => {
+      // An honest laptop takes -8 for a coarse median at an outdoor venue and a pocketed phone
+      // loses a little coverage. Blocking on those would recreate the review-everything
+      // behaviour this change exists to end.
+      for (const name of ['honestLaptopWifiOnly', 'coarseFixesAtVenue', 'honestWithGaps'] as const) {
+        const r = evaluate(ALL_SCENARIOS[name]!(), cfg);
+        expect(r.verdict).toBe('auto_verified');
       }
-    });
-
-    it('rejects coarse fixes whose uncertainty cannot reach the venue', () => {
-      /**
-       * The attack the floor created, and the distinction that closes it: a fix too coarse to
-       * prove presence can still prove absence. `presenceFor` short-circuits above the accuracy
-       * cap before it looks at distance, so a 182 m circle 5 km away was being discarded as
-       * "unknown" when it is in fact conclusive.
-       */
-      const r = evaluate(ALL_SCENARIOS.coarseFixesFarFromVenue!(), cfg);
-      expect(r.verdict).toBe('rejected');
-      expect(r.signals.map((x) => x.code)).toContain('coarseFixesExcludeVenue');
-      expect(r.rollups.minDistanceM).toBeNull();
-    });
-
-    it('does not fire the exclusion on an honest laptop at the venue', () => {
-      // Same coarse accuracy, fixes at the venue. The margin is deliberately wide enough that
-      // a badly-placed Wi-Fi fix does not get an honest participant rejected.
-      const r = evaluate(ALL_SCENARIOS.coarseFixesAtVenue!(), cfg);
-      expect(r.verdict).toBe('needs_review');
-      expect(r.signals.map((x) => x.code)).not.toContain('coarseFixesExcludeVenue');
-    });
-
-    it('scores an attacker 5 km out below an honest laptop in the shop', () => {
-      // The ordering that was missing, and the whole reason D-052 exists. Before it, these two
-      // traces were indistinguishable: same score, same verdict, same single reason string.
-      const far = evaluate(ALL_SCENARIOS.coarseFixesFarFromVenue!(), cfg);
-      const atVenue = evaluate(ALL_SCENARIOS.honestLaptopWifiOnly!(), cfg);
-      expect(far.score).toBeLessThan(atVenue.score);
-      expect(far.verdict).not.toBe(atVenue.verdict);
-    });
-
-    it('ranks a trace that showed us nothing below one we merely could not read', () => {
-      // Softening the contributions must not invert the ordering they exist to preserve.
-      // Deliberately NOT asserted against `tooFewFixes`: two readable fixes across 15% of the
-      // session score 34, just under the unreadable 35, and that ordering is not meaningful --
-      // one has thin evidence, the other none, and both correctly land in review.
-      expect(evaluate(ALL_SCENARIOS.noFixes!(), cfg).score).toBeLessThan(
-        evaluate(ALL_SCENARIOS.allFixesUnusable!(), cfg).score,
-      );
     });
   });
 
@@ -552,7 +587,16 @@ describe('verification engine', () => {
           ],
           { sessionSeconds: 90 },
         );
-        expect(evaluate(singleInterval, shortTask).verdict).not.toBe('auto_verified');
+        const r = evaluate(singleInterval, shortTask);
+        /**
+         * D-054 inverted this too, and it was the user's explicit instruction: a participant
+         * confirmed inside the fence passes. Two fixes 90 s apart on a one-minute task is a
+         * one-minute visit, and the phone that produced it is the same phone that produces every
+         * honest short visit. What the corroboration term still does is rank -- this scores below
+         * a trace with more observations -- rather than withhold the verdict.
+         */
+        expect(r.verdict).toBe('auto_verified');
+        expect(r.score).toBeLessThan(evaluate(ALL_SCENARIOS.honestOutdoor!(), shortTask).score);
       });
 
       it('DOES auto-verify three fixes across two minutes, and that is deliberate (D-053)', () => {
@@ -575,9 +619,10 @@ describe('verification engine', () => {
         expect(evaluate(ALL_SCENARIOS.minimalShortTaskSpoof!(), shortTask).verdict).toBe(
           'auto_verified',
         );
-        // Unchanged for any task long enough to ask for real corroboration.
-        expect(evaluate(ALL_SCENARIOS.minimalShortTaskSpoof!(), cfg).verdict).not.toBe(
-          'auto_verified',
+        // D-054: presence now decides at every task length, so this passes on a 5 min task too.
+        // Corroboration still RANKS it -- three fixes score below a fully observed visit.
+        expect(evaluate(ALL_SCENARIOS.minimalShortTaskSpoof!(), cfg).score).toBeLessThan(
+          evaluate(ALL_SCENARIOS.honestOutdoor!(), cfg).score,
         );
       });
 
@@ -614,19 +659,32 @@ describe('verification engine', () => {
       });
     });
 
-    it('refuses a four-ping ladder spaced at the dwell cap', () => {
-      // 90 s spacing is the attacker's optimum: fully credited by dwell, fully counted by
-      // coverage, and it used to duck the dispersion check on fix count. Scored 77.
-      expect(evaluate(ALL_SCENARIOS.fourPingLadder!(), cfg).verdict).not.toBe('auto_verified');
+    it('no longer refuses a four-ping ladder, and that is the accepted cost (D-054)', () => {
+      /**
+       * Four fixes 90 s apart, every one confirmed inside the fence, across four and a half
+       * minutes. It was called "the attacker's optimum" and held at 77; it now auto-verifies.
+       *
+       * The uncomfortable truth the name was hiding: this is also what an honest sparse visit
+       * looks like. The engine cannot separate them, and D-054 stops it charging the honest half
+       * for the resemblance. The residual protection is that neither can reach the auto band once
+       * any fraud signal fires -- see the blocking tests above.
+       */
+      expect(evaluate(ALL_SCENARIOS.fourPingLadder!(), cfg).verdict).toBe('auto_verified');
     });
 
-    it('cannot buy corroboration with cadence instead of time', () => {
-      // Six pings in sixty seconds bought a full +18 when intervals were merely counted. The
-      // honest client is throttled to one fix per 30 s and cannot do this; a script can.
+    it('does not let a sub-throttle cadence buy corroboration', () => {
+      /**
+       * Six pings in sixty seconds. `useVisitTracker` throttles at `SAMPLE_MS = 30_000`, so an
+       * honest client CANNOT produce a 12 s gap -- this cadence only comes from a script posting
+       * straight to the ingest endpoint. The interval bar is now 0.8x the expected cadence rather
+       * than half of it, so none of these gaps count and corroboration stays at zero.
+       *
+       * The score no longer hinges on that, because confirmed presence carries the verdict -- but
+       * the rollup is the thing a future signal would key on, so it is worth pinning.
+       */
       const shortTask = { ...cfg, expectedDwellSeconds: 60 };
       const r = evaluate(ALL_SCENARIOS.fastCadenceShortTask!(), shortTask);
-      expect(r.rollups.dwellIntervals).toBeLessThan(MIN_DWELL_INTERVALS);
-      expect(r.verdict).not.toBe('auto_verified');
+      expect(r.rollups.dwellIntervals).toBe(0);
     });
 
     it('cannot launder the accuracy check with one unusable fix', () => {

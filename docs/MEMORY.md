@@ -2822,3 +2822,47 @@ with 3 fixes, giving 2 inside-to-inside intervals against `MIN_DWELL_INTERVALS =
 `presenceDwell` paid +4.2 of a possible +18 and `coverage` +3 of +10. Auto-verify needs roughly
 6 fixes over ~3 minutes on site; a 70-second visit cannot reach 75 under any configuration, and
 the thresholds that make that true were each set by an adversary pass.
+
+---
+
+## `fix/presence-decides-the-verdict` — a person in the right place passes
+
+**Why.** After D-051..D-053 shipped, the user retested on the deployed demo: laptop visits still
+could not pass, and they asked to simplify — in location passes, otherwise review or fail. Atlas
+showed the laptop 5-7 m from the venue centre at 182-185 m reported accuracy, identical in position
+to the phone. The accuracy cap was discarding the position along with the uncertainty.
+
+**Files.**
+
+- `apps/api/src/geo/haversine.ts`: accuracy widens the fence by at most `ACCURACY_CAP_M`, now 50 m
+  (was 100); it never discards the fix. `unknown` only for non-finite or negative accuracy
+- `apps/api/src/verification/engine.ts`: `BLOCKING_CONTRIBUTION = -15`; any signal at or below it
+  caps the score under the auto threshold
+- `apps/api/src/verification/signals.ts`: `proximity` inside +25; `jitterFingerprint`, `teleport`
+  and `accuracyRealism` judge only fixes <= `GPS_ACCURACY_M` (50 m); coarse traces tested only for
+  all-identical coordinates (-20); `teleport` uses the wider of the two clock gaps; `presenceDwell`
+  blocks at -20 when no inside gap spans real time; `coarseFixesExcludeVenue` and
+  `noUsableEvidence`'s all-coarse branch deleted
+- `apps/api/src/verification/rollups.ts`: corroboration interval bar 0.5x -> 0.8x cadence
+- `apps/api/test/fixtures/scenarios.ts`: `honestLaptopWifiOnly` jittered to match the measured
+  laptop; new `frozenOverrideCoarseAccuracy`, `threeFixBurst`, `honestLaptopLongIndoor`,
+  `phoneWithCellTowerBlip`, `realOfflineFlush`
+- `apps/api/src/verification/engine.spec.ts`, `apps/api/src/geo/haversine.spec.ts`,
+  `apps/api/src/pings/pings.spec.ts`: expectations moved to the new rule; loosened spoof cases
+  asserted deliberately rather than deleted; blocking-signal table; adversary regressions
+- `apps/web/src/i18n/en.json`, `ar.json`: removed "laptops cannot be verified"; the 3-minute note
+  is a recommendation, not a requirement
+- `.claude/skills/geo-fixtures/SKILL.md`: the cap bounds tolerance and no longer discards
+- `README.md`, `docs/DECISIONS.md` (D-054), `docs/AI-NOTES.md`
+
+**Now true.** Replay of the seven latest Atlas sessions through the new engine: laptop 91, 82, 83;
+phone 100, 80, 100 — all `auto_verified`. A laptop session with a single reading in 68 s stays
+`needs_review` at 58, because one reading cannot show time on site. Fraud signals block
+auto-verification regardless of presence. A laptop in a cafe 170 m from a 75 m venue is not inside.
+
+**Verified.** Full suite 667/667 across 25 suites; `npm run typecheck` clean.
+
+**Open.** Stored verdicts do not change (rule 8) — re-run a visit to see the new behaviour.
+`fourPingLadder`, `unobservedDwellPadded` and `minimalShortTaskSpoof` auto-verify by decision.
+A genuine offline flush still lands in review via server-clock coverage. A frozen override nudging
+two of ten coordinates evades the coarse frozen test. `dwellDetail` still reads the raw fix array.
