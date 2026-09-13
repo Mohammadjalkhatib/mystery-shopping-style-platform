@@ -38,7 +38,34 @@ export function evaluate(
   );
 
   const raw = signals.reduce((acc, s) => acc + s.contribution, BASE_SCORE);
-  const score = Math.max(0, Math.min(100, Math.round(raw)));
+
+  /**
+   * Absence of evidence never rejects on its own.
+   *
+   * `rejected` renders to the business as "Not supported by the evidence" and to the
+   * participant as a refusal. That is a claim ABOUT the visit, and it requires evidence that
+   * contradicts the visit -- a spoof fingerprint, an impossible movement, a position provably
+   * somewhere else. A trace we simply could not read is not that. D-001 says we cannot
+   * distinguish "absent" from "no evidence", `noUsableEvidence`'s own reason string says so in
+   * words, and the comment on BASE_SCORE above says the honest landing place for a visit we
+   * learned nothing about is `needs_review`. The arithmetic disagreed with all three.
+   *
+   * This was not hypothetical. A desktop browser has no GPS radio, so Chrome answers
+   * `getCurrentPosition` from Wi-Fi and reports accuracy in the 100-500 m band -- 182 m on the
+   * visits that prompted this fix, from a machine that was 9 m from the venue centre. Every
+   * fix exceeded the 100 m cap, every other signal correctly self-suppressed, and the one
+   * remaining signal docked enough to reject. Every honest laptop visit scored exactly 15.
+   *
+   * The floor is expressed against `config.rejectThreshold` rather than baked into the
+   * signal's contribution because the threshold is configurable (VERIFY_REJECT_THRESHOLD).
+   * Tuning it must not silently re-open this hole. The narrow condition -- absence as the ONLY
+   * thing the engine found -- is what keeps the guard honest: `clockSkew` still fires on an
+   * unreadable trace, and an hour of clock offset IS contradicting evidence, so a hand-crafted
+   * replay can still reject.
+   */
+  const onlyAbsence = signals.length === 1 && signals[0]!.code === 'noUsableEvidence';
+  const floor = onlyAbsence ? config.rejectThreshold : 0;
+  const score = Math.max(floor, Math.min(100, Math.round(raw)));
 
   return {
     score,

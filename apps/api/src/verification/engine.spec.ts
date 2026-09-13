@@ -65,17 +65,17 @@ const TABLE: Case[] = [
   },
   {
     scenario: 'allFixesUnusable',
-    expected: 'rejected',
+    expected: 'needs_review',
     mustFire: ['noUsableEvidence'],
-    mustNotFire: ['presenceDwell', 'coverage', 'accuracyRealism'],
-    why: 'every fix exceeded the accuracy cap; one signal says so rather than three restating it',
+    mustNotFire: ['presenceDwell', 'coverage', 'accuracyRealism', 'jitterFingerprint'],
+    why: 'every fix exceeded the accuracy cap, so one signal says so rather than four restating it -- and an unreadable trace is not a refused one: this is the honest laptop case, where a device with no GPS radio reports 100-500 m accuracy from a Wi-Fi scan, and it must reach a human rather than be told its visit is not supported by the evidence',
   },
   {
     scenario: 'noFixes',
-    expected: 'rejected',
+    expected: 'needs_review',
     mustFire: ['noUsableEvidence'],
     mustNotFire: ['presenceDwell', 'coverage', 'proximity'],
-    why: 'nothing was captured at all, and exactly one signal should say so',
+    why: 'nothing was captured at all, exactly one signal should say so, and D-001 forbids reading that as absence -- a human decides',
   },
   {
     scenario: 'replayedClock',
@@ -331,6 +331,65 @@ describe('verification engine', () => {
     it('an honest offline flush is not rejected outright', () => {
       // It should cost confidence, not the participant's payment.
       expect(evaluate(ALL_SCENARIOS.batchFlushedHonestVisit!(), cfg).verdict).not.toBe('rejected');
+    });
+  });
+
+  describe('absence of evidence is not evidence of absence (D-038)', () => {
+    it('does not reject an honest laptop visit whose every fix is a coarse Wi-Fi scan', () => {
+      /**
+       * The exact production failure. Four visits were run from one location; the two from a
+       * laptop scored 15 and read "Not supported by the evidence" in the console, while the two
+       * from a phone at the same desk scored 67. The laptop was 9 m from the venue centre and
+       * said so -- it just reported 182 m of uncertainty, which is what a device with no GPS
+       * radio always reports.
+       */
+      const r = evaluate(ALL_SCENARIOS.honestLaptopWifiOnly!(), cfg);
+      expect(r.verdict).toBe('needs_review');
+      expect(r.score).toBeGreaterThanOrEqual(cfg.rejectThreshold);
+      expect(r.rollups.minDistanceM).toBeNull();
+      expect(r.rollups.unusableFixCount).toBe(6);
+    });
+
+    it('does not read a cached Wi-Fi scan repeating itself as a location override', () => {
+      // The same cached fix returned six times is byte-identical by construction. Before the
+      // usable-fixes filter this earned -45 for being "characteristic of an overridden
+      // location", about a machine that was doing nothing but sitting still.
+      const codes = evaluate(ALL_SCENARIOS.honestLaptopWifiOnly!(), cfg).signals.map((x) => x.code);
+      expect(codes).not.toContain('jitterFingerprint');
+      expect(codes).toEqual(['noUsableEvidence']);
+    });
+
+    it('holds the floor for any configured reject threshold, not just the default', () => {
+      // VERIFY_REJECT_THRESHOLD is config. Raising it must not silently re-open the hole,
+      // which is why the floor in `evaluate` reads the threshold instead of trusting the
+      // signal's contribution to sit above a constant.
+      for (const rejectThreshold of [30, 40, 55, 70]) {
+        const r = evaluate(ALL_SCENARIOS.honestLaptopWifiOnly!(), { ...cfg, rejectThreshold });
+        expect(r.verdict).not.toBe('rejected');
+      }
+    });
+
+    it('still rejects an unreadable trace that is ALSO hand-crafted', () => {
+      /**
+       * The floor is narrow on purpose: it applies only when absence is the ONLY thing the
+       * engine found. Coarse fixes say nothing about where the participant was, but an hour of
+       * device-clock offset is positive evidence about how the trace was MADE, and that is a
+       * different kind of claim. This is the boundary of the whole change: same unreadable
+       * accuracy as the laptop case, opposite verdict, and the clock is the only difference.
+       */
+      const r = evaluate(ALL_SCENARIOS.unreadableAndReplayed!(), cfg);
+      expect(r.verdict).toBe('rejected');
+      expect(r.signals.map((x) => x.code)).toEqual(['noUsableEvidence', 'clockSkew']);
+    });
+
+    it('ranks a trace that showed us nothing below one we merely could not read', () => {
+      // Softening the contributions must not invert the ordering they exist to preserve.
+      // Deliberately NOT asserted against `tooFewFixes`: two readable fixes across 15% of the
+      // session score 34, just under the unreadable 35, and that ordering is not meaningful --
+      // one has thin evidence, the other none, and both correctly land in review.
+      expect(evaluate(ALL_SCENARIOS.noFixes!(), cfg).score).toBeLessThan(
+        evaluate(ALL_SCENARIOS.allFixesUnusable!(), cfg).score,
+      );
     });
   });
 

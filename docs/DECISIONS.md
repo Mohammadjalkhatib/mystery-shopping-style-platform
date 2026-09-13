@@ -2238,3 +2238,73 @@ one tablist reaches the accessibility tree. The practical effect for participant
 this shell is used on phones, which are below `lg` essentially always, so the second row is what
 they will see. The change is really about the two surfaces agreeing when someone opens the
 participant view on a laptop — which is exactly how it is reviewed.
+
+---
+
+## D-051: Absence of evidence never rejects on its own
+
+**Date:** 2026-09-13
+**Status:** accepted. Corrects the arithmetic of D-001/D-005 rather than their principle.
+
+**Decision.** `evaluate` floors the score at `config.rejectThreshold` when `noUsableEvidence` is
+the *only* signal that fired. `noUsableEvidence` softens from -40/-35 to -20/-15, so an
+absence-only trace lands at 30-35 — the bottom of `needs_review`, below every trace that showed
+us something. `jitterFingerprint` now filters to usable fixes, as `teleport`, `proximity` and
+`accuracyRealism` already did. Rejection now requires evidence that contradicts the visit.
+
+**Context.** Four real visits from one location during pre-submission testing. The two from a
+phone scored 67; the two from a laptop scored **15 — `rejected`**, which the console renders as
+"Not supported by the evidence". The laptop was 9 m from the venue centre and reported it
+correctly; it declared 182 m of *uncertainty*, because a desktop has no GPS radio and Chrome
+answers from a cached Wi-Fi scan. Every fix exceeded the 100 m cap, presence was `unknown`
+throughout, every other signal correctly self-suppressed, and the one remaining signal docked
+enough to reject. A desktop participant was structurally incapable of scoring anything but 15.
+
+Three parts of this repo already said that was wrong. D-001 says we cannot distinguish "absent"
+from "no evidence". `BASE_SCORE`'s comment says 50 exists so that "a visit we learned nothing
+about lands in `needs_review` — which is the honest answer". The signal's own reason string says
+"This is not evidence of absence, only an absence of evidence." The arithmetic disagreed with all
+three, and shipped the conclusion the prose forbids.
+
+The second bug was latent and worse. A cached Wi-Fi scan that has not changed returns the *same*
+fix each call — byte-identical, because it is literally the same cached object. `jitterFingerprint`
+was the last signal reading the raw `fixes` array, so a third laptop ping would have fired its -45
+branch and put an honest visit at 0, reporting "characteristic of an overridden location" about a
+machine sitting still.
+
+**Alternatives considered.**
+
+- *Raise `ACCURACY_CAP_M` above 182.* The direct fix, and wrong. The cap's comment gives the
+  reason: a 400 m fix would let anyone within half a kilometre appear inside the fence. It would
+  trade a false rejection for a false *verification*, which is the more expensive error.
+- *Scale the cap against the venue radius.* Plausible, and it fails on these numbers — 182 m of
+  uncertainty against a 120 m fence still cannot place anyone, whatever the ratio. The laptop fix
+  genuinely proves nothing; the bug was never that we refused to use it, only what we concluded.
+- *Bake the floor into the contribution — e.g. -15 and no engine change.* Simpler, and it was
+  half-adopted (the contributions did soften). Rejected as the *sole* mechanism because
+  `rejectThreshold` is config: setting `VERIFY_REJECT_THRESHOLD=40` would silently re-open the
+  hole. The floor reads the threshold so tuning cannot resurrect the bug. A test asserts this at
+  30, 40, 55 and 70.
+- *Let the participant screen warn and leave the engine alone.* Rejected: `PresenceBanner`
+  **already** shows `unknown` honestly. The participant was told the truth live and the engine
+  overrode it days later. The defect was never in the UI.
+- *Suppress `noUsableEvidence` entirely for desktop user agents.* Rejected: the client is
+  untrusted (rule 2), so the user agent is an attacker-controlled string, and branching
+  verification on it makes "claim to be a laptop" a spoof primitive.
+
+**Consequences.** The floor is deliberately narrow — *exactly one* signal, and that signal
+`noUsableEvidence`. `clockSkew` still fires on an unreadable trace, so coarse fixes plus an hour
+of device-clock offset still rejects: the accuracy says nothing about *where*, but the skew is
+positive evidence about how the trace was *made*. The new `unreadableAndReplayed` fixture holds
+that boundary open, and it exists because the `no decorative signals` meta-test caught the real
+cost of this change — once absence alone could not reject, `noUsableEvidence` could not make any
+verdict stricter in any existing scenario, which is the correct complaint about a table missing
+its one discriminating case.
+
+What this costs: unreadable visits now reach the review queue instead of being closed
+automatically, so reviewer volume goes up, and a participant with a permanently coarse device can
+never be *auto-verified* — only reviewed. Both are the honest outcome rather than a regression.
+We accept it because the alternative is telling someone standing in the right place that the
+evidence does not support their visit, which is a claim this engine has no basis to make. What
+would change it: any device-side signal that distinguishes "no GPS hardware" from "GPS withheld"
+would let the two be scored apart instead of both landing in review.

@@ -31,15 +31,25 @@ export const noUsableEvidence: SignalFn = (_e, rollups) => {
   if (rollups.fixCount === 0) {
     return {
       code: 'noUsableEvidence',
-      contribution: -40,
+      /**
+       * -20, not -40, and the change is the point rather than a retune.
+       *
+       * -40 put this case at 10 and the coarse-fix case at 15, both under any sane reject
+       * threshold, which made "we could not read this visit" indistinguishable in the console
+       * from "this visit did not happen". The engine now floors an absence-only trace at the
+       * reject threshold (see `evaluate`), so these numbers no longer decide the VERDICT -- they
+       * only place the score within `needs_review`, below every trace that actually showed us
+       * something. Nothing learned at all still ranks below something unreadable.
+       */
+      contribution: -20,
       reason: 'No location fixes were received for this visit. This is not evidence of absence, only an absence of evidence.',
     };
   }
   if (rollups.minDistanceM === null) {
     return {
       code: 'noUsableEvidence',
-      contribution: -35,
-      reason: `All ${rollups.fixCount} fixes reported accuracy worse than the 100 m cap, so none of them place the participant inside or outside the venue.`,
+      contribution: -15,
+      reason: `All ${rollups.fixCount} fixes reported accuracy worse than the ${ACCURACY_CAP_M} m cap, so none of them place the participant inside or outside the venue. A laptop or desktop with no GPS radio normally reports this kind of accuracy.`,
     };
   }
   return null;
@@ -203,7 +213,23 @@ export const proximity: SignalFn = (evidence, rollups) => {
  * coordinates, precisely so this signal stays meaningful.
  */
 export const jitterFingerprint: SignalFn = (evidence) => {
-  const fixes = evidence.fixes;
+  /**
+   * USABLE fixes only, like `teleport`, `proximity` and `accuracyRealism`. This signal was the
+   * last one reading the raw array, and that inconsistency was a live false positive.
+   *
+   * A desktop browser with no GPS radio answers from a cached Wi-Fi scan, and a cached scan
+   * that has not changed returns the SAME coordinate object every time -- byte-identical, by
+   * design, because it is literally the same cached fix. On the visits that prompted this fix
+   * two such pings arrived at 182 m accuracy; a third would have fired the -45 branch and put
+   * an honest laptop visit at 0. The signal would have been reporting "characteristic of an
+   * overridden location" about a machine doing nothing but sitting still.
+   *
+   * Nothing is conceded to an attacker by the filter. Pushing accuracy above the cap to dodge
+   * jitter detection also makes every fix unusable, which forfeits presence, dwell, coverage
+   * and proximity -- `noUsableEvidence` speaks alone and the trace cannot auto-verify. The
+   * evasion costs more than the signal it evades.
+   */
+  const fixes = evidence.fixes.filter((f) => f.presence !== 'unknown');
   if (fixes.length < 3) return null;
 
   let identical = 0;

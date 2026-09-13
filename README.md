@@ -766,6 +766,23 @@ Step 2 already placed the venues where you are, so `user1` should score a real v
 than being rejected for distance. If it is rejected, check the seed logged
 `venues RELOCATED to ...` and that you are standing within 75 m of the anchor.
 
+**Two things will surprise you here, and neither is a bug.**
+
+*Use a phone, not a laptop.* A desktop or laptop has no GPS radio, so the browser answers from a
+Wi-Fi scan and reports accuracy in the **100-500 m** band. `ACCURACY_CAP_M` is 100 m, so every
+such fix is `presence: unknown` — it places the participant neither inside nor outside the fence,
+whatever the coordinates say. A laptop sitting 9 m from the venue centre still proves nothing. The
+verdict you get is `needs_review` with a single `noUsableEvidence` signal saying exactly that, and
+a laptop **cannot** reach `auto_verified` by design (D-051). Test the happy path on a phone.
+
+*Keep the visit open for about three minutes.* Verification wants corroboration, not just
+elapsed time: `MIN_DWELL_INTERVALS` is 5, so the two largest positive signals only pay in full
+after five separate inside-to-inside location updates, which is ~2.5 min at the 30 s sampling
+cadence. Standing still at the venue, an honest visit scores roughly 67 at 3 fixes, 72 at 4, 76 at
+5 and 88 from 6 fixes on. **Shortening the task's `expectedDwellSeconds` does not help** — the
+tasks already default to 60 s, so the duration term is saturated long before the corroboration
+term is, and a 60-second test lands in `needs_review` no matter how the task is authored.
+
 ---
 
 ## Testing
@@ -1011,8 +1028,14 @@ Amman the seeded venues are 1,188 km away, which scores `proximity -25` and
 because nothing is broken.
 
 Overriding your location in DevTools does not help either: a fixed override emits identical
-consecutive coordinates, which trips `jitterFingerprint` at −45 and is also rejected. The
-system is designed to refuse exactly that.
+consecutive coordinates, which trips `jitterFingerprint` at −45 and is rejected. The system is
+designed to refuse exactly that.
+
+One precision, since D-051 narrowed that signal to *usable* fixes only: the −45 applies when the
+override reports an accuracy at or under the 100 m cap, which is the case that is trying to look
+like a real visit. An override reporting coarser accuracy than the cap is unusable instead, so it
+scores 35 and `needs_review` rather than being rejected outright — it never places anyone inside
+the fence, so it cannot pass either. Neither route reaches `auto_verified`.
 
 So move the venues to you instead. In `.env`:
 
