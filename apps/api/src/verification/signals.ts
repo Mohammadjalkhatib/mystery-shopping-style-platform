@@ -31,31 +31,146 @@ export const noUsableEvidence: SignalFn = (_e, rollups) => {
   if (rollups.fixCount === 0) {
     return {
       code: 'noUsableEvidence',
-      contribution: -40,
+      /**
+       * -20, not -40, and the change is the point rather than a retune.
+       *
+       * -40 put this case at 10 and the coarse-fix case at 15, both under any sane reject
+       * threshold, which made "we could not read this visit" indistinguishable in the console
+       * from "this visit did not happen". The engine now floors an absence-only trace at the
+       * reject threshold (see `evaluate`), so these numbers no longer decide the VERDICT -- they
+       * only place the score within `needs_review`, below every trace that actually showed us
+       * something. Nothing learned at all still ranks below something unreadable.
+       */
+      contribution: -20,
       reason: 'No location fixes were received for this visit. This is not evidence of absence, only an absence of evidence.',
     };
   }
   if (rollups.minDistanceM === null) {
     return {
       code: 'noUsableEvidence',
-      contribution: -35,
-      reason: `All ${rollups.fixCount} fixes reported accuracy worse than the 100 m cap, so none of them place the participant inside or outside the venue.`,
+      contribution: -15,
+      reason: `All ${rollups.fixCount} fixes reported accuracy worse than the ${ACCURACY_CAP_M} m cap, so none of them place the participant inside or outside the venue. A laptop or desktop with no GPS radio normally reports this kind of accuracy.`,
     };
   }
   return null;
 };
 
+/* ------------------------------------------- coarse fixes that still exclude */
+
+/**
+ * How many multiples of the reported accuracy a fix must clear the fence by before we call it
+ * an exclusion.
+ *
+ * A browser's `accuracy` is nominally a 68% confidence radius, so 3x is roughly a 99.7% bound
+ * IF the error were Gaussian -- which it is not. Wi-Fi positioning fails by landing at the
+ * wrong ADDRESS (an ISP's registered location, a stale access-point entry), and that error is
+ * not a wider circle around the truth, it is a confident circle somewhere else. The multiplier
+ * is therefore a margin against a badly-placed fix rather than a derived confidence level, and
+ * it is arbitrary in the same way every other weight in this file is (D-009).
+ *
+ * What would make it principled: the distribution of |reported accuracy - actual error| for
+ * desktop Wi-Fi fixes, which needs labelled visits from known positions. Until then it is set
+ * wide deliberately. The cost of being wrong here is accusing an honest participant, so the
+ * signal stays silent on anything close: at a 120 m fence with a 50 m buffer and a 182 m fix,
+ * nothing under 716 m from the centre fires at all.
+ */
+export const EXCLUSION_SIGMA = 3;
+
+/**
+ * A fix too coarse to prove presence can still prove ABSENCE, and the distinction is the whole
+ * signal.
+ *
+ * `presenceFor` short-circuits to `unknown` above `ACCURACY_CAP_M` before it looks at distance,
+ * which is right for the question it asks -- a 182 m circle overlapping a 120 m fence cannot
+ * place anyone inside it. But it also throws away the case where the circle does not overlap the
+ * fence AT ALL. A fix 5 km away with 182 m of uncertainty is not ambiguous about whether the
+ * participant was at the venue. It is conclusive, and the engine was discarding it.
+ *
+ * That gap became exploitable the moment absence stopped being able to reject (D-051): an
+ * attacker anywhere on earth could report accuracy just above the cap on every fix and land on
+ * the same 35 and the same single reason string as an honest laptop sitting in the shop -- a
+ * score that reads to a reviewer as "their device was not good enough", with the server quietly
+ * holding a `distanceM` of 5,100 m on every ping. Found by the spoof-adversary pass, which
+ * correctly called it the cheapest attack the D-051 floor created.
+ *
+ * Scoped to traces with NO usable fix, because `proximity` already speaks whenever there is one.
+ * Firing alongside `noUsableEvidence` is intentional and is what lifts D-051's floor: the floor
+ * applies only when absence is the ONLY thing the engine found, and this is not absence. It is
+ * evidence, and it points one way.
+ */
+export const coarseFixesExcludeVenue: SignalFn = (evidence, rollups) => {
+  if (rollups.minDistanceM !== null) return null;
+  const coarse = evidence.fixes.filter((f) => f.presence === 'unknown');
+  if (coarse.length === 0) return null;
+
+  const { radiusM, nearBufferM } = evidence.venue;
+  // The CLOSEST coarse fix decides. If even that one cannot reach the fence, none of them can,
+  // so this is "every fix excludes the venue" expressed without a second pass.
+  let nearest = Infinity;
+  let slack = Infinity;
+  for (const f of coarse) {
+    if (f.distanceM < nearest) nearest = f.distanceM;
+    const margin = f.distanceM - (radiusM + nearBufferM + f.accuracyM * EXCLUSION_SIGMA);
+    if (margin < slack) slack = margin;
+  }
+  if (slack <= 0) return null;
+
+  const accuracies = coarse.map((f) => f.accuracyM);
+  const lo = Math.round(Math.min(...accuracies));
+  const hi = Math.round(Math.max(...accuracies));
+  return {
+    code: 'coarseFixesExcludeVenue',
+    /**
+     * -25, matching `proximity`'s "well outside the geofence", because it is the same finding
+     * arrived at through a different statistic. With `noUsableEvidence`'s -15 this lands at 10:
+     * rejected, and below the honest laptop's 35, which is the ordering that was missing.
+     */
+    contribution: -25,
+    reason: `No fix was precise enough to confirm presence, but the closest was centred ${Math.round(nearest)} m from the venue — too far for even its reported accuracy of ${lo === hi ? `${lo} m` : `${lo}-${hi} m`} to reach the ${radiusM} m geofence.`,
+  };
+};
+
 /* ------------------------------------------------------------------- dwell */
 
 /**
- * Separate inside-to-inside observations needed before dwell can score in full.
- *
- * Five, because the dwell integrator caps one interval at three sampling periods, so five
- * intervals is the point at which the elapsed time being claimed cannot come from a single
- * observation however the task's expectation is authored. It is a corroboration floor, not a
- * duration: a short task stays short, it just has to be watched rather than asserted.
+ * Ceiling on the corroboration requirement: the most separate inside-to-inside observations any
+ * task can be asked for before dwell scores in full.
  */
 export const MIN_DWELL_INTERVALS = 5;
+
+/**
+ * Floor on it. Two, because the attack D-032 found was that a SINGLE capped interval could
+ * saturate dwell -- two fixes, two minutes, and the largest positive signal in the engine paid
+ * out in full. Requiring two intervals means three fixes, which ends that specific attack for
+ * every task length, however short.
+ */
+export const MIN_CORROBORATION_INTERVALS = 2;
+
+/**
+ * How many inside-to-inside observations THIS task can fairly be asked for.
+ *
+ * D-032 set a flat floor of five and claimed "a short task stays short, it just has to be watched
+ * rather than asserted". That claim was false, and the arithmetic is not subtle: `useVisitTracker`
+ * throttles to one fix per `expectedSampleIntervalSeconds` (30 s), so five intervals needs six
+ * fixes and **two and a half minutes of wall time**. A task authored at one minute -- which the
+ * admin form allows, the schema stores and `dwellExpectationFor` reads -- could therefore never
+ * reach full dwell credit, no matter how honestly it was performed. The participant did exactly
+ * what the task asked and the engine charged them for the task being short.
+ *
+ * This was a real regression and it was caught in production, not in review: four visits from one
+ * location, two of them 77 s long on a 60 s task, scoring 67 and sent to review. Before D-032 the
+ * same trace scored 88 and auto-verified.
+ *
+ * So the requirement scales with what the task's own expectation can physically produce, clamped
+ * between `MIN_CORROBORATION_INTERVALS` and `MIN_DWELL_INTERVALS`. A 5 min task still needs five
+ * observations, exactly as D-032 intended. A 1 min task needs two -- three fixes -- which is all a
+ * minute at a 30 s cadence can yield, and still more than the single interval D-032 was written to
+ * stop. Corroboration stays proportional to the claim instead of being absolute.
+ */
+export function requiredDwellIntervals(config: EngineConfig): number {
+  const affordable = Math.floor(config.expectedDwellSeconds / config.expectedSampleIntervalSeconds);
+  return Math.min(MIN_DWELL_INTERVALS, Math.max(MIN_CORROBORATION_INTERVALS, affordable));
+}
 
 export const presenceDwell: SignalFn = (_e, rollups, config) => {
   // noUsableEvidence has already spoken. Piling on here would count one fact three times
@@ -83,19 +198,24 @@ export const presenceDwell: SignalFn = (_e, rollups, config) => {
    * inversion D-010's dwell cap was written to end.
    *
    * The fix keeps short tasks authorable and makes them cost more EVIDENCE rather than more
-   * time: saturation requires `MIN_DWELL_INTERVALS` separate inside-to-inside observations.
-   * An honest participant standing still and sampling every 30 s reaches that in about two
-   * and a half minutes; a fabricator has to keep the forgery running just as long.
+   * time: saturation requires `requiredDwellIntervals(config)` separate inside-to-inside
+   * observations. A fabricator has to keep the forgery running for as long as the task claims.
+   *
+   * That requirement is PROPORTIONAL, not flat, and the difference is D-053. D-032 hard-coded
+   * five, which silently made every task shorter than 2.5 min unverifiable however honestly it
+   * was performed -- see `requiredDwellIntervals` for the arithmetic and the production
+   * regression that exposed it. A one-minute task now needs the two intervals a minute can
+   * actually yield, which is still more than the single interval D-032 existed to stop.
    */
   const ratio = Math.min(1, dwellSeconds / expected);
-  const corroboration = Math.min(1, rollups.dwellIntervals / MIN_DWELL_INTERVALS);
+  const corroboration = Math.min(1, rollups.dwellIntervals / requiredDwellIntervals(config));
   const contribution = round(-5 + 23 * ratio * corroboration);
   const thin = corroboration < 1;
   return {
     code: 'presenceDwell',
     contribution,
     reason: thin
-      ? `Spent about ${Math.round(dwellSeconds / 60)} min inside the venue geofence, but across only ${rollups.dwellIntervals} location update${rollups.dwellIntervals === 1 ? '' : 's'} — too few to corroborate continuous presence.`
+      ? `Spent about ${Math.round(dwellSeconds / 60)} min inside the venue geofence, but across only ${rollups.dwellIntervals} location update${rollups.dwellIntervals === 1 ? '' : 's'} — this task needs ${requiredDwellIntervals(config)} to corroborate continuous presence.`
       : `Spent about ${Math.round(dwellSeconds / 60)} min inside the venue geofence, against an expected ${Math.round(expected / 60)} min.`,
   };
 };
@@ -103,7 +223,7 @@ export const presenceDwell: SignalFn = (_e, rollups, config) => {
 /* ---------------------------------------------------------------- coverage */
 
 /** D-005: gaps are normal on mobile web. This scores how much we saw, not whether it is "complete". */
-export const coverage: SignalFn = (_e, rollups) => {
+export const coverage: SignalFn = (_e, rollups, config) => {
   if (rollups.minDistanceM === null) return null;
   const r = rollups.coverageRatio;
 
@@ -125,7 +245,7 @@ export const coverage: SignalFn = (_e, rollups) => {
    *
    * Found by the second spoof-adversary pass.
    */
-  const wellObserved = rollups.dwellIntervals >= MIN_DWELL_INTERVALS;
+  const wellObserved = rollups.dwellIntervals >= requiredDwellIntervals(config);
 
   if (r >= 0.8 && wellObserved) {
     return {
@@ -203,7 +323,23 @@ export const proximity: SignalFn = (evidence, rollups) => {
  * coordinates, precisely so this signal stays meaningful.
  */
 export const jitterFingerprint: SignalFn = (evidence) => {
-  const fixes = evidence.fixes;
+  /**
+   * USABLE fixes only, like `teleport`, `proximity` and `accuracyRealism`. This signal was the
+   * last one reading the raw array, and that inconsistency was a live false positive.
+   *
+   * A desktop browser with no GPS radio answers from a cached Wi-Fi scan, and a cached scan
+   * that has not changed returns the SAME coordinate object every time -- byte-identical, by
+   * design, because it is literally the same cached fix. On the visits that prompted this fix
+   * two such pings arrived at 182 m accuracy; a third would have fired the -45 branch and put
+   * an honest laptop visit at 0. The signal would have been reporting "characteristic of an
+   * overridden location" about a machine doing nothing but sitting still.
+   *
+   * Nothing is conceded to an attacker by the filter. Pushing accuracy above the cap to dodge
+   * jitter detection also makes every fix unusable, which forfeits presence, dwell, coverage
+   * and proximity -- `noUsableEvidence` speaks alone and the trace cannot auto-verify. The
+   * evasion costs more than the signal it evades.
+   */
+  const fixes = evidence.fixes.filter((f) => f.presence !== 'unknown');
   if (fixes.length < 3) return null;
 
   let identical = 0;
@@ -455,6 +591,7 @@ export const teleport: SignalFn = (evidence, _rollups, config) => {
 /** Evaluation order is display order in the console, so most decisive first. */
 export const ALL_SIGNALS: readonly SignalFn[] = [
   noUsableEvidence,
+  coarseFixesExcludeVenue,
   jitterFingerprint,
   teleport,
   presenceDwell,

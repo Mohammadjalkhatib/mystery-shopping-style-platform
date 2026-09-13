@@ -215,6 +215,87 @@ export const allFixesUnusable = (): VisitEvidence =>
     everyN(14, 30, (i) => ({ offsetM: 40 + (i % 4) * 8, accuracyM: 400 + (i % 3) * 50 })),
   );
 
+/**
+ * The laptop case, and it is a real trace rather than an invented one.
+ *
+ * A desktop browser has no GPS radio, so Chrome answers `getCurrentPosition` from a cached
+ * Wi-Fi scan. Two things follow, and both were live false positives:
+ *
+ * - **Accuracy in the 100-500 m band.** The visits this fixture is taken from reported 182 m
+ *   against a 120 m fence, from a machine that was 9 m from the venue centre. Every fix
+ *   exceeded the 100 m cap, so presence was `unknown` throughout and the score was 15 --
+ *   `rejected`, which the console renders as "Not supported by the evidence".
+ * - **Byte-identical coordinates.** An unchanged cached scan returns the same fix every time,
+ *   so `frozen: true` here is honest behaviour and not a spoof. With three or more fixes the
+ *   old unfiltered `jitterFingerprint` fired -45 on top, taking an honest laptop visit to 0.
+ *
+ * Six fixes, because the bug needed three to show and a real session produces more. The
+ * correct outcome is `needs_review`: nothing here places the participant anywhere, which is
+ * not the same claim as their not having been there.
+ */
+export const honestLaptopWifiOnly = (): VisitEvidence =>
+  buildTrace(
+    INDOOR_VENUE,
+    everyN(6, 30, () => ({ offsetM: 9, accuracyM: 182, frozen: true })),
+  );
+
+/**
+ * The attack D-051's floor created, and the reason D-052 exists.
+ *
+ * An attacker anywhere on earth reports accuracy just above the 100 m cap on every fix. Before
+ * `coarseFixesExcludeVenue` this scored 35 with a single `noUsableEvidence` signal -- the same
+ * score, the same verdict and the same reason string as `honestLaptopWifiOnly`, a participant
+ * standing 9 m from the venue centre. The server held a `distanceM` of ~5,100 m on every ping
+ * and the engine said "their device was not good enough".
+ *
+ * Accuracy is varied and the coordinates are jittered on purpose, so that no other signal can
+ * be credited with catching this. The only thing that can is the exclusion geometry.
+ */
+export const coarseFixesFarFromVenue = (): VisitEvidence =>
+  buildTrace(
+    OUTDOOR_VENUE,
+    everyN(8, 30, (i) => ({ offsetM: 5100, accuracyM: 176 + (i % 4) * 3 })),
+  );
+
+/**
+ * The honest counterpart, and the pair is the point.
+ *
+ * Same coarse accuracy as `coarseFixesFarFromVenue`, but the fixes are where the venue is. The
+ * exclusion margin is nowhere near met -- at a 120 m fence with a 50 m buffer and 182 m of
+ * reported accuracy, nothing inside 716 m of the centre fires -- so this stays `needs_review`
+ * while the far trace rejects. If a change ever collapses these two back onto the same score,
+ * the engine has lost the distinction D-051 and D-052 were both written to protect.
+ */
+export const coarseFixesAtVenue = (): VisitEvidence =>
+  buildTrace(
+    OUTDOOR_VENUE,
+    everyN(8, 30, (i) => ({ offsetM: 30, accuracyM: 176 + (i % 4) * 3 })),
+  );
+
+/**
+ * Unreadable AND hand-crafted: coarse fixes, plus an hour of clock offset.
+ *
+ * This fixture exists to hold open the escape hatch in `evaluate`'s absence floor, and the
+ * `no decorative signals` meta-test is what demanded it. Once absence alone stopped being able
+ * to reject, `noUsableEvidence` could not make ANY verdict stricter in any existing scenario --
+ * correctly reported as a decorative signal, because the one case that proves otherwise was
+ * missing from the table.
+ *
+ * The distinction the engine has to draw is exactly here. Coarse fixes on their own are a
+ * laptop (see `honestLaptopWifiOnly`) and must reach a human. Coarse fixes whose device clock
+ * is an hour out are a replayed capture: the accuracy says nothing, but the skew is positive
+ * evidence about how the trace was made, and that still rejects.
+ */
+export const unreadableAndReplayed = (): VisitEvidence =>
+  buildTrace(
+    OUTDOOR_VENUE,
+    everyN(10, 30, (i) => ({
+      offsetM: 40 + (i % 4) * 8,
+      accuracyM: 400 + (i % 3) * 50,
+      skewSeconds: 3600 + i,
+    })),
+  );
+
 /** Session ran, nothing was ever captured. */
 export const noFixes = (): VisitEvidence => ({
   venue: OUTDOOR_VENUE,
@@ -389,6 +470,10 @@ export const ALL_SCENARIOS: Record<string, () => VisitEvidence> = {
   teleportIn,
   wrongVenue,
   allFixesUnusable,
+  honestLaptopWifiOnly,
+  coarseFixesFarFromVenue,
+  coarseFixesAtVenue,
+  unreadableAndReplayed,
   noFixes,
   replayedClock,
   tooFewFixes,

@@ -48,10 +48,40 @@ export class EvaluatorService {
       const v = Number(configService.get<string>(k));
       return Number.isFinite(v) && v > 0 ? v : d;
     };
+    const autoThreshold = num('VERIFY_AUTO_THRESHOLD', DEFAULT_ENGINE_CONFIG.autoThreshold);
+    let rejectThreshold = num('VERIFY_REJECT_THRESHOLD', DEFAULT_ENGINE_CONFIG.rejectThreshold);
+
+    /**
+     * The two thresholds must describe three bands, and nothing was checking that they did.
+     *
+     * `num` validated each value in isolation -- finite and positive -- so
+     * `VERIFY_REJECT_THRESHOLD=80` against an auto threshold of 75 was accepted without a word.
+     * That pair has no `needs_review` band at all: `bandFor` tests `auto_verified` first, so
+     * 75-79 auto-verifies and everything below 80 rejects. Every visit was then either paid
+     * automatically or refused, and the human review step the whole product is built around
+     * silently stopped existing.
+     *
+     * Found by the spoof-adversary pass, via the D-051 absence floor -- which read
+     * `rejectThreshold` and so inherited the incoherence, floored a zero-fix session at 80 and
+     * auto-verified it. The floor is clamped in `evaluate` as well, but that only contains the
+     * symptom: the configuration itself is wrong and is worth saying so out loud. We fall back
+     * rather than throw, because an API that refuses to boot over a threshold is a worse
+     * failure than one that runs on documented defaults and says why in the log.
+     */
+    if (rejectThreshold >= autoThreshold) {
+      this.logger.error(
+        `VERIFY_REJECT_THRESHOLD (${rejectThreshold}) must be below VERIFY_AUTO_THRESHOLD ` +
+          `(${autoThreshold}); that pair leaves no needs_review band, so every visit would be ` +
+          `auto-paid or refused with no human step. Falling back to ` +
+          `${DEFAULT_ENGINE_CONFIG.rejectThreshold}.`,
+      );
+      rejectThreshold = DEFAULT_ENGINE_CONFIG.rejectThreshold;
+    }
+
     this.config = {
       ...DEFAULT_ENGINE_CONFIG,
-      autoThreshold: num('VERIFY_AUTO_THRESHOLD', DEFAULT_ENGINE_CONFIG.autoThreshold),
-      rejectThreshold: num('VERIFY_REJECT_THRESHOLD', DEFAULT_ENGINE_CONFIG.rejectThreshold),
+      autoThreshold,
+      rejectThreshold,
       engineVersion:
         configService.get<string>('VERIFY_ENGINE_VERSION') ?? DEFAULT_ENGINE_CONFIG.engineVersion,
     };
