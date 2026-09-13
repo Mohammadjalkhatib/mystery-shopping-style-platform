@@ -12,11 +12,20 @@ import type { Presence } from '@msp/shared';
 export const EARTH_RADIUS_M = 6_371_000;
 
 /**
- * Accuracy values above this are not evidence of presence OR of absence.
- * An indoor Wi-Fi fix reporting 400 m would otherwise let anyone within half a kilometre
- * appear inside the fence.
+ * Ceiling on how much a fix's reported accuracy may WIDEN the geofence.
+ *
+ * A fix reporting 400 m must not let anyone within half a kilometre appear inside, so the
+ * tolerance it earns is capped here. What this is deliberately NOT any more is a veto: it used
+ * to discard a fix entirely once its accuracy passed 100 m, which threw away the position as
+ * well as the uncertainty. See `presenceFor`.
+ *
+ * 50 m, lowered from 100 by D-054 once coarse fixes stopped being discarded. At 100 m, a laptop
+ * reporting 182 m of accuracy from a cafe 170 m away counted as inside a 75 m venue -- "sat in the
+ * car park" is the fraud a mystery-shopping product exists to catch, and it needed no spoofing at
+ * all. At 50 m the measured laptop (5-7 m from centre) still passes and the cafe does not. An
+ * honest phone reports 3-25 m, so its tolerance is its own accuracy and nothing changes for it.
  */
-export const ACCURACY_CAP_M = 100;
+export const ACCURACY_CAP_M = 50;
 
 export interface LatLng {
   lat: number;
@@ -48,12 +57,26 @@ export interface Geofence {
  * Presence for a single fix, per the geo-fixtures skill.
  *
  * A fix counts as `inside` when `distanceM <= radiusM + min(accuracyM, ACCURACY_CAP_M)`.
- * Above the cap the fix tells us nothing either way and presence is `unknown` -- that is a
- * first-class outcome, not an error, and the verification engine scores it as missing
- * evidence rather than as absence.
+ * Reported accuracy WIDENS the fence, up to the cap. It never discards the fix.
+ *
+ * **That last sentence is the fix for the worst bug this engine has had.** The old rule returned
+ * `unknown` as soon as `accuracyM > ACCURACY_CAP_M`, which throws away *where the fix says you
+ * are* along with *how sure the browser claims to be*. Those are different facts and only the
+ * second one is doubtful. A laptop has no GPS radio, so Chrome answers from a Wi-Fi scan and
+ * reports 100-500 m of uncertainty as a matter of routine -- and the measured traces behind this
+ * change put the laptop **5 to 7 metres from the venue centre**, indistinguishable from the phone
+ * sitting next to it, and still scored every visit as "no usable evidence". The participant was
+ * told their location could not be determined while the server held a 7 m distance for them.
+ *
+ * The cap still does its real job: a 400 m fix earns 50 m of tolerance, not 400 m, so nobody
+ * half a kilometre away appears inside. And a coarse fix that is genuinely far away is now
+ * scored on that distance -- `proximity` charges it -- instead of landing in the "unreadable"
+ * bucket, which had become a safe harbour an attacker could reach from anywhere on earth.
+ *
+ * `unknown` survives only for a fix with no usable accuracy number at all.
  */
 export function presenceFor(distanceM: number, accuracyM: number, fence: Geofence): Presence {
-  if (!Number.isFinite(accuracyM) || accuracyM > ACCURACY_CAP_M) return 'unknown';
+  if (!Number.isFinite(accuracyM) || accuracyM < 0) return 'unknown';
 
   const tolerance = Math.min(accuracyM, ACCURACY_CAP_M);
   if (distanceM <= fence.radiusM + tolerance) return 'inside';

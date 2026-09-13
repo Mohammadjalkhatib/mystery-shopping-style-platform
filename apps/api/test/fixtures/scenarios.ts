@@ -236,7 +236,11 @@ export const allFixesUnusable = (): VisitEvidence =>
 export const honestLaptopWifiOnly = (): VisitEvidence =>
   buildTrace(
     INDOOR_VENUE,
-    everyN(6, 30, () => ({ offsetM: 9, accuracyM: 182, frozen: true })),
+    // Jittered and with varying accuracy, because that is what the MEASURED traces do: the real
+    // laptop moved 5-7 m and 182-185 m between readings. It was `frozen: true` here until D-054
+    // and that was wrong twice over -- it made the fixture model a DevTools override rather than
+    // a laptop, and it was the reason this "honest" trace tripped a spoof signal.
+    everyN(6, 30, (i) => ({ offsetM: 5 + (i % 3), accuracyM: 182 + (i % 2) * 3 })),
   );
 
 /**
@@ -269,7 +273,21 @@ export const coarseFixesFarFromVenue = (): VisitEvidence =>
 export const coarseFixesAtVenue = (): VisitEvidence =>
   buildTrace(
     OUTDOOR_VENUE,
-    everyN(8, 30, (i) => ({ offsetM: 30, accuracyM: 176 + (i % 4) * 3 })),
+    everyN(8, 30, (i) => ({ offsetM: 30 + (i % 3) * 2, accuracyM: 176 + (i % 4) * 3 })),
+  );
+
+/**
+ * The laptop's cheap cousin: a fixed DevTools override that reports coarse accuracy.
+ *
+ * D-054 scoped `jitterFingerprint`'s drift test to GPS-quality fixes so it would stop accusing
+ * laptops, and this fixture is the reason that scoping is not a free pass. Every coordinate is
+ * byte-identical, which a refreshing Wi-Fi scan does not do, so the coarse population is still
+ * tested at its extreme end. Must not auto-verify.
+ */
+export const frozenOverrideCoarseAccuracy = (): VisitEvidence =>
+  buildTrace(
+    INDOOR_VENUE,
+    everyN(6, 30, () => ({ offsetM: 9, accuracyM: 182, frozen: true })),
   );
 
 /**
@@ -294,6 +312,66 @@ export const unreadableAndReplayed = (): VisitEvidence =>
       accuracyM: 400 + (i % 3) * 50,
       skewSeconds: 3600 + i,
     })),
+  );
+
+/**
+ * Three fixes POSTed one second apart at the venue centre. Found by the adversary pass on D-054:
+ * it scored 77 and auto-verified in five seconds. The honest client cannot send faster than one fix
+ * per 30 s, so no gap here is long enough to count as time on site. Must not auto-verify.
+ */
+export const threeFixBurst = (): VisitEvidence =>
+  buildTrace(
+    OUTDOOR_VENUE,
+    [
+      { atSeconds: 0, offsetM: 20, accuracyM: 8 },
+      { atSeconds: 1, offsetM: 22, accuracyM: 11 },
+      { atSeconds: 2, offsetM: 19, accuracyM: 9 },
+    ],
+    { sessionSeconds: 5 },
+  );
+
+/**
+ * An honest laptop on a full five-minute indoor visit. Ten Wi-Fi fixes whose accuracy moves only
+ * between 182 and 185 m -- a spread of 1.6% of the median, which `accuracyRealism`'s tight-spread
+ * test read as a generated trace and blocked. Must auto-verify.
+ */
+export const honestLaptopLongIndoor = (): VisitEvidence =>
+  buildTrace(
+    INDOOR_VENUE,
+    everyN(10, 30, (i) => ({ offsetM: 5 + (i % 3), accuracyM: [182, 183.5, 184.2, 185][i % 4]! })),
+  );
+
+/**
+ * An honest phone visit with one cell-tower fallback in the middle: 2 km off at 1,500 m accuracy,
+ * 30 s after a real GPS fix. `teleport` read it as 240 km/h and blocked the visit once coarse fixes
+ * stopped being discarded. Must auto-verify, and `teleport` must stay silent.
+ */
+export const phoneWithCellTowerBlip = (): VisitEvidence =>
+  buildTrace(
+    OUTDOOR_VENUE,
+    everyN(10, 30, (i) =>
+      i === 4
+        ? { offsetM: 0, at: { lat: OUTDOOR_VENUE.lat + 0.018, lng: OUTDOOR_VENUE.lng }, accuracyM: 1500 }
+        : { offsetM: 15 + (i % 3) * 4, accuracyM: 8 + (i % 4) * 2 },
+    ),
+  );
+
+/**
+ * A real offline flush as ingest actually stores it: the device captured fixes 30 s apart, and the
+ * server stamped `receivedAt` per fix a few milliseconds apart when the queue drained.
+ * `batchFlushedHonestVisit` gives a whole batch ONE identical timestamp, which is not what
+ * `pings.service.ts` does, so it never exercised this. `teleport` must not read the flush as
+ * movement at 1,700 m/s.
+ */
+export const realOfflineFlush = (): VisitEvidence =>
+  buildTrace(
+    OUTDOOR_VENUE,
+    everyN(10, 30, (i) => ({
+      offsetM: 15 + (i % 3) * 4,
+      accuracyM: 8 + (i % 4) * 2,
+      receivedAtSeconds: 300 + i * 0.004,
+    })),
+    { sessionSeconds: 300 },
   );
 
 /** Session ran, nothing was ever captured. */
@@ -473,6 +551,11 @@ export const ALL_SCENARIOS: Record<string, () => VisitEvidence> = {
   honestLaptopWifiOnly,
   coarseFixesFarFromVenue,
   coarseFixesAtVenue,
+  frozenOverrideCoarseAccuracy,
+  threeFixBurst,
+  honestLaptopLongIndoor,
+  phoneWithCellTowerBlip,
+  realOfflineFlush,
   unreadableAndReplayed,
   noFixes,
   replayedClock,

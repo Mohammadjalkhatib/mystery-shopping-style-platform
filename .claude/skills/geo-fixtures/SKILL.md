@@ -21,9 +21,16 @@ A fix counts as `inside` when:
 distanceM <= venue.radiusM + min(accuracyM, ACCURACY_CAP)
 ```
 
-with `ACCURACY_CAP` at 100 m. Above that cap the fix is not evidence of presence **or** of
-absence, and presence is `unknown`. This matters: an accuracy value of 400 m from an indoor
-Wi-Fi fix would otherwise let anyone within half a kilometre appear inside.
+with `ACCURACY_CAP` at 50 m. The cap bounds the tolerance; it does **not** discard the fix. A
+fix reporting 400 m of accuracy still earns only 50 m, so nobody half a kilometre away appears
+inside — but its position is still scored. Presence is `unknown` only when accuracy is not a
+finite, non-negative number. (Until D-054 the cap was 100 m and discarded any fix above it, which
+threw away a laptop's correct position along with its coarse accuracy.)
+
+For the drift and speed checks (`jitterFingerprint`, `teleport`, `accuracyRealism`), only fixes
+at `GPS_ACCURACY_M` (50 m) or better count. When writing an honest *laptop* fixture, jitter the
+coordinates and vary the accuracy a little (e.g. 182-185 m): a refreshing Wi-Fi scan moves, and a
+fully frozen coarse trace is modelled as a spoof (`frozenOverrideCoarseAccuracy`).
 
 `near` is inside `radiusM + nearBufferM`. Everything else is `outside`.
 

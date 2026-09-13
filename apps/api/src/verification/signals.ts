@@ -45,90 +45,35 @@ export const noUsableEvidence: SignalFn = (_e, rollups) => {
       reason: 'No location fixes were received for this visit. This is not evidence of absence, only an absence of evidence.',
     };
   }
-  if (rollups.minDistanceM === null) {
-    return {
-      code: 'noUsableEvidence',
-      contribution: -15,
-      reason: `All ${rollups.fixCount} fixes reported accuracy worse than the ${ACCURACY_CAP_M} m cap, so none of them place the participant inside or outside the venue. A laptop or desktop with no GPS radio normally reports this kind of accuracy.`,
-    };
-  }
+  /**
+   * There used to be a second branch here for "every fix was above the accuracy cap", and D-054
+   * deleted it rather than retuning it. Reported accuracy no longer discards a fix, so a coarse
+   * trace now has a position and is scored on it: `proximity` charges a coarse fix that is
+   * genuinely far away, and credits one that is genuinely at the venue. The branch was the
+   * engine describing its own discarded input, and the bucket it fed had become a safe harbour
+   * reachable from anywhere on earth.
+   */
   return null;
 };
 
 /* ------------------------------------------- coarse fixes that still exclude */
 
 /**
- * How many multiples of the reported accuracy a fix must clear the fence by before we call it
- * an exclusion.
+ * REMOVED by D-054, and the reason is worth keeping because the signal was correct about a
+ * problem that no longer exists.
  *
- * A browser's `accuracy` is nominally a 68% confidence radius, so 3x is roughly a 99.7% bound
- * IF the error were Gaussian -- which it is not. Wi-Fi positioning fails by landing at the
- * wrong ADDRESS (an ISP's registered location, a stale access-point entry), and that error is
- * not a wider circle around the truth, it is a confident circle somewhere else. The multiplier
- * is therefore a margin against a badly-placed fix rather than a derived confidence level, and
- * it is arbitrary in the same way every other weight in this file is (D-009).
+ * It fired only when `minDistanceM === null` -- i.e. when every fix had been discarded for coarse
+ * accuracy -- and recovered the one thing that discarding threw away: a 182 m uncertainty circle
+ * centred 5 km from the venue cannot reach the fence, so it excludes presence even though it
+ * cannot confirm it. That was a real gap and this closed it.
  *
- * What would make it principled: the distribution of |reported accuracy - actual error| for
- * desktop Wi-Fi fixes, which needs labelled visits from known positions. Until then it is set
- * wide deliberately. The cost of being wrong here is accusing an honest participant, so the
- * signal stays silent on anything close: at a 120 m fence with a 50 m buffer and a 182 m fix,
- * nothing under 716 m from the centre fires at all.
+ * D-054 removed the discarding instead. A coarse fix now keeps its position and is scored by
+ * `proximity` like any other, which charges -25 for "well outside the geofence" on exactly the
+ * trace this signal was built to catch, and -10 for one merely nearby -- a gradient the binary
+ * exclusion test never had. Two mechanisms for one job, and the general one is better. Deleting
+ * it also removed the attack it had brought with it: its margin scaled with client-supplied
+ * `accuracyM`, so reporting 2000 m of accuracy from home switched the exclusion off entirely.
  */
-export const EXCLUSION_SIGMA = 3;
-
-/**
- * A fix too coarse to prove presence can still prove ABSENCE, and the distinction is the whole
- * signal.
- *
- * `presenceFor` short-circuits to `unknown` above `ACCURACY_CAP_M` before it looks at distance,
- * which is right for the question it asks -- a 182 m circle overlapping a 120 m fence cannot
- * place anyone inside it. But it also throws away the case where the circle does not overlap the
- * fence AT ALL. A fix 5 km away with 182 m of uncertainty is not ambiguous about whether the
- * participant was at the venue. It is conclusive, and the engine was discarding it.
- *
- * That gap became exploitable the moment absence stopped being able to reject (D-051): an
- * attacker anywhere on earth could report accuracy just above the cap on every fix and land on
- * the same 35 and the same single reason string as an honest laptop sitting in the shop -- a
- * score that reads to a reviewer as "their device was not good enough", with the server quietly
- * holding a `distanceM` of 5,100 m on every ping. Found by the spoof-adversary pass, which
- * correctly called it the cheapest attack the D-051 floor created.
- *
- * Scoped to traces with NO usable fix, because `proximity` already speaks whenever there is one.
- * Firing alongside `noUsableEvidence` is intentional and is what lifts D-051's floor: the floor
- * applies only when absence is the ONLY thing the engine found, and this is not absence. It is
- * evidence, and it points one way.
- */
-export const coarseFixesExcludeVenue: SignalFn = (evidence, rollups) => {
-  if (rollups.minDistanceM !== null) return null;
-  const coarse = evidence.fixes.filter((f) => f.presence === 'unknown');
-  if (coarse.length === 0) return null;
-
-  const { radiusM, nearBufferM } = evidence.venue;
-  // The CLOSEST coarse fix decides. If even that one cannot reach the fence, none of them can,
-  // so this is "every fix excludes the venue" expressed without a second pass.
-  let nearest = Infinity;
-  let slack = Infinity;
-  for (const f of coarse) {
-    if (f.distanceM < nearest) nearest = f.distanceM;
-    const margin = f.distanceM - (radiusM + nearBufferM + f.accuracyM * EXCLUSION_SIGMA);
-    if (margin < slack) slack = margin;
-  }
-  if (slack <= 0) return null;
-
-  const accuracies = coarse.map((f) => f.accuracyM);
-  const lo = Math.round(Math.min(...accuracies));
-  const hi = Math.round(Math.max(...accuracies));
-  return {
-    code: 'coarseFixesExcludeVenue',
-    /**
-     * -25, matching `proximity`'s "well outside the geofence", because it is the same finding
-     * arrived at through a different statistic. With `noUsableEvidence`'s -15 this lands at 10:
-     * rejected, and below the honest laptop's 35, which is the ordering that was missing.
-     */
-    contribution: -25,
-    reason: `No fix was precise enough to confirm presence, but the closest was centred ${Math.round(nearest)} m from the venue — too far for even its reported accuracy of ${lo === hi ? `${lo} m` : `${lo}-${hi} m`} to reach the ${radiusM} m geofence.`,
-  };
-};
 
 /* ------------------------------------------------------------------- dwell */
 
@@ -207,6 +152,22 @@ export const presenceDwell: SignalFn = (_e, rollups, config) => {
    * regression that exposed it. A one-minute task now needs the two intervals a minute can
    * actually yield, which is still more than the single interval D-032 existed to stop.
    */
+  /**
+   * Inside readings that never span real time establish nothing, and this now BLOCKS (D-054).
+   *
+   * Once presence became the deciding signal, three fixes POSTed one second apart at the venue
+   * centre scored 77 and auto-verified in five seconds: dwell was above zero, so this signal paid
+   * -5 instead of -20 and nothing else objected. `dwellIntervals` only counts a gap of at least
+   * 0.8x the sampling cadence on EITHER clock, and the honest client cannot send faster than one
+   * fix per 30 s -- so an honest one-minute visit has at least one interval and a burst has none.
+   */
+  if (rollups.dwellIntervals === 0) {
+    return {
+      code: 'presenceDwell',
+      contribution: -20,
+      reason: 'The readings inside the venue arrived too close together to show any real time on site.',
+    };
+  }
   const ratio = Math.min(1, dwellSeconds / expected);
   const corroboration = Math.min(1, rollups.dwellIntervals / requiredDwellIntervals(config));
   const contribution = round(-5 + 23 * ratio * corroboration);
@@ -294,7 +255,23 @@ export const proximity: SignalFn = (evidence, rollups) => {
   if (min <= radius + tolerance) {
     return {
       code: 'proximity',
-      contribution: 6,
+      /**
+       * +25, and this is the deciding number in the engine by design (D-054).
+       *
+       * It used to be +6 -- a rounding error next to `presenceDwell`'s +18 -- which meant the
+       * question "was this person at the venue?" contributed less to the verdict than "how
+       * continuously did we watch them?". A participant provably 7 m from the centre could not
+       * reach the auto threshold without also producing enough updates to satisfy a corroboration
+       * gate, so real visits from the right place kept landing in review and the business had to
+       * hand-approve visits the server already had the coordinates for.
+       *
+       * Presence is now the primary evidence and the rest is confidence around it: dwell and
+       * coverage still adjust the score, and every spoof detector can still veto a pass outright
+       * (`jitterFingerprint` -45, `teleport` -30, `accuracyRealism` -20, `clockSkew` -20). A
+       * confirmed position inside the fence passes unless something argues against it, which is
+       * the rule the product actually wants and a far easier one to explain to a participant.
+       */
+      contribution: 25,
       reason: `Closest confirmed position was ${Math.round(min)} m from the venue centre, inside the ${radius} m geofence.`,
     };
   }
@@ -315,6 +292,18 @@ export const proximity: SignalFn = (evidence, rollups) => {
 /* ----------------------------------------------------- jitter fingerprint */
 
 /**
+ * Accuracy at or under which a fix is treated as coming from a GNSS receiver rather than a
+ * network scan, for the purpose of the drift test below.
+ *
+ * 50 m is generous on purpose. A phone indoors fusing GNSS with Wi-Fi reports 4-20 m, a clear
+ * outdoor fix 3-8 m, and a laptop's Wi-Fi scan 100-500 m -- so the populations are separated by
+ * an order of magnitude and the exact line between them is not load-bearing. It is set well
+ * above real GPS rather than close to it, because the cost of the wrong answer is asymmetric:
+ * a false -45 accuses an honest participant of spoofing.
+ */
+export const GPS_ACCURACY_M = 50;
+
+/**
  * A real stationary device drifts by a few metres between fixes and its reported accuracy
  * varies. Repeated byte-identical coordinates are the signature of a fixed DevTools override,
  * which is the cheapest spoof available and therefore the most common one.
@@ -324,31 +313,65 @@ export const proximity: SignalFn = (evidence, rollups) => {
  */
 export const jitterFingerprint: SignalFn = (evidence) => {
   /**
-   * USABLE fixes only, like `teleport`, `proximity` and `accuracyRealism`. This signal was the
-   * last one reading the raw array, and that inconsistency was a live false positive.
+   * GPS-QUALITY fixes only, and the scoping is what keeps this signal honest.
    *
-   * A desktop browser with no GPS radio answers from a cached Wi-Fi scan, and a cached scan
-   * that has not changed returns the SAME coordinate object every time -- byte-identical, by
-   * design, because it is literally the same cached fix. On the visits that prompted this fix
-   * two such pings arrived at 182 m accuracy; a third would have fired the -45 branch and put
-   * an honest laptop visit at 0. The signal would have been reporting "characteristic of an
-   * overridden location" about a machine doing nothing but sitting still.
+   * The premise is in this comment block above: "a real stationary device drifts by a few metres
+   * between fixes". That is true of a GNSS receiver and simply false of a cached Wi-Fi scan --
+   * an unchanged scan returns the SAME fix every call, byte-identical, because it is literally
+   * the same cached object. So the test only means anything for a fix claiming GPS-like
+   * precision, and applying it to a coarse network fix reports "characteristic of an overridden
+   * location" about a laptop doing nothing but sitting still. That is not a hypothetical: it is
+   * what the measured laptop traces behind D-054 look like.
    *
-   * Nothing is conceded to an attacker by the filter. Pushing accuracy above the cap to dodge
-   * jitter detection also makes every fix unusable, which forfeits presence, dwell, coverage
-   * and proximity -- `noUsableEvidence` speaks alone and the trace cannot auto-verify. The
-   * evasion costs more than the signal it evades.
+   * Nothing is conceded to an attacker. A forgery has to claim a small `accuracyM` to be scored
+   * `inside` a tight fence and to escape `proximity`'s distance bands, and the moment it does it
+   * is back in this signal's population -- `staticSpoof` claims 12 m and is still caught at -45.
+   * Claiming 200 m instead buys only `ACCURACY_CAP_M` of fence tolerance and forfeits nothing
+   * this signal was protecting, because the position itself is now scored on its merits.
    */
-  const fixes = evidence.fixes.filter((f) => f.presence !== 'unknown');
-  if (fixes.length < 3) return null;
+  const usable = evidence.fixes.filter((f) => f.presence !== 'unknown');
+  const gps = usable.filter((f) => f.accuracyM <= GPS_ACCURACY_M);
 
-  let identical = 0;
-  for (let i = 1; i < fixes.length; i++) {
-    const a = fixes[i - 1] as EvidenceFix;
-    const b = fixes[i] as EvidenceFix;
-    if (a.lat === b.lat && a.lng === b.lng) identical++;
+  const frozenRatio = (of: EvidenceFix[]): number => {
+    let identical = 0;
+    for (let i = 1; i < of.length; i++) {
+      const a = of[i - 1] as EvidenceFix;
+      const b = of[i] as EvidenceFix;
+      if (a.lat === b.lat && a.lng === b.lng) identical++;
+    }
+    return identical / (of.length - 1);
+  };
+
+  /**
+   * A coarse trace gets a narrower version of the same test rather than a free pass.
+   *
+   * Scoping the drift test to GPS-quality fixes stops it accusing a laptop, but on its own it
+   * would hand an attacker the cheapest possible evasion: a DevTools override claiming 182 m of
+   * accuracy is frozen AND exempt, and would auto-verify on the strength of `proximity` alone.
+   *
+   * So the coarse population is still tested, at only the extreme end and for a smaller penalty.
+   * A cached Wi-Fi scan legitimately repeats a fix, but a scan that is being refreshed at all
+   * varies -- the measured laptop traces move 5-7 m and 182-185 m between readings, which is
+   * nowhere near this threshold. EVERY fix identical is a different claim, and combined with
+   * `accuracyRealism`'s `distinct === 1` branch it is enough to keep such a trace out of the
+   * auto band without asserting more than we can support.
+   */
+  if (gps.length < 3) {
+    if (usable.length < 3) return null;
+    if (frozenRatio(usable) >= 0.9) {
+      return {
+        code: 'jitterFingerprint',
+        contribution: -20,
+        reason: `Every one of ${usable.length} fixes reported the exact same coordinates. A device answering from a network scan can repeat a cached position, but not usually without any variation at all.`,
+      };
+    }
+    // Drift is not evidence of anything for a network fix, so say nothing rather than pay a bonus.
+    return null;
   }
-  const ratio = identical / (fixes.length - 1);
+
+  const fixes = gps;
+  const identical = Math.round(frozenRatio(fixes) * (fixes.length - 1));
+  const ratio = frozenRatio(fixes);
 
   if (ratio >= 0.9) {
     return {
@@ -397,7 +420,16 @@ export const accuracyRealism: SignalFn = (evidence, rollups) => {
    * to 41 (needs_review), for the price of one extra ping. Found by the second
    * spoof-adversary pass. The two statistics must be drawn from the same population.
    */
-  const values = fixes.filter((f) => f.presence !== 'unknown').map((f) => f.accuracyM);
+  /**
+   * GPS-quality fixes only, for the same reason as `jitterFingerprint` (D-054). Both tests below --
+   * one constant value, or a spread under 15% of the median -- describe what a GNSS receiver does
+   * not do, and a Wi-Fi scan does exactly that: a laptop reporting 182, 183.5, 184.2, 185 m has a
+   * spread of 1.6% of its median, and on a ten-fix visit that fired -15 and blocked an honest laptop
+   * 6 m from the venue centre. Found by the adversary pass on D-054.
+   */
+  const values = fixes
+    .filter((f) => f.presence !== 'unknown' && f.accuracyM <= GPS_ACCURACY_M)
+    .map((f) => f.accuracyM);
   if (values.length < 3) return null;
   const distinct = new Set(values).size;
 
@@ -409,16 +441,14 @@ export const accuracyRealism: SignalFn = (evidence, rollups) => {
     };
   }
 
-  const median = rollups.medianAccuracyM ?? 0;
+  // Median from THIS population, never `rollups.medianAccuracyM` (every usable fix). Drawing the
+  // spread from one set and the median from another is the bug the second D-032 pass found.
+  const ordered = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(ordered.length / 2);
+  const median = ordered.length % 2 ? ordered[mid]! : (ordered[mid - 1]! + ordered[mid]!) / 2;
   const indoor = evidence.venue.indoor;
-
-  if (!indoor && median > 60) {
-    return {
-      code: 'accuracyRealism',
-      contribution: -8,
-      reason: `Median accuracy was ${Math.round(median)} m at an outdoor venue, which is poorer than a working GPS fix outdoors normally reports.`,
-    };
-  }
+  // The old `!indoor && median > 60` branch (-8) is gone: every value here is at most
+  // GPS_ACCURACY_M, so it could never fire, and its only real target was the honest laptop.
   /**
    * DISPERSION, not level. This is the replacement for the old indoor threshold, and the
    * difference is the whole point.
@@ -524,10 +554,16 @@ export const clockSkew: SignalFn = (evidence, _rollups, config) => {
 /* ---------------------------------------------------------------- teleport */
 
 export const teleport: SignalFn = (evidence, _rollups, config) => {
-  // Usable fixes only. A single cached cell-tower fix at the carrier's registered address,
-  // landing between two good GPS fixes, is routine on mobile web. It contributes nothing to
-  // presence and must not be able to fire a -30 movement penalty on an honest trace.
-  const fixes = evidence.fixes.filter((f) => f.presence !== 'unknown');
+  /**
+   * GPS-quality fixes only. A cached cell-tower fix at the carrier's registered address, landing
+   * between two good GPS fixes, is routine on mobile web -- 2 km away at 1,500 m accuracy, 30 s
+   * after a real fix, reads as 240 km/h. It used to be filtered out for being `unknown`; D-054 made
+   * coarse fixes positions again, so the filter now says what it always meant: a speed check needs
+   * positions precise enough to measure a speed with.
+   */
+  const fixes = evidence.fixes.filter(
+    (f) => f.presence !== 'unknown' && f.accuracyM <= GPS_ACCURACY_M,
+  );
   if (fixes.length < 2) return null;
 
   let worst = 0;
@@ -535,11 +571,19 @@ export const teleport: SignalFn = (evidence, _rollups, config) => {
   for (let i = 1; i < fixes.length; i++) {
     const a = fixes[i - 1] as EvidenceFix;
     const b = fixes[i] as EvidenceFix;
-    const seconds = (b.receivedAt - a.receivedAt) / 1000;
+    /**
+     * The wider of the two clock gaps, exactly as `dwellDetail` measures an interval.
+     *
+     * Ingest stamps `receivedAt` per fix, so an offline flush lands its fixes milliseconds apart:
+     * two honest fixes 5 m and 3 ms apart read as 1,700 m/s, and once fraud signals began blocking
+     * auto-verification that stopped every honest flush. The device clock carries the real
+     * spacing. It is untrusted (rule 3), but stretching it to hide a jump opens a device/server
+     * delta that `clockSkew` charges -- the same trade `dwellDetail` already makes.
+     */
+    const seconds = Math.max(b.receivedAt - a.receivedAt, b.capturedAt - a.capturedAt) / 1000;
     if (seconds <= 0) {
-      // Two fixes in different places sharing a server timestamp means receivedAt was
-      // stamped per BATCH rather than per fix. Skipping the pair silently disables this
-      // signal for every offline flush, which is exactly what an attacker wants. Count it.
+      // Both clocks say no time passed, yet the fixes are in different places. Skipping the pair
+      // silently would disable this signal for exactly that trace. Count it.
       if (haversineM(a, b) > 0) sameStamp++;
       continue;
     }
@@ -551,7 +595,7 @@ export const teleport: SignalFn = (evidence, _rollups, config) => {
     return {
       code: 'teleport',
       contribution: -12,
-      reason: `${sameStamp} pairs of fixes arrived carrying the same server timestamp despite being in different places, so the movement between them could not be checked.`,
+      reason: `${sameStamp} pairs of fixes carried the same timestamp on both the device and the server despite being in different places, so the movement between them could not be checked.`,
     };
   }
 
@@ -591,7 +635,6 @@ export const teleport: SignalFn = (evidence, _rollups, config) => {
 /** Evaluation order is display order in the console, so most decisive first. */
 export const ALL_SIGNALS: readonly SignalFn[] = [
   noUsableEvidence,
-  coarseFixesExcludeVenue,
   jitterFingerprint,
   teleport,
   presenceDwell,
