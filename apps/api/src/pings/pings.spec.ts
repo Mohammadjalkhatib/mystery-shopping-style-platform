@@ -362,19 +362,23 @@ describe('ping ingest', () => {
   });
 
   describe('the trace it produces is what the engine expects', () => {
-    it('stores presence the engine can consume, including unknown for coarse fixes', async () => {
+    it('stores presence the engine can consume, and a coarse fix keeps its position', async () => {
+      // D-054: reported accuracy widens the fence up to the cap, it no longer discards the fix.
+      // A coarse fix AT the venue is `inside` -- that is the honest laptop -- and a coarse fix
+      // 1.1 km away is `outside`, because 100 m of tolerance cannot cover a kilometre.
       const sessionId = await makeSession();
       await post(sessionId, {
         fixes: [
           fix({ accuracyM: 9 }), // inside
           fix({ lat: VENUE.lat + 0.01, accuracyM: 9 }), // ~1.1 km away -> outside
-          fix({ accuracyM: 400 }), // above the cap -> unknown
+          fix({ accuracyM: 400 }), // coarse but at the venue -> still inside
+          fix({ lat: VENUE.lat + 0.01, accuracyM: 400 }), // coarse AND far -> outside
         ],
       }).expect(200);
 
       const stored = await Pings.find({ sessionId }).lean<{ presence: string }[]>();
       const presences = stored.map((p) => p.presence).sort();
-      expect(presences).toEqual(['inside', 'outside', 'unknown']);
+      expect(presences).toEqual(['inside', 'inside', 'outside', 'outside']);
     });
   });
 
@@ -467,10 +471,18 @@ describe('ping ingest', () => {
       expect(body.latestPresence).toBe('near');
     });
 
-    it('says unknown when the fix is too coarse to place, rather than guessing', async () => {
+    it('answers from a coarse fix rather than refusing to place it (D-054)', async () => {
+      // The participant screen used to read "your location is not accurate enough to tell" to
+      // anyone on a laptop, while the server held their distance to the metre. A coarse fix at
+      // the venue now says `inside`; the cap only limits how far the tolerance can stretch.
       const sessionId = await makeSession();
-      const body = await presenceOf(sessionId, [fix({ accuracyM: 5000 })]);
-      expect(body.latestPresence).toBe('unknown');
+      const atVenue = await presenceOf(sessionId, [fix({ accuracyM: 5000 })]);
+      expect(atVenue.latestPresence).toBe('inside');
+
+      const farAway = await presenceOf(await makeSession(), [
+        fix({ lat: VENUE.lat + 0.05, accuracyM: 5000 }),
+      ]);
+      expect(farAway.latestPresence).toBe('outside');
     });
 
     /**

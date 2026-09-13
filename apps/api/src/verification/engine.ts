@@ -21,6 +21,17 @@ import { DEFAULT_ENGINE_CONFIG, type EngineConfig, type EngineOutput, type Visit
  */
 export const BASE_SCORE = 50;
 
+/**
+ * A signal contributing this or worse blocks auto-verification. See the note in `evaluate`.
+ *
+ * Arbitrary, in the same way every weight in `signals.ts` is (D-009): it is set just below the
+ * smallest penalty any deliberate fraud signal emits (-20) and just above the largest one an
+ * honest visit routinely collects (-8 for coarse accuracy at an outdoor venue). What would make
+ * it principled is labelled visits; until then the gap between those two numbers is wide enough
+ * that the exact line is not load-bearing.
+ */
+export const BLOCKING_CONTRIBUTION = -15;
+
 function bandFor(score: number, config: EngineConfig): Verdict {
   if (score >= config.autoThreshold) return 'auto_verified';
   if (score < config.rejectThreshold) return 'rejected';
@@ -63,6 +74,28 @@ export function evaluate(
    * unreadable trace, and an hour of clock offset IS contradicting evidence, so a hand-crafted
    * replay can still reject.
    */
+  /**
+   * A substantial negative finding prevents auto-verification outright (D-054).
+   *
+   * This replaces balancing weights against each other, which is how the engine kept regressing.
+   * Once `proximity` became the deciding signal at +25, the reachable maximum rose past 110 and
+   * every penalty silently stopped mattering: `teleportIn` scored 77 -- auto-verified -- **with
+   * its -30 implausible-movement signal firing**, and `replayedClock` scored 87 with an hour of
+   * clock offset on the record. The arithmetic said pass while the evidence said stop.
+   *
+   * So the two questions are separated. The SCORE ranks how consistent a visit looks, and is
+   * dominated by presence because that is the thing businesses actually ask about. The VERDICT
+   * additionally requires that nothing substantial argued against the visit: any signal at or
+   * below `BLOCKING_CONTRIBUTION` caps the score just under the auto threshold, so a human sees
+   * it. No combination of positives can out-vote a spoof fingerprint, an impossible movement, a
+   * fabricated accuracy pattern or a replayed clock.
+   *
+   * The bar is -15 rather than "any negative" on purpose: small negatives are normal on real
+   * visits -- an honest laptop takes -8 for coarse median accuracy, a pocketed phone takes a few
+   * points of coverage -- and blocking on those would recreate the review-everything behaviour
+   * this change exists to end.
+   */
+  const blocked = signals.some((sig) => sig.contribution <= BLOCKING_CONTRIBUTION);
   const onlyAbsence = signals.length === 1 && signals[0]!.code === 'noUsableEvidence';
   /**
    * Clamped below `autoThreshold`, because a floor that can cross it is worse than no floor.
@@ -78,7 +111,8 @@ export function evaluate(
    * thresholds 30/40/55/70 and stopped one step short of the inversion; it now runs past it.
    */
   const floor = onlyAbsence ? Math.min(config.rejectThreshold, config.autoThreshold - 1) : 0;
-  const score = Math.max(floor, Math.min(100, Math.round(raw)));
+  const ceiling = blocked ? config.autoThreshold - 1 : 100;
+  const score = Math.max(floor, Math.min(ceiling, Math.round(raw)));
 
   return {
     score,

@@ -766,23 +766,20 @@ Step 2 already placed the venues where you are, so `user1` should score a real v
 than being rejected for distance. If it is rejected, check the seed logged
 `venues RELOCATED to ...` and that you are standing within 75 m of the anchor.
 
-**Two things will surprise you here, and neither is a bug.**
+**How a visit is judged (D-054).** Presence decides. If the participant's position is confirmed
+inside the venue's geofence, the visit passes unless something argues against it; if it is well
+outside, it is rejected; in between, or with too little to go on, a human reviews it.
 
-*Use a phone, not a laptop.* A desktop or laptop has no GPS radio, so the browser answers from a
-Wi-Fi scan and reports accuracy in the **100-500 m** band. `ACCURACY_CAP_M` is 100 m, so every
-such fix is `presence: unknown` — it places the participant neither inside nor outside the fence,
-whatever the coordinates say. A laptop sitting 9 m from the venue centre still proves nothing. The
-verdict you get is `needs_review` with a single `noUsableEvidence` signal saying exactly that, and
-a laptop **cannot** reach `auto_verified` by design (D-051). Test the happy path on a phone.
-
-*Longer visits verify more strongly.* Verification wants corroboration, not just elapsed time: the
-two largest positive signals only pay in full once there have been
-`requiredDwellIntervals` separate inside-to-inside location updates, which is
-`clamp(expectedDwellSeconds / 30, 2, 5)` — proportional to what the task actually asks for (D-053).
-A task authored at 1 min needs 2 observations, which is all a minute at the 30 s sampling cadence
-can yield; a task of 3 min or more needs 5. So a short task is verifiable, but it is verified on
-less evidence, which is why the task form warns an author when they go under three minutes. Three
-minutes or more is the recommendation for a real demo run.
+- *Laptops work.* A laptop has no GPS radio, so the browser answers from a Wi-Fi scan and reports
+  100-500 m of accuracy. Reported accuracy widens the fence by at most `ACCURACY_CAP_M` (50 m); it
+  no longer discards the reading. A laptop measured 5-7 m from the venue centre passes; one in a
+  cafe 170 m from a 75 m venue does not; one 3 km away is rejected.
+- *A fraud signal blocks the pass.* Any signal at or below `BLOCKING_CONTRIBUTION` (-15) — frozen
+  coordinates, impossible movement, a constant or fabricated accuracy pattern, an hour of clock
+  offset — caps the score just under the auto threshold, however strong the presence evidence.
+- *Longer is better, not required.* Dwell and coverage still move the score, so a 3-minute visit
+  scores higher than a 1-minute one, and the task form recommends 3 minutes or more. A short visit
+  confirmed inside the fence still passes.
 
 ---
 
@@ -1029,14 +1026,13 @@ Amman the seeded venues are 1,188 km away, which scores `proximity -25` and
 because nothing is broken.
 
 Overriding your location in DevTools does not help either: a fixed override emits identical
-consecutive coordinates, which trips `jitterFingerprint` at −45 and is rejected. The system is
-designed to refuse exactly that.
+consecutive coordinates, which trips `jitterFingerprint` and blocks auto-verification. The system
+is designed to refuse exactly that.
 
-One precision, since D-051 narrowed that signal to *usable* fixes only: the −45 applies when the
-override reports an accuracy at or under the 100 m cap, which is the case that is trying to look
-like a real visit. An override reporting coarser accuracy than the cap is unusable instead, so it
-scores 35 and `needs_review` rather than being rejected outright — it never places anyone inside
-the fence, so it cannot pass either. Neither route reaches `auto_verified`.
+Since D-054 the drift test applies in full to GPS-quality fixes (50 m or better) and, for coarser
+fixes, only when every coordinate is identical — a refreshing Wi-Fi scan moves a few metres, a
+fixed override does not. Either way the fraud signal blocks auto-verification, so a frozen override
+lands in review rather than passing.
 
 So move the venues to you instead. In `.env`:
 

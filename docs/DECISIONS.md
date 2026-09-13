@@ -2456,3 +2456,78 @@ The control that replaces the lost strictness is a product control, not an engin
 are inherently weaker evidence, so the author is told so at the moment they choose. If that proves
 insufficient, the next move is a per-task minimum verifiability rather than a global constant —
 scoring what the task asked for is the part worth keeping.
+
+---
+
+## D-054: Presence decides the verdict; fraud signals veto it
+
+**Date:** 2026-09-13
+**Status:** accepted. Supersedes the accuracy veto in `presenceFor`, D-051's absence handling for
+coarse fixes, D-052's `coarseFixesExcludeVenue`, and the weight-balancing model D-032 assumed.
+
+**Decision.** Directed by the product owner as "if in location make it pass, if not make it needs
+review or fail — simplify":
+
+1. `presenceFor` no longer returns `unknown` for coarse accuracy. Reported accuracy widens the fence
+   by `min(accuracyM, ACCURACY_CAP_M)`, and the cap drops from 100 m to **50 m**. `unknown` survives
+   only for a non-finite or negative accuracy.
+2. `proximity` inside the fence contributes **+25** (was +6). Presence is the deciding evidence.
+3. Any signal contributing `<= BLOCKING_CONTRIBUTION` (-15) caps the score at `autoThreshold - 1`.
+   Fraud signals are vetoes, not weights to be out-voted.
+4. The physics and pattern checks — `jitterFingerprint`, `teleport`, `accuracyRealism` — judge only
+   fixes at `<= GPS_ACCURACY_M` (50 m). A coarse trace is tested only for every coordinate identical
+   (-20). `teleport` measures each pair on the wider of the two clock gaps, as `dwellDetail` does.
+5. `presenceDwell` returns -20 (blocking) when no inside-to-inside gap spans real time, and the
+   interval bar rises from 0.5x to 0.8x the sampling cadence — the honest client cannot send faster
+   than one fix per 30 s.
+6. `coarseFixesExcludeVenue` and `noUsableEvidence`'s all-coarse branch are deleted as unreachable.
+
+**Context.** D-051 through D-053 each fixed a real defect and none fixed the product. Retested on the
+deployed demo, laptop visits still went to review and the participant screen still said the location
+could not be determined. Atlas showed why: the laptop pings were **5-7 m from the venue centre** —
+the same as the phone beside it — at 182-185 m reported accuracy. The cap threw away *where the fix
+said the participant was* because the browser was unsure *how precise* it was, and every refinement
+since had negotiated around that discard instead of removing it.
+
+Replaying the seven most recent real visits from Atlas through this change: six auto-verify (laptop
+91, 82, 83; phone 100, 80, 100). The seventh, a laptop that sent one reading in 68 s, stays in review
+at 58: one reading cannot show time on site.
+
+The `spoof-adversary` pass on the first cut of this change found three honest visits the block rule
+would still stop — a ten-fix laptop visit whose 182-185 m accuracy tripped the tight-spread test, a
+phone with one cell-tower fallback fix read as 240 km/h, and a real offline flush read as 1,700 m/s
+because ingest stamps `receivedAt` milliseconds apart — plus two false passes: three fixes POSTed in
+five seconds (77), and a laptop in a cafe 170 m from a 75 m venue counting as inside under a 100 m
+cap. Items 1 (cap), 4 and 5 are those fixes, each with a fixture.
+
+**Alternatives considered.**
+
+- *Keep the cap as a veto and add laptop-specific scoring.* The D-051/D-052 path. Rejected on
+  evidence: three iterations, each correct in isolation, left an honest laptop in the right place
+  unable to pass, and each added a signal an attacker could steer through client-supplied accuracy.
+- *Raise `proximity` to +25 and keep pure weight arithmetic.* Tried first, in this change. It pushed
+  the reachable maximum past 110 and **every penalty stopped mattering**: `teleportIn` auto-verified
+  at 77 with its -30 firing, `replayedClock` at 87 with an hour of clock offset. Separating "how good
+  does this look" (score) from "did anything argue against it" (block) is what made presence-decides
+  safe to ship.
+- *Block on any negative signal.* Rejected: a pocketed phone loses a few coverage points, and a
+  one-minute visit collects a small dwell penalty. Blocking on those recreates the review-everything
+  behaviour this change exists to end. -15 sits below routine honest penalties and at or above every
+  deliberate fraud penalty (-20 and worse); within that gap it is arbitrary (D-009).
+- *Keep the tolerance cap at 100 m.* Rejected once coarse fixes stopped being discarded: a laptop in
+  the cafe next door counted as inside, with no spoofing at all. 50 m keeps every honest phone
+  unchanged (3-25 m accuracy) and still passes the measured laptop.
+
+**Consequences.** A deliberate loosening, stated as traces: `fourPingLadder`,
+`unobservedDwellPadded` and `minimalShortTaskSpoof` now auto-verify, because a few fixes confirmed
+inside the fence cannot be told apart from an honest sparse visit, and the engine stops charging the
+honest half for the resemblance. `staticSpoof` moves from `rejected` to `needs_review`: credited for
+the position it claims, then blocked. A fabricated trace with no fraud fingerprint passes on
+presence — true before this change too (`sophisticatedSpoof` has always scored at the ceiling), and
+only native attestation closes it, which is out of scope.
+
+Left open knowingly: `coverageRatio` still measures the server clock, so a genuine offline flush
+lands in review (no longer via `teleport`); a frozen DevTools override that nudges two of ten
+coordinates slips under the coarse frozen-ratio test; `dwellDetail` still walks the raw fix array.
+What would change this decision: labelled visits showing presence-alone passes are being abused, at
+which point the block list, not the presence weight, is where to add teeth.
