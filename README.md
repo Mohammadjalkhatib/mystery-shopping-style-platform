@@ -21,19 +21,19 @@ Five minutes, in order:
    "verified" can honestly mean, what the participant is told, scaling, and what I would push
    back on about the idea itself. It ends with an improvement analysis across frontend,
    backend, security and features.
-4. **Skim `docs/DECISIONS.md`.** 50 entries, each with the alternatives and why they lost. If
-   you read five, read D-001, D-005, D-010, D-016 and D-032.
+4. **Skim `docs/DECISIONS.md`.** 54 entries, each with the alternatives and why they lost. If
+   you read six, read D-001, D-005, D-010, D-016, D-032 and D-054.
 5. **`docs/AI-NOTES.md`** is where the AI got things wrong, written when it happened rather
-   than reconstructed afterwards. Seven entries.
+   than reconstructed afterwards. Nine entries.
 
-**What is here, in numbers:** 650 tests across 25 suites, 50 recorded decisions, 52 memory
-entries, 111 commits on a `feat/* → dev → main` flow where `main` is the deployed branch.
+**What is here, in numbers:** 667 tests across 25 suites, 54 recorded decisions, 54 memory
+entries, over 115 commits on a `feat/* → dev → main` flow where `main` is the deployed branch.
 
 **The three things I would want looked at**, because they are where the actual work went:
 
 | | Where | Why it matters |
 |---|---|---|
-| The verification engine | `apps/api/src/verification/` | Pure — no database, no I/O, no clock. 117 tests over synthetic traces. Red-teamed twice by a subagent, which found real bugs both times. |
+| The verification engine | `apps/api/src/verification/` | Pure — no database, no I/O, no clock. 133 tests over synthetic traces. Red-teamed by a subagent after every rule change, and it found real bugs each time. |
 | The evidence trail in the console | `apps/web/src/pages/Console.tsx` | The product is the reasons, not the number. This is where a business user decides. |
 | The decision log | `docs/DECISIONS.md` | Several decisions here are refusals to build something that was asked for, with the reasoning. |
 
@@ -53,7 +53,7 @@ apps/api/src/
   pings/             idempotent ingest on (sessionId, clientPingId); server stamps
                      receivedAt and computes distance — the client never supplies either
   geo/
-    haversine.ts       distance + presenceFor(), ACCURACY_CAP_M = 100 m
+    haversine.ts       distance + presenceFor(), ACCURACY_CAP_M = 50 m
     precision.ts       rejects venue coordinates too coarse for their own radius (D-020)
   evidence/          photo upload
     storage/           ObjectStore interface: GridFS locally, S3 in production
@@ -788,9 +788,9 @@ outside, it is rejected; in between, or with too little to go on, a human review
 ### The automated suite
 
 ```bash
-npm test              # 650 tests, 25 suites
+npm test              # 667 tests, 25 suites
 npm run test:watch
-npm test -- engine.spec          # just the verification engine (117 tests)
+npm test -- engine.spec          # just the verification engine (133 tests)
 npm test -- --coverage
 ```
 
@@ -964,12 +964,16 @@ milliseconds apart, has their dwell round toward zero and their coverage collaps
 advertises as safe, and it penalises the one party who cannot cheat. Found by the
 `spoof-adversary` pass during D-036; **not fixed there**, because changing what the engine
 integrates over changes verdicts and needs its own decision entry, its own fixtures and its own
-red-team pass (CLAUDE.md §6). It is the highest-value thing left in the engine.
+red-team pass (CLAUDE.md §6). It is the highest-value thing left in the engine. D-054 moved
+`teleport` onto the wider of the two gaps, so a flush is no longer read as impossible movement,
+but it still lands in review (41 on the `realOfflineFlush` fixture) on dwell and coverage.
 
 The same pass rated `clockSkew` close to decorative against fraud — it fires only past a 20
 minute delta, which an attacker setting `capturedAt = now` never incurs and an honest offline
 flush does — and flagged that a genuinely stationary phone returning byte-identical coordinates
-can trip `jitterFingerprint`'s spoof branch. Both are recorded, neither is changed.
+can trip `jitterFingerprint`'s spoof branch. Both are recorded. Since D-054 that spoof branch
+judges only fixes at 50 m or better, and `clockSkew`'s −20 now blocks auto-verification, which
+makes the honest-flush cost larger rather than smaller.
 
 **A participant is told an outcome, never a score.** The dashboard shows `approved` /
 `not_approved` / `in_review` and the reviewer's written feedback, and deliberately shows no
@@ -981,7 +985,9 @@ appeals process, and the fix then is disclosure through a human, not a field on 
 
 **The participant is told where they are, in states and not in metres.** During a visit the
 screen says `inside` / `near` / `outside` / `unknown`, computed on the server against the
-geofence the visit is pinned to. It warns and never blocks — indoor GPS is unreliable by design,
+geofence the visit is pinned to. `unknown` now appears only when the device reports no usable
+accuracy at all; a laptop's coarse Wi-Fi fix is placed like any other (D-054). It warns and never
+blocks — indoor GPS is unreliable by design,
 so refusing to let someone submit on a bad fix would strand an honest participant standing in
 the shop. Distance is withheld (D-036), though the red-team pass established that this buys less
 than it appears: `GET /sessions/:id` already returns the venue centre and `radiusM` to the

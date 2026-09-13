@@ -56,8 +56,8 @@ placeholders and will change.
 
 **Seam 3 — the engine is a pure function.** `apps/api/src/verification/` imports no Mongoose,
 performs no I/O, and reads no clock. It takes an evidence object and returns a result object.
-That is why it has 117 tests over synthetic traces and why the whole rule set could be
-red-teamed and rewritten twice in an afternoon without touching a database.
+That is why it has 133 tests over synthetic traces and why the whole rule set could be
+red-teamed after every change and rewritten more than once without touching a database.
 
 ---
 
@@ -128,13 +128,19 @@ is correct behaviour.
 
 **Denied** is a first-class state, not an error. The tracker exposes `permission: 'denied'` and
 the screen says plainly that the visit cannot be verified without it. The visit still runs and
-can still be submitted; it will simply score `noUsableEvidence` at −35 and land in review. The
+can still be submitted; it will simply score `noUsableEvidence` at −20 and land in review, where a
+floor holds it: a visit with no evidence at all is never rejected and never auto-verified. The
 participant is never trapped.
 
 **Inaccurate** is handled by treating accuracy as a real quantity rather than a nuisance:
 
-- Above `ACCURACY_CAP_M` (100 m) a fix is `presence: 'unknown'` — evidence of neither presence
-  nor absence, and the engine scores it as *missing*, not as *absent*.
+- Reported accuracy **widens the geofence by at most `ACCURACY_CAP_M` (50 m) and never discards
+  the fix** (D-054). A fix is inside when `distance ≤ radius + min(accuracy, 50 m)`. A laptop with
+  no GPS radio reports around 180 m from a Wi-Fi scan; it is judged on the position it reports, and
+  its uncertainty earns 50 m of slack, not 180.
+- The spoof-pattern checks — frozen coordinates, constant or tightly clustered accuracy, impossible
+  speed — judge only fixes at 50 m or better, because a Wi-Fi scan legitimately repeats itself and
+  would otherwise read as a forgery.
 - Accuracy is never rounded at ingest, because Android reports quantised repeats and rounding
   would trip the spoof branch on honest traces.
 - `indoor` is a per-venue flag and the engine is told not to punish degraded indoor accuracy.
@@ -145,6 +151,13 @@ tens of metres. That was true of older hardware and is false of a phone fusing G
 it produced false positives on **three separate real honest visits**. It now tests the
 *dispersion* of accuracy rather than its level — a real receiver's estimate wanders, a generated
 one clusters — which is what the rule was reaching for all along (D-032).
+
+The accuracy cap was also got **wrong**, and that one cost the most. Until D-054 any fix reporting
+worse than 100 m was discarded as `unknown`. On the final pre-submission test a laptop measured
+**5–7 m from the venue centre** — the same position as the phone beside it — reported 182 m of
+accuracy and scored 15, *rejected*. Three successive fixes changed how that discarded evidence was
+scored; the fourth deleted the discard. Replayed from the database afterwards, the same laptop
+visits score 82–91 and auto-verify.
 
 ### 3.4 What does "verified" actually mean, and how confident can the system reasonably be?
 
@@ -176,28 +189,56 @@ Eight signals, each a pure function of the evidence:
 | `teleport` | is the implied speed physically possible |
 | `clockSkew` | does the device clock agree with ours |
 
-**What the confidence actually is, measured.** The maximum reachable score is **88** and the auto
-threshold is **75**, so every trace carries a 13-point cushion — which means any penalty smaller
-than 13 cannot stop anything on its own. That arithmetic governs the whole rule set and is
-written down, because it is the difference between a signal and a decoration.
+**How the signals combine: presence decides, fraud signals veto (D-054).**
 
-The engine was red-teamed twice by a dedicated subagent. Current standings:
+- Scoring starts at **50**. A confirmed position inside the geofence adds **+25**, which on its own
+  reaches the auto threshold of **75**. Dwell (up to +18), coverage (up to +10) and two +2 realism
+  bonuses move the score from there. The raw maximum is 107, reported as **100**.
+- **Any signal at −15 or worse blocks auto-verification**, capping the score at 74 however strong
+  the presence evidence. This replaced balancing weights against each other. With presence at +25
+  and no block, a trace showing a 9.6 km jump in 30 s scored 77 and auto-verified *with its −30
+  penalty firing*. The earlier model had the same flaw at a smaller scale: the maximum was 88, and
+  any penalty under the 13-point cushion above 75 could not stop anything on its own.
+- A position well outside the fence is rejected. A visit with no fixes at all is held in review.
+
+Measured on the current engine with the default five-minute task:
 
 | trace | score | verdict |
 |---|---|---|
-| honest outdoor / indoor / good-phone indoor | 88 | auto_verified |
-| honest but 58 % observed | 66 | needs_review |
-| tight-cluster fabrication | 71 | needs_review |
-| four-ping ladder | 70 | needs_review |
-| padded (mostly-real, two spoofed fixes) | 56 | needs_review |
-| frozen coordinate override | 19 | **rejected** |
-| **competent scripted forgery** | **88** | **auto_verified** |
+| honest outdoor / indoor / good-phone indoor | 100 | auto_verified |
+| honest laptop, Wi-Fi only (~182 m accuracy), at the venue | 92 | auto_verified |
+| honest phone with one cell-tower fallback fix mid-visit | 100 | auto_verified |
+| honest, only 58 % of the visit observed | 85 | auto_verified |
+| honest offline flush (fixes arrive milliseconds apart) | 41 | needs_review |
+| tight-cluster accuracy fabrication | 74 | needs_review (blocked) |
+| 9.6 km jump in 30 s | 74 | needs_review (blocked) |
+| device clock an hour out | 74 | needs_review (blocked) |
+| frozen override hiding behind coarse accuracy | 72 | needs_review (blocked) |
+| three fixes POSTed within five seconds | 62 | needs_review (blocked) |
+| frozen coordinate override | 38 | needs_review (blocked) |
+| wrong venue, 2 km away | 12 | **rejected** |
+| coarse fixes 5 km from the venue | 8 | **rejected** |
+| four-ping ladder (90 s apart) | 89 | auto_verified |
+| two typed coordinates five minutes apart | 75 | auto_verified |
+| **competent scripted forgery** | **100** | **auto_verified** |
 
-That last row is not a bug and must not be "fixed": it is the same trace as the honest one, so
-anything that moved it would move an honest visit with it. **The job this engine can actually do
-is separate the incompetent forgery from the competent one and price the competent one out of a
-casual attempt.** Judged against that standard it works. Judged against "proves presence" it
-cannot, and neither can anything else on the web platform.
+**Measured on real devices** on 2026-09-13 and replayed from the database through this engine: a
+laptop 5–7 m from the venue centre at 182–185 m accuracy scored 91 over four minutes and 82–83 over
+one; a phone scored 100 over four minutes and 80–100 over one. A laptop that sent a single reading
+in 68 s stays in review at 58, because one reading cannot show any time on site.
+
+Three rows are the price of the rule the product asked for, and D-054 records them as such. The
+four-ping ladder and the two typed coordinates now pass: a handful of fixes confirmed inside the
+fence cannot be told apart from an honest sparse visit, and the engine stopped charging the honest
+half for the resemblance. The frozen override moved from *rejected* to review: it is credited for
+the position it claims, then blocked.
+
+The last row is not a bug and must not be "fixed": it is the same trace as the honest one, so
+anything that moved it would move an honest visit with it. **What this engine can actually do is
+refuse any trace carrying a fingerprint of fabrication — frozen coordinates, impossible movement, a
+generated accuracy pattern, a replayed clock — and pass a person whose reported position is where
+the task says.** Judged against "proves presence" it cannot, and neither can anything else on the
+web platform.
 
 ### 3.5 What should the participant see and understand about why their location is tracked?
 
@@ -305,7 +346,7 @@ dispute, and the reasons are already written in plain language.
 
 ## 4. Where the AI got it wrong
 
-Seven entries in `docs/AI-NOTES.md`, written when they happened. The most instructive:
+Nine entries in `docs/AI-NOTES.md`, written when they happened. The most instructive:
 
 **I described venue editing as "safe" before checking whether it was.** I said started sessions
 pin a `venueSnapshot` so an edit is safe — confident, specific, and half true. The evaluator did
@@ -313,6 +354,15 @@ read the snapshot; **ping ingest was still reading the venue live**, so editing 
 would have put two vintages of geofence into one trace. All 420 tests passed either side of it.
 What caught it was asking "what would make this unsafe?" and reading the one file that would
 answer, not any signal the tooling could produce.
+
+**Three verification fixes each passed their tests, and none fixed the product.** On the last test
+before submission a laptop standing at the venue was rejected. I measured it at 9 m from the centre,
+wrote that down, and then treated "every fix is above the accuracy cap" as a constraint to design
+around instead of the bug. Three careful changes, each red-teamed and green, moved that laptop from
+*rejected* to *review* while the actual requirement — a person in the right place passes — was
+never tested. The user retested on the live demo and asked for it to be simplified. The change that
+worked deleted the discard (D-054). The lesson: when a real person fails, the first test is their
+real trace asserting the outcome they expect, not the outcome the current model finds defensible.
 
 **The subagents earned their keep and are the part of the AI setup I would defend hardest.**
 
@@ -323,7 +373,10 @@ answer, not any signal the tooling could produce.
 - `spoof-adversary` ran twice on one change. The first pass found that my fix for a false
   positive had flipped a fabricated trace from 68 to **88** with the attacker changing nothing.
   The second pass found **four more bugs in the fix**. Neither pass was ceremony; both changed the
-  code.
+  code. On the final day it found that the "presence decides" change would still send three honest
+  visits to review — a longer laptop visit, a phone with one cell-tower fallback fix, and an offline
+  flush — and would let a laptop in the café next door count as inside. All four were fixed before
+  merge.
 
 The general lesson: **AI is most useful pointed at the seam between two things that are each
 correct alone.** Every real bug in this project lived there — a DTO validating a storage key as a
@@ -356,6 +409,10 @@ Ordered by what would change the product most, not by effort.
 - **Snapshot `expectedDwellSeconds` onto the session at `start`**, the way `venueSnapshot` is.
   It is resolved live today, which is safe only because tasks cannot yet be edited. The moment
   task editing lands, an edit would silently re-score visits that already happened.
+- **Score dwell and coverage on the device clock when the server clock is compressed.** A genuine
+  offline flush arrives with its fixes milliseconds apart, so dwell and coverage read as near zero
+  and an honest basement visit lands in review (41). `teleport` already measures the wider of the
+  two clocks; the rollups do not yet.
 - **Move SSE fan-out out of process** (see 3.6).
 - **A real scheduler for the reaper**, once the hosting can support one.
 - **Evidence retention.** Photos never expire while pings do at 30 days. A photo taken inside a
@@ -367,16 +424,17 @@ Ordered by what would change the product most, not by effort.
 
 ### Security
 
-- **`presenceFor` treats client-controlled `accuracyM` as a fence extension.** This is the
-  cheapest remaining attack and it is documented, not fixed: reporting 90 m accuracy turns a
-  120 m fence into a 210 m one, so someone can stand across the road with entirely real
-  coordinates and score 88. The fix is to make the error ball *shrink confidence* rather than
-  *widen the fence* — a deliberate behavioural change, not a patch.
+- **`presenceFor` still treats client-controlled `accuracyM` as a fence extension**, now capped at
+  50 m (100 m until D-054). Reporting 50 m of accuracy turns a 120 m fence into a 170 m one, so
+  someone standing across a narrow road with entirely real coordinates can still score 100. The fix
+  is to make the error ball *shrink confidence* rather than *widen the fence* — a deliberate
+  behavioural change, not a patch.
 - **Demo auth is a hardcoded roster** (D-008). Authorization is real and tested per boundary;
   authentication is not. Real deployment needs sessions, rotation, and rate-limited login.
 - **`clockSkew` is currently a pure honest-participant tax** — an attacker sets
   `capturedAt = Date.now()` for free, while the only population reaching the threshold is someone
-  flushing a long offline queue. Replace with skew *variance* or delete it.
+  flushing a long offline queue. Since D-054 its −20 blocks auto-verification, so that tax now sends
+  an honest 20-minute offline flush to review. Replace with skew *variance* or delete it.
 - **Rate limiting on ingest.** Nothing bounds how fast a participant can POST fixes beyond the
   per-session cap.
 - **Atlas allows `0.0.0.0/0`** because free Render services have no static egress IP. Acceptable
@@ -413,11 +471,11 @@ a number.
 | Working code, runnable by someone else | `README.md` — three sections: without Docker, with Docker, and against the live deployment |
 | Agent / subagent configuration, unedited | `.claude/agents/` (3), `.claude/skills/` (2), `.claude/settings.json`, `CLAUDE.md` |
 | System design writeup with a diagram | This file, plus the two ASCII diagrams in `README.md` → **Architecture** |
-| Decision log, 3–5 key decisions with alternatives | `docs/DECISIONS.md` — 50 entries. The five that matter most are listed below |
-| Tests, where judged worth having | 650 across 25 suites. Rationale in `README.md` → **Testing** |
-| Where AI got it wrong | `docs/AI-NOTES.md` — 7 entries, and section 4 above |
+| Decision log, 3–5 key decisions with alternatives | `docs/DECISIONS.md` — 54 entries. The six that matter most are listed below |
+| Tests, where judged worth having | 667 across 25 suites. Rationale in `README.md` → **Testing** |
+| Where AI got it wrong | `docs/AI-NOTES.md` — 9 entries, and section 4 above |
 
-**If you only read five decisions**, read these:
+**If you only read six decisions**, read these:
 
 - **D-001** — what "verified" means, and the refusal to ship a boolean.
 - **D-005** — capture is best-effort and gaps are honest evidence. Everything else follows.
@@ -426,7 +484,9 @@ a number.
 - **D-016** — hosting, and why the reaper is lazy-on-read rather than a cron.
 - **D-032** — fixing two false positives re-opened the fraud engine, and the two red-team passes
   that caught it.
+- **D-054** — the final verification rule: presence decides the verdict and fraud signals veto it,
+  after three careful fixes failed a real laptop standing at the venue.
 
-`docs/MEMORY.md` is the running state of the system, one entry per merged branch, 52 of them.
+`docs/MEMORY.md` is the running state of the system, one entry per merged branch, 54 of them.
 It is what lets a fresh session pick up without re-reading the codebase, and it is the most
 useful thing in the repo for understanding *how* this was built rather than what it does.
